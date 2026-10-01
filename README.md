@@ -24,11 +24,12 @@ the first commit keeps it as the model to copy from.
 ## How it is played
 
 **W** and **S** fly forward and back, **A** and **D** turn, **Space** climbs
-and **Shift** comes down and lands; the arrows do what W A S D do. Let go,
-and it hovers where it is. It starts landed on the home pad, climbs to a
-ceiling of 220, above every peak, and sets down on whatever is under it: a
-pad, a field, a lake, or a hillside that rises to meet it, which it has to
-lift over. On a phone it can be watched but not flown yet: touch controls
+and **Shift** comes down fast; the arrows do what W A S D do. Let go of
+Space and it settles into a gentle sink, a third of the climb, until it
+lands, so a height is held by tapping Space. It starts landed on the home
+pad, climbs to a ceiling of 220, above every peak, and sets down on
+whatever is under it: a pad, a field, a lake, or a hillside that rises to
+meet it, which it has to lift over. On a phone it can be watched but not flown yet: touch controls
 are a feature still to come.
 
 ## What is here

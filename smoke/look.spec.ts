@@ -17,6 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { HOVER_LIFT } from '../src/helicopter';
 import { WOOD, standardView, start, watch } from './game';
 
 /**
@@ -73,13 +74,19 @@ test.describe('what it looks like', () => {
   test('the trees bowed by the downwash, the helicopter hovering low in a wood', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    const bowed = await page.evaluate((w) => {
-      const g = window.game!;
-      g.teleport(w.x, w.y, 4, 0);
-      g.look(w.x, w.y, { azimuth: -Math.PI / 2, polar: 0.9, radius: 44 });
-      g.step(150);
-      return g.sway().count;
-    }, WOOD);
+    const bowed = await page.evaluate(
+      ([w, hover]) => {
+        const g = window.game!;
+        g.teleport(w.x, w.y, 4, 0);
+        g.look(w.x, w.y, { azimuth: -Math.PI / 2, polar: 0.9, radius: 44 });
+        // the stick held at the hover, as a touch stick can, so it stays four up and does not sink into the wood
+        g.fly(0, 0, hover);
+        g.step(150);
+        g.release();
+        return g.sway().count;
+      },
+      [WOOD, HOVER_LIFT] as const,
+    );
     expect(bowed, 'trees bowed in the picture').toBeGreaterThan(20);
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('downwash.png', TOLERANCE);

@@ -1,8 +1,9 @@
 /**
  * The player's machine: an arcade helicopter, flown with a stick of three
- * axes and nothing else. It climbs, holds its height and lands; flies
- * forward and back along its heading and turns; tilts into what it does,
- * for the eye; and spins its rotor. It is not a body to the physics, and
+ * axes and nothing else. It climbs with the lift held, settles into a
+ * gentle sink with it let go and comes down fast with it pushed down, and
+ * lands; flies forward and back along its heading and turns; tilts into
+ * what it does, for the eye; and spins its rotor. It is not a body to the physics, and
  * it is kept inside the world's edge by its own reach, at any height.
  *
  * Its height is absolute, above the sea, and it is held between the ground
@@ -21,7 +22,7 @@ export interface Controls {
   lift: number;
 }
 
-/** Nothing asked for: a hover in the air, and rest on the ground. */
+/** Nothing asked for: a gentle sink in the air until it lands, and rest on the ground. */
 export const IDLE: Readonly<Controls> = { forward: 0, turn: 0, lift: 0 };
 
 /** A rectangle on the ground, in world units. */
@@ -77,6 +78,12 @@ export const HELICOPTER = {
   climbSpeed: 12,
   climbAccel: 16,
   ceiling: 220,
+  /**
+   * How fast it sinks with the lift let go, a third of the climb, and how gently it settles into that sink, so
+   * letting go is a settle and not a drop: from a hover it is sinking at the full rate in a second.
+   */
+  sinkSpeed: 4,
+  sinkEase: 4,
   /** The most it tilts nose-down or nose-up, and banks; and how quickly the tilt follows. */
   maxPitch: 0.28,
   maxRoll: 0.35,
@@ -111,6 +118,12 @@ export const HELICOPTER = {
    */
   footprint: 1.8,
 };
+
+/**
+ * The lift that holds its height: lift runs on one line from the climb at 1, through the sink at 0, to the way down
+ * at −1, and crosses still air a quarter of the way up. A touch stick can hold it; keys can only tap at it.
+ */
+export const HOVER_LIFT = HELICOPTER.sinkSpeed / (HELICOPTER.climbSpeed + HELICOPTER.sinkSpeed);
 
 export class Helicopter {
   /** Where it is: x and y across the ground, and z the height of its skids' base above the sea. */
@@ -196,8 +209,16 @@ export class Helicopter {
     this.rotorSpeed += (rotorTarget - this.rotorSpeed) * (1 - Math.exp(-H.rotorEase * dt));
     this.rotor = wrapTurn(this.rotor + this.rotorSpeed * dt);
 
-    // up and down: the climb follows the stick, and the ground and the ceiling are hard stops
-    this.vz = moveToward(this.vz, lift * H.climbSpeed, H.climbAccel * dt);
+    // up and down: the climb follows the stick along one line, from the climb at 1 through the sink at nothing to the
+    // way down at −1, and the ground and the ceiling are hard stops
+    const climb =
+      lift >= 0
+        ? -H.sinkSpeed + lift * (H.climbSpeed + H.sinkSpeed)
+        : -H.sinkSpeed + lift * (H.climbSpeed - H.sinkSpeed);
+    // settling into a sink no faster than the sink is eased gently, so letting go is a settle and not a drop; braking
+    // a climb, and coming down faster than the sink, are as quick as they ever were
+    const settling = climb < 0 && climb >= -H.sinkSpeed && this.vz <= 0;
+    this.vz = moveToward(this.vz, climb, (settling ? H.sinkEase : H.climbAccel) * dt);
     this.z += this.vz * dt;
     if (this.z <= this.floor) {
       this.z = this.floor;

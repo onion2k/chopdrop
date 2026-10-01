@@ -1,7 +1,8 @@
 /**
  * The game played by a monkey: the real game, without the picture, driven
  * at random and made to do at random everything a player can make happen —
- * flying about, hovering, climbing to the ceiling, landing, being somewhere
+ * flying about, letting go and sinking, hovering by tapping the lift,
+ * climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
  * hill, down onto a pad and low over a wood, bowing its trees — and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
@@ -68,8 +69,9 @@ export function fuzz(seed: number, frames: number): FuzzResult {
     const { bounds } = heli;
     const { ground, pads, trees, treeCount } = game.island;
     let controls: Controls = { ...IDLE };
-    // how many frames the current thing is still held for, and whether it is a landing, which ends when the skids touch
-    const hold = { busy: 0, landing: false };
+    // how many frames the current thing is still held for, whether it is a landing, which ends when the skids touch,
+    // and the rhythm the lift is tapped at, frames on and frames in all, if it is a hover
+    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 } };
     const between = (a: number, b: number) => a + random() * (b - a);
     const timesDone = (what: string) => done[what] ?? 0;
     const did = (what: string) => {
@@ -112,8 +114,20 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         name: 'hover',
         weight: 2,
         go() {
+          // held up by tapping the lift, as a player on keys holds a height: on for a frame or three, off for a few
           controls = { ...IDLE };
-          hold.busy = Math.floor(between(10, 60));
+          hold.tap.on = 1 + Math.floor(random() * 3);
+          hold.tap.every = hold.tap.on + 2 + Math.floor(random() * 5);
+          hold.busy = Math.floor(between(60, 240));
+        },
+      },
+      {
+        name: 'let go',
+        weight: 2,
+        go() {
+          // nothing held: it sinks, and lands if it is held long enough
+          controls = { ...IDLE };
+          hold.busy = Math.floor(between(60, 400));
         },
       },
       {
@@ -200,9 +214,14 @@ export function fuzz(seed: number, frames: number): FuzzResult {
             if (rise > 12) break;
           }
           heli.placeAbove(x, y, between(0.5, 6), yaw);
-          // a third of them climb as they go, and the rest only fly at it
+          // a third of them climb as they go, and the rest only fly at it, holding their height by tapping the lift
+          // about one frame in two or three, as a player does, since let go it would sink to the land before the hill
           controls = { forward: 1, turn: 0, lift: random() < 0.33 ? 1 : 0 };
           hold.busy = Math.floor(between(150, 300));
+          if (controls.lift === 0) {
+            hold.tap.on = 1;
+            hold.tap.every = 2 + Math.floor(random() * 2);
+          }
         },
       },
       {
@@ -260,11 +279,14 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       if (hold.busy > 0) hold.busy--;
       else {
         hold.landing = false;
+        hold.tap.every = 0;
         act();
       }
+      if (hold.tap.every > 0) controls.lift = frame % hold.tap.every < hold.tap.on ? 1 : 0;
       const wasLanded = landed();
       const wasFloor = heli.floor;
       const wasClimb = heli.vz;
+      const wasZ = heli.z;
       const wasAtCeiling = heli.z === HELICOPTER.ceiling;
       const wasAtEdge = touchingEdge();
       const wasSwaying = game.sway.count;
@@ -274,8 +296,10 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       if (wasLanded && !landed()) count(happened, 'took off');
       if (!wasLanded && landed()) {
         count(happened, 'landed');
-        // set down by the land rising to meet it, when the stick and the climb could not have brought it down
-        if (heli.floor > wasFloor && controls.lift >= 0 && wasClimb >= 0) count(happened, 'met rising land');
+        // set down by the land rising to meet it: higher over the ground it had than its own fall could take it in a
+        // frame, at the fastest it could have been coming down by the end of it
+        const ownFall = Math.max(0, -wasClimb + HELICOPTER.climbAccel * DT) * DT;
+        if (heli.floor > wasFloor && wasZ - wasFloor > ownFall) count(happened, 'met rising land');
       }
       if (!wasAtCeiling && heli.z === HELICOPTER.ceiling) count(happened, 'reached the ceiling');
       if (!wasAtEdge && touchingEdge()) count(happened, 'touched the edge');

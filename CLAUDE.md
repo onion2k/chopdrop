@@ -100,7 +100,8 @@ says why. Look at every picture.
   sprung back upright and let go when it is still; `scene.ts` leans them
   from their feet by what it says.
 - `src/debug.ts` is `window.game`, the test API: time, the seed, the
-  helicopter (`fly`, `release`, `teleport`, which takes a height above the
+  helicopter (`fly`, whose lift of `HOVER_LIFT` holds the height, since
+  nothing held sinks; `release`; `teleport`, which takes a height above the
   ground and not a height above the sea), the ground (`groundAt`), what is
   on the island (`content`: the pads, home, the bounds and the ceiling), the
   trees (`treesNear`, and `sway`: which are moving and how each leans), the

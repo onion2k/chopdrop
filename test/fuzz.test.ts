@@ -9,6 +9,7 @@ describe('the fuzzer', () => {
     for (const action of [
       'fly',
       'hover',
+      'let go',
       'climb',
       'land',
       'teleport',

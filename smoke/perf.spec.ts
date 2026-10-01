@@ -20,6 +20,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
+import { HOVER_LIFT } from '../src/helicopter';
 import { WOOD, standardView, start, watch } from './game';
 import { moved as hasMoved, type Figures } from './judging';
 
@@ -61,12 +62,17 @@ test('boots, draws and downloads within budget, and as it did before', async ({ 
   info.annotations.push({ type: 'perf-chase', description: `${chaseMs} ms, not held to the baseline or the budget` });
   console.log(`perf: chase view frame ${chaseMs} ms (not held)`);
   // hovering low in a wood, the trees round it bowed: the frame that writes the trees as well as drawing them
-  const washFrame = await page.evaluate(async (w) => {
-    const g = window.game!;
-    g.teleport(w.x, w.y, 4, 0);
-    g.step(150);
-    return g.measureFrame(50);
-  }, WOOD);
+  const washFrame = await page.evaluate(
+    async ([w, hover]) => {
+      const g = window.game!;
+      g.teleport(w.x, w.y, 4, 0);
+      g.fly(0, 0, hover);
+      g.step(150);
+      g.release();
+      return g.measureFrame(50);
+    },
+    [WOOD, HOVER_LIFT] as const,
+  );
   const washMs = Math.round(washFrame * 1000) / 1000;
   info.annotations.push({ type: 'perf-downwash', description: `${washMs} ms, not held to the baseline or the budget` });
   console.log(`perf: downwash view frame ${washMs} ms (not held)`);

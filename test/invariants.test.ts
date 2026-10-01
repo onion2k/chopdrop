@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HELICOPTER } from '../src/helicopter';
+import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
 import { DT, newGame, thickestWood } from './helpers';
 
@@ -132,6 +132,6 @@ function hovered() {
   const { game } = newGame();
   const wood = thickestWood();
   game.helicopter.placeAbove(wood.x, wood.y, 4, 0);
-  for (let f = 0; f < 120; f++) game.step(DT, { forward: 0, turn: 0, lift: 0 });
+  for (let f = 0; f < 120; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
   return game;
 }
