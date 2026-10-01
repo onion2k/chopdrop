@@ -9,18 +9,26 @@ from artshape-game-template in October 2026.
 
 ## What there is so far
 
-A helicopter, and a square floor walled in by rock to fly it over, with a
-camera that chases it. There is nothing to deliver yet: the deliveries and
-where they go come one feature at a time, through `/feature`. The
-template's stub, a sled shoving balls into a hole, was taken out in the
-second commit, and the first commit keeps it as the model to copy from.
+A helicopter, and an island to fly it over, with a camera that chases it.
+The island is 1,536 units square, land and sea, made once at boot from a
+recipe of numbers and the same every time: a coast of bays and beaches,
+hills and meadows, a snowy range in the north-west, gullies and valleys
+cut where the rain would cut them, lakes, rivers from the hills to the sea,
+some seven thousand trees of five kinds, and nine landing pads with home on
+the south coast. There is nothing to deliver yet: the deliveries and where
+they go come one feature at a time, through `/feature`. The template's stub,
+a sled shoving balls into a hole, was taken out in the second commit, and
+the first commit keeps it as the model to copy from.
 
 ## How it is played
 
 **W** and **S** fly forward and back, **A** and **D** turn, **Space** climbs
 and **Shift** comes down and lands; the arrows do what W A S D do. Let go,
-and it hovers where it is. On a phone it can be watched but not flown yet:
-touch controls are a feature still to come.
+and it hovers where it is. It starts landed on the home pad, climbs to a
+ceiling of 220, above every peak, and sets down on whatever is under it: a
+pad, a field, a lake, or a hillside that rises to meet it, which it has to
+lift over. On a phone it can be watched but not flown yet: touch controls
+are a feature still to come.
 
 ## What is here
 
@@ -44,15 +52,19 @@ is fixed, and no baseline is moved to make it green.
 
 ## Layout
 
-    src/game.ts        the game without the picture: the floor, the helicopter, the clock
-    src/helicopter.ts  the player's machine: how it flies, and its size
+    src/game.ts        the game without the picture: the island, the helicopter, the clock
+    src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
     src/input.ts       the keyboard, as the helicopter's controls
-    src/chase.ts       the camera that follows it
+    src/chase.ts       the camera that follows it, above the ground
     src/debug.ts       window.game, the test API
     src/invariants.ts  what must always hold
-    src/arena.ts       content: the floor and the rock round it
-    src/scene.ts       the arena and the helicopter as they are drawn
+    src/arena.ts       content: the island's recipe, and the one island built from it
+    src/island.ts      the generator: land, water, pads and trees, from a recipe
+    src/heightfield.ts heights on a grid, and the algorithms that read one
+    src/noise.ts       seeded noise, the same in Node and in the page
+    src/scene.ts       the island and the helicopter as they are drawn
+    src/meshes.ts      the shapes: the helicopter, five trees, a landing pad
     src/random.ts      chance, from one seed
     scripts/           the fuzzer
     test/              unit tests
