@@ -5,10 +5,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { TREE_KINDS, theIsland } from '../src/arena';
+import { Canopy } from '../src/canopy';
 import { TREE_STRIDE } from '../src/island';
 import { treeShape } from '../src/meshes';
 import { seeded } from '../src/random';
-import { canopyKinds, islandCanopy } from './helpers';
+import { canopyKinds, islandCanopy, watchedTrees } from './helpers';
 
 const island = theIsland();
 const { trees, treeCount, ground, bounds } = island;
@@ -85,14 +86,37 @@ describe('the canopy', () => {
     expect(canopy.heightAt(trees[o + 1], trees[o + 2])).toBeGreaterThan(ground.heightAt(116, -280) + 9);
   });
 
-  it('finds the height at a point in a few microseconds', () => {
+  it('finds the height at a point from the trees whose crowns could reach it, and not from the rest of the island', () => {
+    const { trees: watched, looked } = watchedTrees();
+    const watchedCanopy = new Canopy({ trees: watched, stride: TREE_STRIDE, count: treeCount, bounds }, kinds);
+    // no crown on the island reaches further from its trunk than the widest kind's at the largest tree's size, so a
+    // tree in a square that could hold a crown over the point stands no further than that and a square from it
+    let scale = 0;
+    for (let t = 0; t < treeCount; t++) scale = Math.max(scale, trees[t * TREE_STRIDE + 5]);
+    const near = Math.max(...kinds.map((k) => k.radius + k.lean * k.top)) * scale + watchedCanopy.grid.cell;
     const random = seeded(2);
-    const points = Array.from({ length: 2000 }, () => [116 + (random() - 0.5) * 200, -280 + (random() - 0.5) * 200]);
-    let sum = 0;
-    const began = performance.now();
-    for (let n = 0; n < 5; n++) for (const [x, y] of points) sum += Math.max(0, canopy.heightAt(x, y));
-    const each = ((performance.now() - began) / (5 * points.length)) * 1000;
-    expect(sum).toBeGreaterThan(0);
-    expect(each, `${each.toFixed(2)} µs`).toBeLessThan(20);
+    let most = 0,
+      strays = 0,
+      looking = 0,
+      wrong = 0;
+    for (let k = 0; k < 2000; k++) {
+      const x = 116 + (random() - 0.5) * 200,
+        y = -280 + (random() - 0.5) * 200;
+      looked.clear();
+      // watched, it gives the answer it gives unwatched
+      if (watchedCanopy.heightAt(x, y) !== canopy.heightAt(x, y)) wrong++;
+      for (const t of looked)
+        if (Math.abs(trees[t * TREE_STRIDE + 1] - x) >= near || Math.abs(trees[t * TREE_STRIDE + 2] - y) >= near)
+          strays++;
+      most = Math.max(most, looked.size);
+      if (looked.size > 0) looking++;
+    }
+    expect(wrong).toBe(0);
+    // most points looked, so what it looked at was watched, and no tree it looked at stood out past the squares round
+    // the point
+    expect(looking).toBeGreaterThan(1500);
+    expect(strays, `trees looked at out past the squares round the point, of ${most} at the most in one go`).toBe(0);
+    // so a question costs the few trees round the point, and not the island's thousands
+    expect(most).toBeLessThan(treeCount / 10);
   });
 });
