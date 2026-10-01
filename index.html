@@ -1,0 +1,116 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+/>
+<title>Chopdrop</title>
+<!-- inline, so the browser does not go asking for a /favicon.ico there is none of -->
+<link
+  rel="icon"
+  href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23e8863a'/%3E%3C/svg%3E"
+/>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #f1eee6;
+    --dim: #a39f94;
+    --gold: #f2c14e;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    background: #0b0a10;
+    overflow: hidden;
+  }
+  body {
+    font:
+      14px/1.5 ui-rounded,
+      'SF Pro Rounded',
+      system-ui,
+      sans-serif;
+    color: var(--ink);
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .panel {
+    position: fixed;
+    padding: 10px 14px;
+    background: rgba(14, 12, 20, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  #bank {
+    top: 16px;
+    left: 16px;
+    font-size: 15px;
+  }
+  #bank b {
+    display: block;
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+  }
+  #stats {
+    top: 16px;
+    right: 16px;
+    text-align: right;
+    color: var(--dim);
+    font-size: 12px;
+  }
+  #help {
+    bottom: 16px;
+    left: 16px;
+    color: var(--dim);
+    font-size: 13px;
+  }
+  #help span {
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    padding: 0 6px;
+  }
+  #boot {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: #0b0a10;
+    transition: opacity 0.4s;
+  }
+  #boot.gone {
+    opacity: 0;
+    pointer-events: none;
+  }
+  #boot p {
+    color: var(--dim);
+  }
+  @media (max-width: 600px) {
+    #help,
+    #stats {
+      display: none;
+    }
+  }
+</style>
+<div id="stage"><canvas id="view"></canvas></div>
+<div class="panel" id="bank" hidden><b>0</b>banked</div>
+<div class="panel" id="stats" hidden></div>
+<div class="panel" id="help" hidden><span>W A S D</span> drive · drag to orbit, wheel to zoom</div>
+<div id="boot">
+  <p id="bootMsg">starting WebGPU…</p>
+</div>
+<script type="module" src="/src/main.ts"></script>

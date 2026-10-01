@@ -1,0 +1,9 @@
+dist
+node_modules
+package-lock.json
+.claude
+test-results
+playwright-report
+
+# saves as the game wrote them, byte for byte
+test/saves/
