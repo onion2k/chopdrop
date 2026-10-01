@@ -1,6 +1,6 @@
 /**
  * The first level, played headless on the island: the helicopter set down on pads as a player lands on them, and
- * what the game tells read back. The parcel loads only after a full ring on the pickup pad, delivers only after one
+ * what the game tells read back. The parcel loads only after a full load's wait on the pickup pad, delivers only after one
  * on the drop pad, and nothing else (hovering, the wrong pad, beside the pad) counts. The clock waits for the first
  * lift-off and stops at the end, and a restart puts it all back.
  */
@@ -57,28 +57,28 @@ describe('the first level', () => {
     expect(mission.target).toBe(-1);
   });
 
-  it('loads the parcel after a full ring landed on the pickup pad, and tells it', () => {
+  it('loads the parcel after a full load landed on the pickup pad, and tells it', () => {
     const { mission, told, pickup, land, fly } = played();
     land(pickup);
     fly(DELIVERY.load - 0.1);
     expect(mission.next).toBe(0);
-    expect(mission.ring).toBeCloseTo(DELIVERY.load - 0.1, 6);
+    expect(mission.loading).toBeCloseTo(DELIVERY.load - 0.1, 6);
     fly(0.2);
     expect(mission.next).toBe(1);
-    expect(mission.ring).toBe(0);
+    expect(mission.loading).toBe(0);
     expect(told).toEqual([`loaded ${pickup}`]);
   });
 
-  it('empties the ring if the helicopter lifts before it is full', () => {
+  it('starts the loading again if the helicopter lifts before it is done', () => {
     const { mission, pickup, land, fly } = played();
     land(pickup);
     fly(1);
     fly(0.5, { forward: 0, turn: 0, lift: 1 });
-    expect(mission.ring).toBe(0);
+    expect(mission.loading).toBe(0);
     land(pickup);
     fly(DELIVERY.load - 0.2);
     expect(mission.next).toBe(0);
-    // a full ring from where it set down again, and no sooner
+    // a full load from where it set down again, and no sooner
     fly(0.3);
     expect(mission.next).toBe(1);
   });
@@ -89,7 +89,7 @@ describe('the first level', () => {
     // a tenth up, nearer the pad than its skids may be from its top and still be on it: only landing counts
     game.helicopter.placeAbove(pads[pickup].x, pads[pickup].y, 0.1, 0);
     fly(3, { forward: 0, turn: 0, lift: HOVER_LIFT });
-    expect(mission.ring).toBe(0);
+    expect(mission.loading).toBe(0);
     for (const pad of [0, drop, 7]) {
       land(pad);
       fly(3);
@@ -100,7 +100,7 @@ describe('the first level', () => {
     expect(told).toEqual([]);
   });
 
-  it('delivers after a full ring on the drop pad, timed from the first lift-off, and stops the clock', () => {
+  it('delivers after a full load on the drop pad, timed from the first lift-off, and stops the clock', () => {
     const { mission, told, pickup, drop, land, fly } = played();
     // the clock waits on the ground
     fly(5);
@@ -133,8 +133,26 @@ describe('the first level', () => {
     game.restart();
     const h = game.helicopter;
     expect([h.x, h.y, h.yaw, h.landed]).toEqual([pads[0].x, pads[0].y, pads[0].yaw, true]);
-    expect([mission.next, mission.ring, mission.time, mission.started]).toEqual([0, 0, 0, false]);
+    expect([mission.next, mission.loading, mission.time, mission.started]).toEqual([0, 0, 0, false]);
     expect(mission.target).toBe(pickup);
+  });
+});
+
+describe('where it wants the helicopter', () => {
+  it('is the top of the pad of the step being done, the same point written afresh, and nowhere once all are done', () => {
+    const { mission, pads, pickup, drop, land, fly } = played();
+    const goal = mission.goal;
+    expect(goal).not.toBeNull();
+    expect([goal!.x, goal!.y, goal!.z]).toEqual([pads[pickup].x, pads[pickup].y, pads[pickup].z]);
+    fly(0.5, { forward: 0, turn: 0, lift: 1 });
+    land(pickup);
+    fly(DELIVERY.load + 0.1);
+    // the same object, moved: it is read every frame, and nothing is made each frame
+    expect(mission.goal).toBe(goal);
+    expect([goal!.x, goal!.y, goal!.z]).toEqual([pads[drop].x, pads[drop].y, pads[drop].z]);
+    land(drop);
+    fly(DELIVERY.load + 0.1);
+    expect(mission.goal).toBeNull();
   });
 });
 
@@ -226,8 +244,12 @@ describe('a level of more steps', () => {
     game.mission.time = 12;
     game.mission.started = true;
     game.mission.play(level);
-    expect([game.mission.level, game.mission.next, game.mission.ring, game.mission.time, game.mission.started]).toEqual(
-      [level, 0, 0, 0, false],
-    );
+    expect([
+      game.mission.level,
+      game.mission.next,
+      game.mission.loading,
+      game.mission.time,
+      game.mission.started,
+    ]).toEqual([level, 0, 0, 0, false]);
   });
 });

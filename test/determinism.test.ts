@@ -64,7 +64,7 @@ describe('the determinism check', () => {
     leaned.sway.leanX[0] += 1e-6;
     expect(hashGame(leaned)).not.toBe(was);
     const filled = game();
-    filled.mission.ring += 1e-6;
+    filled.mission.loading += 1e-6;
     expect(hashGame(filled)).not.toBe(was);
   });
 

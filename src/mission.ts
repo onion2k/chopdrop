@@ -30,6 +30,15 @@ export interface Level {
   name: string;
   kind: LevelKind;
   steps: readonly Step[];
+  /** The pad it is flown from, by its place in the island's list: home, unless it names another beside its course. */
+  start?: number;
+}
+
+/** A point in the world. */
+export interface Point3 {
+  x: number;
+  y: number;
+  z: number;
 }
 
 /** What a mission tells as it happens: a parcel loaded on a pad, one delivered to a pad, and the level done, with its time. */
@@ -59,12 +68,14 @@ export function onPad(h: Readonly<Lander>, pad: Readonly<Pad>): boolean {
 export class Mission {
   /** The step being done, by its place in the level's list; the list's length once the level is done. */
   next = 0;
-  /** How long the helicopter has been landed on the pad it is wanted on, in seconds: it starts again if it lifts. */
-  ring = 0;
+  /** How long the parcel has been loading or unloading: the seconds the helicopter has been landed on the pad it is wanted on, which start again if it lifts. */
+  loading = 0;
   /** The seconds since the helicopter first lifted off, until the last step is done; then the time it took. */
   time = 0;
   /** Whether the helicopter has lifted off since the start: the clock waits for it. */
   started = false;
+  /** Where the step being done wants the helicopter, written in place by `goal`, so reading it each frame makes nothing. */
+  private readonly wanted: Point3 = { x: 0, y: 0, z: 0 };
 
   constructor(
     readonly pads: readonly Pad[],
@@ -92,6 +103,17 @@ export class Mission {
     return this.current?.pad ?? -1;
   }
 
+  /** Where the step being done wants the helicopter, for the arrow and the pilot: the top of its pad; null once all are done. */
+  get goal(): Readonly<Point3> | null {
+    const s = this.current;
+    if (!s) return null;
+    const pad = this.pads[s.pad];
+    this.wanted.x = pad.x;
+    this.wanted.y = pad.y;
+    this.wanted.z = pad.z;
+    return this.wanted;
+  }
+
   /** Whether a parcel is aboard: one picked up and not yet set down. */
   get carrying(): boolean {
     let aboard = 0;
@@ -117,12 +139,12 @@ export class Mission {
     if (!h.landed) this.started = true;
     if (this.started) this.time += dt;
     if (!onPad(h, this.pads[s.pad])) {
-      this.ring = 0;
+      this.loading = 0;
       return;
     }
-    this.ring += dt;
-    if (this.ring < DELIVERY.load) return;
-    this.ring = 0;
+    this.loading += dt;
+    if (this.loading < DELIVERY.load) return;
+    this.loading = 0;
     this.next++;
     if (s.kind === 'pickup') this.events.loaded?.(s.pad);
     else this.events.delivered?.(s.pad);
@@ -135,10 +157,10 @@ export class Mission {
     this.reset();
   }
 
-  /** Back to the start: the first step waiting, the ring empty and the clock waiting. */
+  /** Back to the start: the first step waiting, nothing loading and the clock waiting. */
   reset(): void {
     this.next = 0;
-    this.ring = 0;
+    this.loading = 0;
     this.time = 0;
     this.started = false;
   }

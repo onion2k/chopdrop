@@ -104,7 +104,7 @@ says why. Look at every picture.
   step at a time, and `restart`. It knows nothing of the renderer or the
   page; what happens in it is told through the `GameEvents` handed in.
   `src/mission.ts` is the level as it is flown: its steps done in order
-  (a parcel picked up, a parcel dropped), the ring that fills while the
+  (a parcel picked up, a parcel dropped), the loading that fills while the
   helicopter is landed on the pad it is wanted on (`onPad`, said once), and
   the clock from the first lift-off; the levels themselves are content,
   `LEVELS` in `arena.ts`, each known by an `id` that is a name.
@@ -113,7 +113,7 @@ says why. Look at every picture.
   the height of what it can stand on at every point, not the island.
 - `src/main.ts` is the page. It draws the frame, and turns the game's
   events into words on the screen through `src/hud.ts`: the objective, the
-  arrow and distance to the pad wanted, the ring, the corner button back to
+  arrow and distance to the pad wanted, the loader, the corner button back to
   the levels, and the card at the end with "Next level", "Fly again" and
   "Levels". `src/level-list.ts` is the list of levels the game opens on,
   which holds the game while it is up. There is no game logic here.

@@ -259,16 +259,16 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   expect(await page.evaluate(() => window.game!.events())).toEqual([`loaded ${pickup}`]);
   await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the hilltop pad');
 
-  // lifted off before the ring is full: it empties, and the wait begins again
+  // lifted off before the loading is done: it empties, and the wait begins again
   await landOn(drop);
   await step(45);
-  expect((await state()).mission.ring).toBeGreaterThan(0.5);
-  await expect(page.locator('#hud .ring')).toBeVisible();
+  expect((await state()).mission.loading).toBeGreaterThan(0.5);
+  await expect(page.locator('#hud .loader')).toBeVisible();
   await page.keyboard.down('Space');
   await step(20);
   await page.keyboard.up('Space');
-  expect((await state()).mission.ring).toBe(0);
-  await expect(page.locator('#hud .ring')).toBeHidden();
+  expect((await state()).mission.loading).toBe(0);
+  await expect(page.locator('#hud .loader')).toBeHidden();
   await page.keyboard.down('Shift');
   for (let f = 0; f < 300 && !(await state()).helicopter.landed; f += 10) await step(10);
   await page.keyboard.up('Shift');
@@ -286,7 +286,7 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   await page.locator('#hud .card .again').click();
   await step(1);
   s = await state();
-  expect(s.mission).toMatchObject({ next: 0, ring: 0, time: 0, started: false });
+  expect(s.mission).toMatchObject({ next: 0, loading: 0, time: 0, started: false });
   expect(s.helicopter.landed).toBe(true);
   expect([s.helicopter.x, s.helicopter.y]).toEqual([pads[0].x, pads[0].y]);
   await expect(page.locator('#hud .done')).toBeHidden();

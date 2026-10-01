@@ -72,18 +72,21 @@ export interface GameState {
   /** How it is being flown (by the keys or by touch), the controls it was flown with at the last step, and the touch lever's lift. */
   input: InputState;
   /**
-   * Where the level has got to: which level, its steps and the one being done (the steps' length once all are), the
-   * pad wanted now (−1 once done), whether a parcel is aboard, the ring (seconds landed on that pad), and the time
-   * since the first lift-off and whether that has come.
+   * Where the level has got to: which level, the pad it starts from, its steps and the one being done (the steps'
+   * length once all are), the pad wanted now (−1 once done) and the point it wants the helicopter at (null once done),
+   * whether a parcel is aboard, the loading (seconds landed on that pad), and the time since the first lift-off and
+   * whether that has come.
    */
   mission: {
     level: string;
+    start: number;
     steps: Step[];
     next: number;
     done: boolean;
     target: number;
+    goal: { x: number; y: number; z: number } | null;
     carrying: boolean;
-    ring: number;
+    loading: number;
     time: number;
     started: boolean;
   };
@@ -274,12 +277,14 @@ export function createApi(host: DebugHost): GameApi {
         input: host.input(),
         mission: {
           level: game.mission.level.id,
+          start: game.mission.level.start ?? 0,
           steps: game.mission.level.steps.map((step) => ({ ...step })),
           next: game.mission.next,
           done: game.mission.done,
           target: game.mission.target,
+          goal: game.mission.goal && { ...game.mission.goal },
           carrying: game.mission.carrying,
-          ring: game.mission.ring,
+          loading: game.mission.loading,
           time: game.mission.time,
           started: game.mission.started,
         },

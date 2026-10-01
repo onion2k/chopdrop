@@ -192,7 +192,7 @@ test('goes back to the list mid-flight by Esc or the corner button, and carries 
   await page.evaluate(() => window.game!.release());
   await step(page, 1);
   const again = await state(page);
-  expect(again.mission).toMatchObject({ level: 'first-delivery', next: 0, time: 0, started: false });
+  expect(again.mission).toMatchObject({ level: 'first-delivery', start: 0, next: 0, time: 0, started: false });
   expect(again.helicopter.landed).toBe(true);
   // and the camera is behind it on the pad, as it was when the game began, and not where the flight left it
   expect(again.camera.position.map((v) => +v.toFixed(3))).toEqual(fresh.camera.position.map((v) => +v.toFixed(3)));

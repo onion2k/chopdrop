@@ -2,7 +2,7 @@
  * A pilot that flies the level as a careful player would: up clear of the
  * highest ground between it and the pad that is wanted, turned toward it,
  * across at speed, braked to arrive slowly over it, down onto it, and still
- * while the ring fills. It reads only what a player can see (where the
+ * while the parcel loads. It reads only what a player can see (where the
  * helicopter is and the pad that is wanted) and asks only for what a player
  * can ask for, through the same `Controls`. It draws on no chance and keeps
  * no memory beyond the game's, so the same game flown by it is flown the
@@ -54,7 +54,7 @@ export class Autopilot {
     c.lift = 0;
     if (mission.target < 0) return c;
     const pad = island.pads[mission.target];
-    // on the pad that is wanted: still, while the ring fills
+    // on the pad that is wanted: still, while the parcel loads
     if (onPad(h, pad)) return c;
 
     const dx = pad.x - h.x,

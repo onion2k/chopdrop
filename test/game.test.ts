@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { LEVELS, theIsland } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER } from '../src/helicopter';
-import { DELIVERY } from '../src/mission';
+import { DELIVERY, type Level } from '../src/mission';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 import { DT, newGame } from './helpers';
@@ -111,7 +111,12 @@ describe('the levels in play', () => {
     const home = game.island.pads[0];
     expect([h.x, h.y, h.yaw, h.landed]).toEqual([home.x, home.y, home.yaw, true]);
     expect(game.mission.level.id).toBe('over-the-water');
-    expect([game.mission.next, game.mission.ring, game.mission.time, game.mission.started]).toEqual([0, 0, 0, false]);
+    expect([game.mission.next, game.mission.loading, game.mission.time, game.mission.started]).toEqual([
+      0,
+      0,
+      0,
+      false,
+    ]);
     expect(game.mission.target).toBe(LEVELS[1].steps[0].pad);
   });
 
@@ -158,6 +163,23 @@ describe('the levels in play', () => {
       { id: 'over-the-range', name: 'Over the range', kind: 'delivery', standing: 'locked', best: null },
       { id: 'mountain-drop', name: 'Mountain drop', kind: 'delivery', standing: 'locked', best: null },
     ]);
+  });
+
+  it('starts a level on the pad it names, and on home where it names none, and starts it there again', () => {
+    const away: Level = { ...LEVELS[0], id: 'away', start: 7 };
+    const game = new Game({ random: seeded(1), levels: [LEVELS[0], away] });
+    const at = (pad: number) => {
+      const p = game.island.pads[pad];
+      return [p.x, p.y, p.yaw, true];
+    };
+    const h = game.helicopter;
+    game.play('away');
+    expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(7));
+    for (let f = 0; f < 60; f++) game.step(DT, { forward: 1, turn: 0.4, lift: 1 });
+    game.restart();
+    expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(7));
+    game.play(LEVELS[0].id);
+    expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(0));
   });
 
   it('keeps its save in memory unless handed a store, so a game run without a page writes nowhere', () => {

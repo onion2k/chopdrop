@@ -150,7 +150,7 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('the first level: loading on the meadow pad, the ring half full', async ({ page }) => {
+  test('the first level: loading on the meadow pad, the loader half full', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => {

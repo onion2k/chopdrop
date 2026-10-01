@@ -127,10 +127,10 @@ export class Game {
     }));
   }
 
-  /** The level from the start again: the helicopter landed on home, facing as it was built, and the first step waiting. */
+  /** The level from the start again: the helicopter landed on the pad it starts from, facing as the pad does, and the first step waiting. */
   restart(): void {
-    const home = this.island.pads[0];
-    this.helicopter.place(home.x, home.y, 0, home.yaw);
+    const start = this.island.pads[this.mission.level.start ?? 0];
+    this.helicopter.place(start.x, start.y, 0, start.yaw);
     this.mission.reset();
   }
 

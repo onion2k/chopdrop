@@ -200,7 +200,7 @@ async function main() {
   const touchView = new TouchView(input, document.getElementById('stage')!);
   /** Whether a level has been picked to fly since the page opened: until one is, the list has no flight to go back to. */
   let underway = false;
-  /** The level named `id` from the start: the game, the camera behind the helicopter, the lever down and the card and the list put away. */
+  /** The level named `id` from the start, on its own pad: the game, the camera behind the helicopter, the lever down and the card and the list put away. */
   function play(id: string) {
     game.play(id);
     rig.snap(game.helicopter);

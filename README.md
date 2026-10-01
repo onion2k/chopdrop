@@ -22,7 +22,7 @@ The game opens on a list of four levels, each opened by finishing the one
 before, with the best time on each kept in the browser. Each is a delivery:
 a crate waits on one pad, a gold beacon over it, and an arrow at the top of
 the screen points the way and says how far. Land on the pad and stay while
-the ring fills, and the crate is strapped under the helicopter and the
+the loader fills, and the crate is strapped under the helicopter and the
 beacon moves to the pad it is wanted on; land there and stay, and it is
 delivered, with the time it took from the first lift-off, and the way on to
 the next level, to fly it again, or back to the list. The first is a short

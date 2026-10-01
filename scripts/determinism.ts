@@ -59,7 +59,7 @@ export function hashGame(game: Game): string {
     eat(n);
   eat(game.levels.indexOf(d.level));
   eat(d.next);
-  eat(d.ring);
+  eat(d.loading);
   eat(d.time);
   eat(d.started ? 1 : 0);
   eat(sway.count);

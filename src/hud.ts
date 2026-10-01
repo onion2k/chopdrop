@@ -1,7 +1,7 @@
 /**
  * The words on the screen while a level is flown: what is wanted and at which
  * pad, an arrow turned toward it from where the camera looks and how far off
- * it is, the ring filling while the parcel is loaded or unloaded, a button in
+ * it is, the loader filling while the parcel is loaded or unloaded, a button in
  * the corner back to the list of levels, and the card at the end with the
  * time, the best time on the level, and the ways on: the next level, the same
  * one again, or the list. It reads where the game has got to and is told the
@@ -34,8 +34,8 @@ export function clock(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** How finely the ring is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
-const RING_STEPS = 40;
+/** How finely the loader is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
+const LOADER_STEPS = 40;
 
 /** What the card says a level of each kind ends with. */
 const DONE: Record<LevelKind, string> = { delivery: 'Delivered!' };
@@ -52,9 +52,9 @@ export class Hud {
   private readonly arrow: SVGElement;
   private readonly goal: HTMLElement;
   private readonly far: HTMLElement;
-  private readonly ring: HTMLElement;
+  private readonly loader: HTMLElement;
   private readonly fill: SVGCircleElement;
-  private readonly ringWords: HTMLElement;
+  private readonly loaderWords: HTMLElement;
   private readonly card: HTMLElement;
   private readonly title: HTMLElement;
   private readonly time: HTMLElement;
@@ -62,7 +62,7 @@ export class Hud {
   private readonly next: HTMLButtonElement;
   private readonly again: HTMLButtonElement;
   /** What is on the page now, so nothing is written that has not changed. */
-  private shown = { goal: '', far: '', turn: NaN, ring: -1, ringWords: '', done: false };
+  private shown = { goal: '', far: '', turn: NaN, loader: -1, loaderWords: '', done: false };
   /** Whether the list of levels is up over it: it is hidden, and its keys are the list's. */
   private away = false;
 
@@ -74,7 +74,7 @@ export class Hud {
       <button type="button" class="to-levels" aria-label="Levels" title="Levels (Esc)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="7" height="7" rx="2" /><rect x="11" y="2" width="7" height="7" rx="2" /><rect x="2" y="11" width="7" height="7" rx="2" /><rect x="11" y="11" width="7" height="7" rx="2" /></svg></button>
       <div class="top">
         <div class="bar"><svg class="arrow" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0,-11 L8,7 L0,3 L-8,7 Z" /></svg><span class="goal"></span><span class="far"></span></div>
-        <div class="ring" hidden><svg viewBox="-15 -15 30 30" aria-hidden="true"><circle class="track" r="11" /><circle class="fill" r="11" transform="rotate(-90)" /></svg><span class="what"></span></div>
+        <div class="loader" hidden><svg viewBox="-15 -15 30 30" aria-hidden="true"><circle class="track" r="11" /><circle class="fill" r="11" transform="rotate(-90)" /></svg><span class="what"></span></div>
       </div>
       <div class="done" hidden><div class="card"><h2></h2><div class="time"></div><div class="best"></div>
         <div class="actions"><button type="button" class="next"></button></div>
@@ -85,9 +85,9 @@ export class Hud {
     this.arrow = find<SVGElement>('.arrow');
     this.goal = find<HTMLElement>('.goal');
     this.far = find<HTMLElement>('.far');
-    this.ring = find<HTMLElement>('.ring');
+    this.loader = find<HTMLElement>('.loader');
     this.fill = find<SVGCircleElement>('.fill');
-    this.ringWords = find<HTMLElement>('.what');
+    this.loaderWords = find<HTMLElement>('.what');
     this.card = find<HTMLElement>('.done');
     this.title = find<HTMLElement>('.card h2');
     this.time = find<HTMLElement>('.time');
@@ -134,28 +134,29 @@ export class Hud {
   draw(game: Game, camera: { position: Point; target: Point }): void {
     const d = game.mission;
     const step = d.current;
-    if (this.away || this.shown.done || !step) return;
+    const goal = d.goal;
+    if (this.away || this.shown.done || !step || !goal) return;
     const pad = game.island.pads[step.pad];
     const h = game.helicopter;
-    const goal =
+    const words =
       step.kind === 'pickup' ? `Pick up the parcel at the ${pad.site} pad` : `Deliver it to the ${pad.site} pad`;
-    const far = `${Math.round(Math.hypot(pad.x - h.x, pad.y - h.y))} m`;
-    const turn = pointer(camera, h, pad);
-    const ring = d.ring > 0 ? Math.round((d.ring / DELIVERY.load) * RING_STEPS) : -1;
-    const ringWords = step.kind === 'pickup' ? 'Loading the parcel' : 'Unloading the parcel';
+    const far = `${Math.round(Math.hypot(goal.x - h.x, goal.y - h.y))} m`;
+    const turn = pointer(camera, h, goal);
+    const loader = d.loading > 0 ? Math.round((d.loading / DELIVERY.load) * LOADER_STEPS) : -1;
+    const loaderWords = step.kind === 'pickup' ? 'Loading the parcel' : 'Unloading the parcel';
     const s = this.shown;
-    if (goal !== s.goal) this.goal.textContent = s.goal = goal;
+    if (words !== s.goal) this.goal.textContent = s.goal = words;
     if (far !== s.far) this.far.textContent = s.far = far;
     if (turn !== s.turn) this.arrow.style.transform = `rotate(${(s.turn = turn)}deg)`;
-    if (ring !== s.ring) {
-      this.ring.hidden = ring < 0;
-      if (ring >= 0) {
+    if (loader !== s.loader) {
+      this.loader.hidden = loader < 0;
+      if (loader >= 0) {
         const circle = 2 * Math.PI * 11;
-        this.fill.style.strokeDasharray = `${(circle * ring) / RING_STEPS} ${circle}`;
+        this.fill.style.strokeDasharray = `${(circle * loader) / LOADER_STEPS} ${circle}`;
       }
-      s.ring = ring;
+      s.loader = loader;
     }
-    if (ringWords !== s.ringWords) this.ringWords.textContent = s.ringWords = ringWords;
+    if (loaderWords !== s.loaderWords) this.loaderWords.textContent = s.loaderWords = loaderWords;
   }
 
   /**
@@ -171,7 +172,7 @@ export class Hud {
     this.next.hidden = next === null;
     this.next.textContent = `Next level: ${next ?? ''}`;
     this.card.hidden = false;
-    this.ring.hidden = true;
+    this.loader.hidden = true;
     this.root.classList.add('ended');
     this.shown.done = true;
     (next === null ? this.again : this.next).focus({ preventScroll: true });
@@ -181,7 +182,7 @@ export class Hud {
   fly(): void {
     this.card.hidden = true;
     this.root.classList.remove('ended');
-    this.shown = { goal: '', far: '', turn: NaN, ring: -1, ringWords: '', done: false };
-    this.ring.hidden = true;
+    this.shown = { goal: '', far: '', turn: NaN, loader: -1, loaderWords: '', done: false };
+    this.loader.hidden = true;
   }
 }

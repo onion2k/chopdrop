@@ -106,7 +106,7 @@
     display: none;
   }
   #hud .bar,
-  #hud .ring {
+  #hud .loader {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -134,24 +134,24 @@
     color: #ffc23a;
     white-space: nowrap;
   }
-  #hud .ring {
+  #hud .loader {
     padding: 5px 12px 5px 5px;
     border-radius: 999px;
     font-size: 14px;
   }
-  #hud .ring[hidden] {
+  #hud .loader[hidden] {
     display: none;
   }
-  #hud .ring svg {
+  #hud .loader svg {
     width: 30px;
     height: 30px;
     fill: none;
     stroke-width: 4;
   }
-  #hud .ring .track {
+  #hud .loader .track {
     stroke: rgba(255, 255, 255, 0.2);
   }
-  #hud .ring .fill {
+  #hud .loader .fill {
     stroke: #ffc23a;
     stroke-linecap: round;
   }

@@ -106,7 +106,7 @@ export function checkProgress(game: Game): string[] {
 
 /**
  * What must hold of the level being flown: it is at one of its steps, or past the last; the pad it wants is one of the
- * island's; its ring is a number from nothing to short of a full one, and runs only while the helicopter is landed on
+ * island's; its loading is a number from nothing to short of a full load, and runs only while the helicopter is landed on
  * the pad it is wanted on; and its clock is a number that has not started before the first lift-off.
  */
 export function checkMission(game: Game): string[] {
@@ -117,10 +117,10 @@ export function checkMission(game: Game): string[] {
     return [`no such step: the level is at step ${d.next} of ${steps}`];
   if (d.target < -1 || d.target >= game.island.pads.length || !Number.isInteger(d.target))
     return [`no such pad: the level wants pad ${d.target} of ${game.island.pads.length}`];
-  if (!Number.isFinite(d.ring) || d.ring < 0 || d.ring >= DELIVERY.load)
-    out.push(`the ring reads ${d.ring}, and runs from 0 to short of ${DELIVERY.load}`);
-  else if (d.ring > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
-    out.push(`the ring runs off the pad: ${d.ring.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
+  if (!Number.isFinite(d.loading) || d.loading < 0 || d.loading >= DELIVERY.load)
+    out.push(`the loading reads ${d.loading}, and runs from 0 to short of ${DELIVERY.load}`);
+  else if (d.loading > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
+    out.push(`the loading runs off the pad: ${d.loading.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
   if (!Number.isFinite(d.time) || d.time < 0) out.push(`the level's clock reads ${d.time}`);
   else if (!d.started && d.time > 0) out.push(`the level's clock ran before the first lift-off: ${d.time.toFixed(3)}`);
   return out;
