@@ -1,4 +1,4 @@
-/** The chase camera, stepped headless: where it settles, how fast it gets there, that it never goes under the floor, and the fixed view the pictures are taken from. */
+/** The chase camera, stepped headless: where it settles, how fast it gets there, that it never goes under the ground, and the fixed view the pictures are taken from. */
 import { describe, expect, it } from 'vitest';
 import { CHASE, ChaseCamera, fovFor, type Point } from '../src/chase';
 import { DT } from './helpers';
@@ -6,6 +6,9 @@ import { DT } from './helpers';
 function near(a: Point, b: Point, tolerance = 1e-9) {
   for (let k = 0; k < 3; k++) expect(Math.abs(a[k] - b[k])).toBeLessThanOrEqual(tolerance);
 }
+
+/** Land that rises to +x at one a unit from the origin, and is level behind it: a camera behind something flying up it is under the slope. */
+const RAMP = { heightAt: (x: number) => Math.max(0, x) };
 
 describe('snap', () => {
   it.each([0, Math.PI / 2, 2.2])('puts it behind and above, looking ahead, at a heading of %f', (yaw) => {
@@ -15,6 +18,14 @@ describe('snap', () => {
       s = Math.sin(yaw);
     near(cam.position, [4 - 15 * c, -7 - 15 * s, 9.5]);
     near(cam.target, [4 + 5 * c, -7 + 5 * s, 4.5]);
+  });
+
+  it('is held above the ground under it, when that is higher than the helicopter and what it settles at', () => {
+    const cam = new ChaseCamera(RAMP);
+    // flying toward -x low over the ground, with the camera 15 behind it at +x, where the ground is 15 high
+    cam.snap({ x: 0, y: 0, z: 2, yaw: Math.PI });
+    near(cam.position, [15, 0, 15 + CHASE.minHeight]);
+    near(cam.target, [-5, 0, 3.5]);
   });
 
   it('chases again after a park', () => {
@@ -62,7 +73,7 @@ describe('step', () => {
     near(one.target, two.target);
   });
 
-  it('never goes below the lowest height, following something under the floor', () => {
+  it('never goes below the lowest height, following something under the ground', () => {
     const cam = new ChaseCamera();
     const f = { x: 0, y: 0, z: -5, yaw: 0 };
     cam.snap(f);
@@ -73,7 +84,19 @@ describe('step', () => {
     }
   });
 
-  it('never goes below the lowest height, at the floor with a low setting', () => {
+  it('never goes below the lowest height above the ground under it, following a helicopter down a slope', () => {
+    const cam = new ChaseCamera(RAMP);
+    const f = { x: 20, y: 0, z: 21, yaw: Math.PI };
+    cam.snap(f);
+    for (let n = 0; n < 240; n++) {
+      f.x -= 0.2;
+      f.z = Math.max(0, f.x) + 1;
+      cam.step(DT, f);
+      expect(cam.position[2]).toBeGreaterThanOrEqual(RAMP.heightAt(cam.position[0]) + CHASE.minHeight - 1e-9);
+    }
+  });
+
+  it('never goes below the lowest height, at the ground with a low setting', () => {
     const cam = new ChaseCamera();
     const was = CHASE.up;
     CHASE.up = -3;
@@ -110,6 +133,17 @@ describe('park', () => {
       3 + 40 * Math.sin(0.5) * Math.cos(0.7),
       -2 + 40 * Math.sin(0.5) * Math.sin(0.7),
       40 * Math.cos(0.5),
+    ]);
+  });
+
+  it('looks at the ground at the point and sits relative to it', () => {
+    const cam = new ChaseCamera(RAMP);
+    cam.park(30, 5, { azimuth: 0.7, polar: 0.5, radius: 40 });
+    near(cam.target, [30, 5, 30]);
+    near(cam.position, [
+      30 + 40 * Math.sin(0.5) * Math.cos(0.7),
+      5 + 40 * Math.sin(0.5) * Math.sin(0.7),
+      30 + 40 * Math.cos(0.5),
     ]);
   });
 

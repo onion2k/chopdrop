@@ -13,10 +13,14 @@
  * `chase` sends it back. The page keeps no game logic: this only hands what
  * a test asks for to the game and the camera rig.
  *
+ * The world is an island, and heights are metres above the sea unless the
+ * name says otherwise: `z` is absolute, `height` is above the ground the
+ * helicopter stands on, and `teleport` takes a `height`, so a test says how
+ * high above the land it wants to be and not where the land is.
+ *
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
-import { FLOOR } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
 import type { Game } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
@@ -33,11 +37,17 @@ export interface GameState {
   t: number;
   frame: number;
   paused: boolean;
-  /** Where the helicopter is and how it is going; `vz` is its climb, and `landed` is on the floor. */
+  /**
+   * Where the helicopter is and how it is going. `z` is its skids' height above the sea, `floor` the height of the
+   * ground it stands on here (the most under its middle and its skids) and `height` the one above the other; `vz` is
+   * its climb, and `landed` is on the ground.
+   */
   helicopter: {
     x: number;
     y: number;
     z: number;
+    floor: number;
+    height: number;
     yaw: number;
     pitch: number;
     roll: number;
@@ -48,6 +58,15 @@ export interface GameState {
   };
   /** The camera's mode and its two points, copied: the rig's own arrays move every frame. */
   camera: { mode: 'chase' | 'parked'; position: Point; target: Point };
+}
+
+/** A landing pad: where, the height of its top, its radius and which way its H faces. */
+export interface PadInfo {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  yaw: number;
 }
 
 export interface GameApi {
@@ -65,16 +84,25 @@ export interface GameApi {
   seed(n: number): void;
 
   state(): GameState;
-  /** What the helicopter is kept inside, so a test does not say it twice: the floor, where its middle may go, and the ceiling. */
-  content(): { floor: Bounds; bounds: Bounds; ceiling: number };
+  /**
+   * What the helicopter is kept inside and what is on the island, so a test does not say it twice: where its middle
+   * may go (`bounds`), the island's whole extent (`world`), the highest it can climb to (`ceiling`, above the sea),
+   * the sea's level, the landing pads and the first of them, `home`, which it starts on.
+   */
+  content(): { bounds: Bounds; world: Bounds; ceiling: number; seaLevel: number; pads: PadInfo[]; home: PadInfo };
+  /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
+  groundAt(x: number, y: number): number;
 
   /** The controls held, as if a person held them, until `release`. */
   fly(forward: number, turn: number, lift: number): void;
   /** The controls let go of, and the keyboard read again. */
   release(): void;
-  /** The helicopter put somewhere, stopped and level, facing `yaw` or as it was; the camera goes behind it if it is chasing. */
-  teleport(x: number, y: number, z: number, yaw?: number): void;
-  /** The camera parked looking at a point, from `azimuth` round and `polar` down, `radius` away, at once: the tests' standard view. */
+  /**
+   * The helicopter put somewhere, `height` above the ground there (so 0 is landed), stopped and level, facing `yaw`
+   * or as it was; the camera goes behind it if it is chasing. Kept inside `content().bounds` and under the ceiling.
+   */
+  teleport(x: number, y: number, height: number, yaw?: number): void;
+  /** The camera parked looking at the ground at a point, from `azimuth` round and `polar` down, `radius` away, at once: the tests' standard view. */
   look(x: number, y: number, view?: View): void;
   /** The camera behind the helicopter again, and following it. */
   chase(): void;
@@ -101,6 +129,10 @@ export interface DebugHost {
   draw(dt: number): void;
   frame(): number;
   measureFrame(warm?: number): Promise<number>;
+}
+
+function padInfo({ x, y, z, radius, yaw }: PadInfo): PadInfo {
+  return { x, y, z, radius, yaw };
 }
 
 export function createApi(host: DebugHost): GameApi {
@@ -133,6 +165,8 @@ export function createApi(host: DebugHost): GameApi {
           x: helicopter.x,
           y: helicopter.y,
           z: helicopter.z,
+          floor: helicopter.floor,
+          height: helicopter.height,
           yaw: helicopter.yaw,
           pitch: helicopter.pitch,
           roll: helicopter.roll,
@@ -145,15 +179,19 @@ export function createApi(host: DebugHost): GameApi {
       };
     },
     content: () => ({
-      floor: { ...FLOOR },
       bounds: { ...helicopter.bounds },
+      world: { ...game.island.bounds },
       ceiling: HELICOPTER.ceiling,
+      seaLevel: game.island.seaLevel,
+      pads: game.island.pads.map(padInfo),
+      home: padInfo(game.island.pads[0]),
     }),
+    groundAt: (x, y) => game.island.ground.heightAt(x, y),
 
     fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),
     release: () => host.setControls(null),
-    teleport(x, y, z, yaw = helicopter.yaw) {
-      helicopter.place(x, y, z, yaw);
+    teleport(x, y, height, yaw = helicopter.yaw) {
+      helicopter.placeAbove(x, y, height, yaw);
       if (rig.mode === 'chase') rig.snap(helicopter);
     },
     look: (x, y, view) => rig.park(x, y, view),

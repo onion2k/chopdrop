@@ -20,7 +20,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
-import { start, watch } from './game';
+import { standardView, start, watch } from './game';
 import { moved as hasMoved, type Figures } from './judging';
 
 const BASELINE = 'smoke/perf-baseline.json';
@@ -46,15 +46,10 @@ test('boots, draws and downloads within budget, and as it did before', async ({ 
   const bundle = bundleBytes();
   await start(page, { seed: 11, paused: true });
   const boot = await page.evaluate(() => window.game!.bootMs);
-  // the standard view: the arena settled, seen from the look picture's camera
-  const frame = await page.evaluate(async () => {
-    const g = window.game!;
-    g.step(180);
-    g.look(0, 0, { azimuth: 0.9, polar: 0.95, radius: 90 });
-    g.step(1);
-    // the first measuring on a page just booted: it keeps the GPU drawing for a quarter of a second before it times
-    return g.measureFrame();
-  });
+  // the standard view: the island settled, seen from the look picture's camera
+  await standardView(page);
+  // the first measuring on a page just booted: it keeps the GPU drawing for a quarter of a second before it times
+  const frame = await page.evaluate(() => window.game!.measureFrame());
   // the view a player has: told, not held, since it moves with the flight and has no baseline to be held to
   const chaseFrame = await page.evaluate(async () => {
     const g = window.game!;

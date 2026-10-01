@@ -24,18 +24,30 @@ describe('what must always hold', () => {
     expect(checkInvariants(game).join('\n')).toMatch(/not a number.*vx is NaN, rotor is Infinity/);
   });
 
-  it('reports a helicopter off the floor, and above the ceiling or below the floor', () => {
+  it('reports a helicopter out of bounds, and above the ceiling or below the ground', () => {
     const game = flown();
-    game.helicopter.x = game.helicopter.bounds.maxX + 1;
-    expect(checkInvariants(game).join('\n')).toMatch(/off the floor/);
-    game.helicopter.x = 0;
-    game.helicopter.y = game.helicopter.bounds.minY - 1;
-    expect(checkInvariants(game).join('\n')).toMatch(/off the floor/);
-    game.helicopter.y = 0;
-    game.helicopter.z = HELICOPTER.ceiling + 1;
+    const h = game.helicopter;
+    h.x = h.bounds.maxX + 1;
+    expect(checkInvariants(game).join('\n')).toMatch(/out of bounds/);
+    h.x = 0;
+    h.y = h.bounds.minY - 1;
+    expect(checkInvariants(game).join('\n')).toMatch(/out of bounds/);
+    h.y = 0;
+    h.floor = h.floorAt(h.x, h.y);
+    h.z = HELICOPTER.ceiling + 1;
     expect(checkInvariants(game).join('\n')).toMatch(/out of height/);
-    game.helicopter.z = -1;
+    h.z = h.floor - 1;
     expect(checkInvariants(game).join('\n')).toMatch(/out of height/);
+    h.z = h.floor + 1;
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it('reports a helicopter that thinks it stands on other ground than the ground under it', () => {
+    const game = flown();
+    const h = game.helicopter;
+    h.floor += 5;
+    h.z += 5;
+    expect(checkInvariants(game).join('\n')).toMatch(/standing on the wrong ground/);
   });
 
   it('reports a helicopter going too fast, along or up', () => {
@@ -57,7 +69,7 @@ describe('what must always hold', () => {
     expect(checkInvariants(game).join('\n')).toMatch(/too banked/);
   });
 
-  it('reports a helicopter sinking through the floor', () => {
+  it('reports a helicopter sinking through the ground', () => {
     const { game } = newGame();
     game.helicopter.vz = -1;
     expect(checkInvariants(game).join('\n')).toMatch(/sinking/);

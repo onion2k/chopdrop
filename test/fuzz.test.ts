@@ -6,9 +6,19 @@ describe('the fuzzer', () => {
   it('plays a seed through without breaking a rule, and does everything a player can', () => {
     const r = fuzz(1, 4000);
     expect(r.failure, JSON.stringify(r.failure)).toBe(null);
-    for (const action of ['fly', 'hover', 'climb', 'land', 'teleport', 'edge run'])
+    for (const action of [
+      'fly',
+      'hover',
+      'climb',
+      'land',
+      'teleport',
+      'take off',
+      'edge run',
+      'hill run',
+      'pad landing',
+    ])
       expect(r.done[action], action).toBeGreaterThan(0);
-    for (const happening of ['took off', 'landed', 'reached the ceiling', 'touched the edge'])
+    for (const happening of ['took off', 'landed', 'met rising land', 'reached the ceiling', 'touched the edge'])
       expect(r.happened[happening], happening).toBeGreaterThan(0);
   });
 

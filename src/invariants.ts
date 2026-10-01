@@ -2,9 +2,11 @@
  * What must always be true of the game, however it has been played: the
  * rules that, broken, are a bug whatever the feature was.
  *
- * The helicopter is made of numbers, inside the floor and under the ceiling,
- * never faster, steeper or more banked than it is built to be, and never
- * sinking through the floor it stands on. The clock only runs forward.
+ * The helicopter is made of numbers, inside the world's edge and between
+ * the ground it stands on and the ceiling, never faster, steeper or more
+ * banked than it is built to be, and never sinking through the ground it
+ * stands on. The ground it says it stands on is the ground under it. The
+ * clock only runs forward.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
@@ -24,6 +26,7 @@ export function checkInvariants(game: Game): string[] {
     ['x', h.x],
     ['y', h.y],
     ['z', h.z],
+    ['floor', h.floor],
     ['yaw', h.yaw],
     ['vx', h.vx],
     ['vy', h.vy],
@@ -44,9 +47,16 @@ export function checkInvariants(game: Game): string[] {
       h.y < bounds.minY - TOLERANCE ||
       h.y > bounds.maxY + TOLERANCE
     )
-      out.push(`off the floor: the helicopter is ${where}`);
-    if (h.z < -TOLERANCE || h.z > HELICOPTER.ceiling + TOLERANCE)
-      out.push(`out of height: the helicopter is ${where}, with a ceiling of ${HELICOPTER.ceiling}`);
+      out.push(`out of bounds: the helicopter is ${where}`);
+    if (h.z < h.floor - TOLERANCE || h.z > HELICOPTER.ceiling + TOLERANCE)
+      out.push(
+        `out of height: the helicopter is ${where}, with the ground at ${h.floor.toFixed(2)} and a ceiling of ${HELICOPTER.ceiling}`,
+      );
+    const under = h.floorAt(h.x, h.y);
+    if (Math.abs(h.floor - under) > TOLERANCE)
+      out.push(
+        `standing on the wrong ground: the helicopter ${where} has its floor at ${h.floor.toFixed(2)}, and ${under.toFixed(2)} is under it`,
+      );
     if (h.speed > HELICOPTER.maxSpeed + TOLERANCE)
       out.push(`too fast: the helicopter goes ${h.speed.toFixed(3)} ${where}, and the most is ${HELICOPTER.maxSpeed}`);
     if (Math.abs(h.vz) > HELICOPTER.climbSpeed + TOLERANCE)
@@ -55,8 +65,8 @@ export function checkInvariants(game: Game): string[] {
       out.push(`too steep: the helicopter's pitch is ${h.pitch.toFixed(3)} ${where}`);
     if (Math.abs(h.roll) > HELICOPTER.maxRoll + TOLERANCE)
       out.push(`too banked: the helicopter's roll is ${h.roll.toFixed(3)} ${where}`);
-    if (h.z === 0 && h.vz < 0)
-      out.push(`sinking: the helicopter is on the floor ${where} and falling at ${h.vz.toFixed(3)}`);
+    if (h.landed && h.vz < 0)
+      out.push(`sinking: the helicopter is on the ground ${where} and falling at ${h.vz.toFixed(3)}`);
   }
 
   if (!Number.isFinite(game.t) || game.t < 0) out.push(`the clock reads ${game.t}`);

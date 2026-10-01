@@ -3,11 +3,15 @@
  * axes and nothing else. It climbs, holds its height and lands; flies
  * forward and back along its heading and turns; tilts into what it does,
  * for the eye; and spins its rotor. It is not a body to the physics, and
- * it is kept inside the floor's edge by its own reach, at any height.
+ * it is kept inside the world's edge by its own reach, at any height.
  *
- * It is handed the floor's edge rather than reading the arena, so nothing
- * here knows what the arena is. Without it the game has nothing a player
- * can do, and nothing the camera, the scene or the fuzzer could follow.
+ * Its height is absolute, above the sea, and it is held between the ground
+ * under it and the ceiling. The ground is handed in, a bounds and a height
+ * at every point, so nothing here knows what the island is. The land it
+ * flies over can rise: a helicopter low over a hill is set down on the
+ * slope that meets it, has no thrust there, and has to lift to get over.
+ * Without it the game has nothing a player can do, and nothing the camera,
+ * the scene or the fuzzer could follow.
  */
 
 /** What the player is asking for, each from −1 to 1: forward and back, turning left (+) and right, up (+) and down. */
@@ -17,15 +21,32 @@ export interface Controls {
   lift: number;
 }
 
-/** Nothing asked for: a hover in the air, and rest on the floor. */
+/** Nothing asked for: a hover in the air, and rest on the ground. */
 export const IDLE: Readonly<Controls> = { forward: 0, turn: 0, lift: 0 };
 
-/** A rectangle on the floor, in world units. */
+/** A rectangle on the ground, in world units. */
 export interface Bounds {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
+}
+
+/**
+ * What it flies over: the world's edge, and the height of what it can stand
+ * on at every point (land, water or a pad), which must not allocate, since
+ * it is asked for several times a frame.
+ */
+export interface Ground {
+  bounds: Bounds;
+  heightAt(x: number, y: number): number;
+}
+
+/** Where it starts: a place on the ground, landed, and which way it faces. */
+export interface Start {
+  x: number;
+  y: number;
+  yaw: number;
 }
 
 const ROTOR_RADIUS = 4.4;
@@ -36,31 +57,31 @@ const ROTOR_RADIUS = 4.4;
  * tuned by flying it.
  */
 export const HELICOPTER = {
-  /** Where it starts: landed, facing north. */
+  /** Where it starts when it is not told: landed, facing north. The game starts it on the home pad. */
   start: { x: 0, y: -18, yaw: Math.PI / 2 },
   /** Top speed forward along the heading, and backing. */
-  maxSpeed: 16,
-  backSpeed: 6.4,
+  maxSpeed: 26,
+  backSpeed: 8,
   /** How fast it gets to the speed asked for. */
-  accel: 14,
+  accel: 16,
   /** How fast it slows with nothing asked: the speed falls by this share of itself a second. */
   drag: 1.6,
   /** How fast a drift across the heading dies away, the same way. */
   sideDrag: 3,
-  /** How fast it slides to a stop on the floor, the same way. */
+  /** How fast it slides to a stop on the ground, the same way. */
   groundFriction: 8,
   /** The fastest it turns, and how quickly the turn follows the stick. */
   turnRate: 1.9,
   turnEase: 6,
-  /** The fastest it climbs or sinks, how fast it gets there, and the most its skids can be above the floor. */
-  climbSpeed: 7,
-  climbAccel: 12,
-  ceiling: 28,
+  /** The fastest it climbs or sinks, how fast it gets there, and the highest it can climb to: above the sea, and above every peak. */
+  climbSpeed: 12,
+  climbAccel: 16,
+  ceiling: 220,
   /** The most it tilts nose-down or nose-up, and banks; and how quickly the tilt follows. */
   maxPitch: 0.28,
   maxRoll: 0.35,
   tiltEase: 5,
-  /** The rotor's speed on the floor at rest, and otherwise; how quickly it changes; and the tail rotor's speed against it. */
+  /** The rotor's speed on the ground at rest, and otherwise; how quickly it changes; and the tail rotor's speed against it. */
   rotorIdle: 6,
   rotorFull: 32,
   rotorEase: 2,
@@ -80,17 +101,26 @@ export const HELICOPTER = {
     /** From the skids to the top of the rotor hub, and a little: for the shadow's reach. */
     height: 3.6,
   },
-  /** How far its middle stays from the floor's edge: the rotor's reach, and a margin, so the blades never cut the rock. */
+  /** How far its middle stays from the world's edge: the rotor's reach, and a margin, so the blades never leave the world. */
   reach: ROTOR_RADIUS + 0.5,
+  /**
+   * How far its skids reach from its middle, each way. It stands on the
+   * highest of the ground under the middle and under the four corners of
+   * this, so it never settles with its belly in a slope, and it tilts to
+   * the slope across it.
+   */
+  footprint: 1.8,
 };
 
 export class Helicopter {
-  /** Where it is: its skids' base above the floor at height z, 0 when it has landed. */
-  x: number = HELICOPTER.start.x;
-  y: number = HELICOPTER.start.y;
+  /** Where it is: x and y across the ground, and z the height of its skids' base above the sea. */
+  x = 0;
+  y = 0;
   z = 0;
+  /** The height of the ground it stands on here: the most of the ground under its middle and under its skids. It never goes lower. */
+  floor = 0;
   /** Which way it faces: 0 is +x, and it grows turning left. */
-  yaw: number = HELICOPTER.start.yaw;
+  yaw = 0;
   /** How fast it is going, in the world's axes. */
   vx = 0;
   vy = 0;
@@ -103,20 +133,30 @@ export class Helicopter {
   /** The rotor's angle, kept within a turn, and how fast it is spinning. */
   rotor = 0;
   rotorSpeed: number = HELICOPTER.rotorIdle;
-  /** Where its middle may go: the floor handed in, drawn in by its reach. */
+  /** Where its middle may go: the ground's edge, drawn in by its reach. */
   readonly bounds: Bounds;
+  private readonly ground: Ground;
 
-  constructor(floor: Bounds) {
+  /** On `ground`, landed where `start` says. */
+  constructor(ground: Ground, start: Start = HELICOPTER.start) {
     const r = HELICOPTER.reach;
-    this.bounds = { minX: floor.minX + r, minY: floor.minY + r, maxX: floor.maxX - r, maxY: floor.maxY - r };
+    const edge = ground.bounds;
+    this.ground = ground;
+    this.bounds = { minX: edge.minX + r, minY: edge.minY + r, maxX: edge.maxX - r, maxY: edge.maxY - r };
+    this.place(start.x, start.y, 0, start.yaw);
   }
 
-  /** Whether it is on the floor. */
+  /** Whether it is on the ground. */
   get landed(): boolean {
-    return this.z === 0;
+    return this.z === this.floor;
   }
 
-  /** How fast it is going across the floor. */
+  /** How high its skids are above the ground it stands on. */
+  get height(): number {
+    return this.z - this.floor;
+  }
+
+  /** How fast it is going across the ground. */
   get speed(): number {
     return Math.hypot(this.vx, this.vy);
   }
@@ -126,6 +166,24 @@ export class Helicopter {
     return wrapTurn(this.rotor * HELICOPTER.tailRotorRatio);
   }
 
+  /**
+   * The height it would stand at with its middle at (x, y): the highest of
+   * the ground there and at the four corners of its footprint, so a
+   * helicopter on a slope rests on its uphill skids. The same rule for
+   * the flight, the invariants and the fuzzer.
+   */
+  floorAt(x: number, y: number): number {
+    const g = this.ground;
+    const f = HELICOPTER.footprint;
+    return Math.max(
+      g.heightAt(x, y),
+      g.heightAt(x - f, y - f),
+      g.heightAt(x + f, y - f),
+      g.heightAt(x - f, y + f),
+      g.heightAt(x + f, y + f),
+    );
+  }
+
   /** One step of `dt` seconds, flown so. Allocates nothing: it runs every frame. */
   step(dt: number, controls: Readonly<Controls>): void {
     const H = HELICOPTER;
@@ -133,16 +191,16 @@ export class Helicopter {
     const turn = clamp(controls.turn, -1, 1);
     const lift = clamp(controls.lift, -1, 1);
 
-    // the rotor idles only when it is resting on the floor, and winds up the moment the player asks to leave it
-    const rotorTarget = this.z === 0 && lift <= 0 ? H.rotorIdle : H.rotorFull;
+    // the rotor idles only when it is resting on the ground, and winds up the moment the player asks to leave it
+    const rotorTarget = this.landed && lift <= 0 ? H.rotorIdle : H.rotorFull;
     this.rotorSpeed += (rotorTarget - this.rotorSpeed) * (1 - Math.exp(-H.rotorEase * dt));
     this.rotor = wrapTurn(this.rotor + this.rotorSpeed * dt);
 
-    // up and down: the climb follows the stick, and the floor and the ceiling are hard stops
+    // up and down: the climb follows the stick, and the ground and the ceiling are hard stops
     this.vz = moveToward(this.vz, lift * H.climbSpeed, H.climbAccel * dt);
     this.z += this.vz * dt;
-    if (this.z <= 0) {
-      this.z = 0;
+    if (this.z <= this.floor) {
+      this.z = this.floor;
       this.vz = 0;
     } else if (this.z >= H.ceiling) {
       this.z = H.ceiling;
@@ -150,14 +208,15 @@ export class Helicopter {
     }
 
     const tiltK = 1 - Math.exp(-H.tiltEase * dt);
-    if (this.z === 0) {
-      // the skids are down: no thrust and no turning, only a slide that dies away
+    const grounded = this.z === this.floor;
+    if (grounded) {
+      // the skids are down: no thrust and no turning, only a slide that dies away, and a lean to the slope
       this.yawRate = 0;
       const slide = Math.exp(-H.groundFriction * dt);
       this.vx *= slide;
       this.vy *= slide;
-      this.pitch += (0 - this.pitch) * tiltK;
-      this.roll += (0 - this.roll) * tiltK;
+      this.pitch += (this.slopePitch() - this.pitch) * tiltK;
+      this.roll += (this.slopeRoll() - this.roll) * tiltK;
     } else {
       this.yawRate += (turn * H.turnRate - this.yawRate) * (1 - Math.exp(-H.turnEase * dt));
       this.yaw = wrapYaw(this.yaw + this.yawRate * dt);
@@ -200,24 +259,63 @@ export class Helicopter {
       this.vy = Math.min(this.vy, 0);
     }
 
-    if (this.z > 0) {
+    // the ground where it has got to: skids down they follow it, and in the air land that has risen to meet it sets it on the slope
+    this.floor = this.floorAt(this.x, this.y);
+    if (grounded) this.z = this.floor;
+    else if (this.z < this.floor) {
+      this.z = this.floor;
+      if (this.vz < 0) this.vz = 0;
+    }
+
+    if (!grounded) {
       const banking = Math.min(1, this.speed / (0.5 * H.maxSpeed));
       this.pitch += (H.maxPitch * forward - this.pitch) * tiltK;
       this.roll += (-H.maxRoll * (this.yawRate / H.turnRate) * banking - this.roll) * tiltK;
     }
   }
 
-  /** Put somewhere, kept inside the bounds and under the ceiling, stopped and level. */
+  /**
+   * Put somewhere, kept inside the bounds and between the ground and the
+   * ceiling, stopped and level, or leaning to the slope if it is on the
+   * ground. `z` is a height above the sea.
+   */
   place(x: number, y: number, z: number, yaw: number): void {
     const b = this.bounds;
     this.x = clamp(x, b.minX, b.maxX);
     this.y = clamp(y, b.minY, b.maxY);
-    this.z = clamp(z, 0, HELICOPTER.ceiling);
+    this.floor = this.floorAt(this.x, this.y);
+    this.z = clamp(z, this.floor, HELICOPTER.ceiling);
     this.yaw = wrapYaw(yaw);
     this.vx = this.vy = this.vz = 0;
     this.yawRate = 0;
-    this.pitch = 0;
-    this.roll = 0;
+    this.pitch = this.landed ? this.slopePitch() : 0;
+    this.roll = this.landed ? this.slopeRoll() : 0;
+  }
+
+  /** Put `height` above the ground at (x, y), as `place` otherwise: for a caller who knows how high, and not where the land is. */
+  placeAbove(x: number, y: number, height: number, yaw: number): void {
+    const b = this.bounds;
+    const px = clamp(x, b.minX, b.maxX);
+    const py = clamp(y, b.minY, b.maxY);
+    this.place(px, py, this.floorAt(px, py) + height, yaw);
+  }
+
+  /** The nose-down tilt that lays it along the slope under it, along its heading: nose up where the land rises ahead. */
+  private slopePitch(): number {
+    const c = Math.cos(this.yaw) * HELICOPTER.footprint;
+    const s = Math.sin(this.yaw) * HELICOPTER.footprint;
+    const g = this.ground;
+    const rise = (g.heightAt(this.x + c, this.y + s) - g.heightAt(this.x - c, this.y - s)) / (2 * HELICOPTER.footprint);
+    return clamp(-Math.atan(rise), -HELICOPTER.maxPitch, HELICOPTER.maxPitch);
+  }
+
+  /** The bank that lays it along the slope under it, across its heading: the left side up where the land rises to the left. */
+  private slopeRoll(): number {
+    const c = Math.cos(this.yaw) * HELICOPTER.footprint;
+    const s = Math.sin(this.yaw) * HELICOPTER.footprint;
+    const g = this.ground;
+    const rise = (g.heightAt(this.x - s, this.y + c) - g.heightAt(this.x + s, this.y - c)) / (2 * HELICOPTER.footprint);
+    return clamp(Math.atan(rise), -HELICOPTER.maxRoll, HELICOPTER.maxRoll);
   }
 }
 

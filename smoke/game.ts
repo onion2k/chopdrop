@@ -1,6 +1,9 @@
 /**
  * What the smoke tests share: starting the game in a page and waiting until
- * it is ready, and watching the page for errors. Everything else a test does
+ * it is ready, and watching the page for errors. The game starts with the
+ * helicopter landed on the home pad, so a test begins there: where it wants
+ * to be anywhere else on the island it asks for through `teleport`, with a
+ * height above the ground, and for the pads and the edges through `content`. Everything else a test does
  * goes through `window.game`, the game's test API (`src/debug.ts`), whose
  * types these tests compile against. When the game has a save again, a test
  * hands one in here, written before the page's own scripts run, and never
@@ -48,4 +51,19 @@ export async function ready(page: Page) {
   } catch {
     throw new Error(`the game did not boot: ${await page.locator('#bootMsg').textContent()}`);
   }
+}
+
+/**
+ * The standard view, which every picture and the perf gate's frame are taken from: the game stepped three seconds from
+ * the start, then the camera parked above the home pad, a little to the side, and one more frame drawn. The game must
+ * be paused, so that the steps are the test's own.
+ */
+export async function standardView(page: Page) {
+  await page.evaluate(() => {
+    const g = window.game!;
+    g.step(180);
+    const { home } = g.content();
+    g.look(home.x, home.y, { azimuth: 0.9, polar: 0.95, radius: 90 });
+    g.step(1);
+  });
 }

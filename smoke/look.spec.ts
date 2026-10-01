@@ -1,7 +1,7 @@
 /**
  * What the game looks like, held to pictures taken before. Every other check
  * is on what the game does; nothing until now noticed a palette gone muddy,
- * a light lost, or the rock drawn over the floor.
+ * a light lost, or the sea drawn over the land.
  *
  * Each scene is set through the test API with chance seeded from before the
  * game is built, the game paused, the camera parked by hand, and a fixed
@@ -17,7 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { start, watch } from './game';
+import { standardView, start, watch } from './game';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -25,7 +25,7 @@ import { start, watch } from './game';
  * every core at other work, the arena matched its picture to the pixel even at a threshold of 0, so there is no
  * drift here to allow for. Playwright leaves out a pixel it takes for the edge of a shape smoothed: four such
  * differed, byte for byte, between the picture and one written again two weeks and six renderer versions later. The five-hundredth of the pixels it used to forgive was 2,048 of them, and a button
- * over the arena is 701. A game that draws more (grass, particles, fog) measures its own drift the same way,
+ * over the island is 701. A game that draws more (grass, particles, fog) measures its own drift the same way,
  * before it chooses: `/gate-moved` says how.
  */
 const TOLERANCE = { maxDiffPixels: 0, threshold: 0.02 };
@@ -36,15 +36,10 @@ async function hideStats(page: Page) {
 }
 
 test.describe('what it looks like', () => {
-  test('the arena, from the start', async ({ page }) => {
+  test('the island, from above the home pad', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    await page.evaluate(() => {
-      const g = window.game!;
-      g.step(180);
-      g.look(0, 0, { azimuth: 0.9, polar: 0.95, radius: 90 });
-      g.step(1);
-    });
+    await standardView(page);
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('arena.png', TOLERANCE);
     expect(problems).toEqual([]);
@@ -64,7 +59,8 @@ test.describe('what it looks like', () => {
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => {
       const g = window.game!;
-      g.teleport(0, -10, 8, Math.PI / 2);
+      const { home } = g.content();
+      g.teleport(home.x, home.y, 8, home.yaw);
       g.fly(1, 1, 1);
       g.step(45);
       g.release();
@@ -74,17 +70,14 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('a small thing added to the arena is a change', async ({ page }, info) => {
-    // while the pictures are being written this would write its own, button and all, over the arena's
+  test('a small thing added to the island is a change', async ({ page }, info) => {
+    // while the pictures are being written this would write its own, button and all, over the island's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');
     // the gate held to itself: a button a fifth the size of a thumb, which a tolerance of a five-hundredth of the
     // pixels let through, and let through four times over in a game copied from here
     await start(page, { seed: 11, paused: true });
+    await standardView(page);
     await page.evaluate(() => {
-      const g = window.game!;
-      g.step(180);
-      g.look(0, 0, { azimuth: 0.9, polar: 0.95, radius: 90 });
-      g.step(1);
       const button = document.createElement('button');
       button.textContent = 'Go';
       Object.assign(button.style, { position: 'fixed', left: '600px', top: '380px', font: '12px sans-serif' });
