@@ -13,7 +13,7 @@
  * the island would stand stock still under a helicopter hovering over it.
  */
 import { DOWNWASH, washAt, washStrength, type Wash, type WashSource } from './downwash';
-import type { Bounds } from './helicopter';
+import { TreeGrid, type GridTrees } from './tree-grid';
 
 /** How a tree takes the wash. A lean is how far its top moves across the ground, as a share of its height. */
 export const SWAY = {
@@ -38,11 +38,7 @@ export const SWAY = {
 };
 
 /** The trees a sway is handed: `stride` floats a tree (kind, x, y, z, yaw, scale, …), the world's edge, and how much each kind gives, by its index. */
-export interface SwayTrees {
-  trees: Float32Array;
-  stride: number;
-  count: number;
-  bounds: Bounds;
+export interface SwayTrees extends GridTrees {
   give: readonly number[];
 }
 
@@ -74,11 +70,8 @@ export class Sway {
   /** The wash it was last stepped in, copied: what each tree it holds was held for, whatever has moved since. */
   readonly source: WashSource = { x: 0, y: 0, z: 0, rotorSpeed: 0 };
   private readonly slots: Int32Array;
-  /** The trees sorted into squares of `SWAY.cell`: square c's trees are `cellTrees` from `cellStart[c]` to `cellStart[c + 1]`. */
-  private readonly cellStart: Uint32Array;
-  private readonly cellTrees: Uint32Array;
-  private readonly cols: number;
-  private readonly rows: number;
+  /** The trees sorted into squares of `SWAY.cell`, so those in the wash are found without looking at the rest. */
+  private readonly grid: TreeGrid;
   /** The wash at a tree, written into and read back, so a step makes none. */
   private readonly wash: Wash = { x: 0, y: 0, down: 0 };
 
@@ -98,22 +91,7 @@ export class Sway {
     this.maxLean = SPRING_GAIN * SWAY.lean * most * (1 + SIDE * SWAY.flutter + SWAY.flutter);
     this.maxSquash = SPRING_GAIN * SWAY.squash * most * (1 + SWAY.flutter);
     this.slots = new Int32Array(trees.count).fill(-1);
-
-    // the squares, counted, then filled: built once, and never added to
-    const { minX, minY, maxX, maxY } = trees.bounds;
-    this.cols = Math.max(1, Math.ceil((maxX - minX) / SWAY.cell));
-    this.rows = Math.max(1, Math.ceil((maxY - minY) / SWAY.cell));
-    this.cellStart = new Uint32Array(this.cols * this.rows + 1);
-    this.cellTrees = new Uint32Array(trees.count);
-    const cellOf = new Uint32Array(trees.count);
-    for (let t = 0; t < trees.count; t++) {
-      const o = t * trees.stride;
-      cellOf[t] = this.cell(this.col(trees.trees[o + 1]), this.row(trees.trees[o + 2]));
-      this.cellStart[cellOf[t] + 1]++;
-    }
-    for (let c = 0; c < this.cols * this.rows; c++) this.cellStart[c + 1] += this.cellStart[c];
-    const fill = this.cellStart.slice(0, -1);
-    for (let t = 0; t < trees.count; t++) this.cellTrees[fill[cellOf[t]]++] = t;
+    this.grid = new TreeGrid(trees, SWAY.cell);
   }
 
   /** Where in the pool a tree is, or −1 if it is standing still. */
@@ -177,15 +155,16 @@ export class Sway {
     const { trees, stride } = this.trees;
     const w = this.wash;
     const r = DOWNWASH.reach;
-    const i0 = this.col(source.x - r),
-      i1 = this.col(source.x + r);
-    const j0 = this.row(source.y - r),
-      j1 = this.row(source.y + r);
+    const grid = this.grid;
+    const i0 = grid.col(source.x - r),
+      i1 = grid.col(source.x + r);
+    const j0 = grid.row(source.y - r),
+      j1 = grid.row(source.y + r);
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
-        const c = this.cell(i, j);
-        for (let n = this.cellStart[c]; n < this.cellStart[c + 1]; n++) {
-          const t = this.cellTrees[n];
+        const c = grid.at(i, j);
+        for (let n = grid.cellStart[c]; n < grid.cellStart[c + 1]; n++) {
+          const t = grid.cellTrees[n];
           if (this.slots[t] >= 0) continue;
           const o = t * stride;
           washAt(source, trees[o + 1], trees[o + 2], trees[o + 3], w);
@@ -223,20 +202,6 @@ export class Sway {
   private zero(k: number): void {
     this.leanX[k] = this.leanY[k] = this.squash[k] = 0;
     this.leanXRate[k] = this.leanYRate[k] = this.squashRate[k] = 0;
-  }
-
-  private col(x: number): number {
-    const i = Math.floor((x - this.trees.bounds.minX) / SWAY.cell);
-    return i < 0 ? 0 : i >= this.cols ? this.cols - 1 : i;
-  }
-
-  private row(y: number): number {
-    const j = Math.floor((y - this.trees.bounds.minY) / SWAY.cell);
-    return j < 0 ? 0 : j >= this.rows ? this.rows - 1 : j;
-  }
-
-  private cell(i: number, j: number): number {
-    return j * this.cols + i;
   }
 }
 
