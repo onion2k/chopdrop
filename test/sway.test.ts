@@ -13,7 +13,7 @@ import { checkSway } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
 import { TREE_GIVE, TREE_KINDS } from '../src/arena';
 import { SWAY, reachedLean, type Sway } from '../src/sway';
-import { DT, islandSway, newGame, thickestWood } from './helpers';
+import { DT, islandSway, newGame, thickestWood, watchedTrees } from './helpers';
 
 const island = theIsland();
 const { trees, treeCount, ground } = island;
@@ -316,15 +316,37 @@ describe('the trees in the downwash', () => {
     expect(sway.count).toBeGreaterThan(20);
   });
 
-  it('steps the thickest wood in a small share of a frame', () => {
-    const sway = islandSway();
+  it('looks in a step at the trees near the hub and those already moving, and not at the rest of the island', () => {
+    const { trees: watched, looked } = watchedTrees();
+    const sway = islandSway(SWAY.capacity, watched);
     const source = hovering(wood.x, wood.y, 4);
-    const t = run(sway, source, 1);
-    const frames = 600;
-    const began = performance.now();
-    run(sway, source, frames * DT, t, (s) => (s.x += 0.02));
-    const each = (performance.now() - began) / frames;
+    let t = run(sway, source, 1);
+    /** As far from the hub, each way, as a tree in a square the wash reaches into can stand. */
+    const near = DOWNWASH.reach + SWAY.cell;
+    let most = 0,
+      strays = 0,
+      looking = 0;
+    // drifted across the thickest wood, two squares' width, so the squares looked in change under it
+    for (let f = 0; f < 600; f++) {
+      const moving = new Set(sway.tree.subarray(0, sway.count));
+      source.x += 0.05;
+      source.z = ground.heightAt(source.x, source.y) + 4;
+      t += DT;
+      looked.clear();
+      sway.step(DT, source, t);
+      for (const tree of looked)
+        if (!moving.has(tree) && (Math.abs(tx(tree) - source.x) >= near || Math.abs(ty(tree) - source.y) >= near))
+          strays++;
+      most = Math.max(most, looked.size);
+      if (looked.size > 0) looking++;
+    }
     expect(sway.count).toBeGreaterThan(20);
-    expect(each, `${each.toFixed(4)} ms a step`).toBeLessThan(0.1);
+    // every step looked, so what it looked at was watched, and no tree it looked at stood out past the squares round
+    // the hub unless it was moving already
+    expect(looking).toBe(600);
+    expect(strays, `trees looked at out past the squares round the hub, of ${most} at the most in one go`).toBe(0);
+    // so a step costs the trees near it, even in the thickest wood, and not the island's thousands
+    expect(most).toBeGreaterThan(wood.trees);
+    expect(most).toBeLessThan(treeCount / 10);
   });
 });
