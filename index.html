@@ -15,7 +15,6 @@
     color-scheme: dark;
     --ink: #f1eee6;
     --dim: #a39f94;
-    --gold: #f2c14e;
   }
   * {
     box-sizing: border-box;
@@ -53,18 +52,6 @@
     backdrop-filter: blur(8px);
     pointer-events: none;
   }
-  #bank {
-    top: 16px;
-    left: 16px;
-    font-size: 15px;
-  }
-  #bank b {
-    display: block;
-    font-size: 30px;
-    font-weight: 700;
-    color: var(--gold);
-    font-variant-numeric: tabular-nums;
-  }
   #stats {
     top: 16px;
     right: 16px;
@@ -77,12 +64,6 @@
     left: 16px;
     color: var(--dim);
     font-size: 13px;
-  }
-  #help span {
-    color: var(--ink);
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 5px;
-    padding: 0 6px;
   }
   #boot {
     position: fixed;
@@ -107,9 +88,8 @@
   }
 </style>
 <div id="stage"><canvas id="view"></canvas></div>
-<div class="panel" id="bank" hidden><b>0</b>banked</div>
 <div class="panel" id="stats" hidden></div>
-<div class="panel" id="help" hidden><span>W A S D</span> drive · drag to orbit, wheel to zoom</div>
+<div class="panel" id="help" hidden>drag to orbit, wheel to zoom</div>
 <div id="boot">
   <p id="bootMsg">starting WebGPU…</p>
 </div>

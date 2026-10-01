@@ -1,36 +1,30 @@
 /**
  * The page: the game drawn, and what the player does to it. Everything that
- * happens in the arena happens in `game.ts`; this turns its events into
- * words on the screen and draws the frame, on the game path of
- * artshape-render. There is no game logic here.
+ * happens in the arena happens in `game.ts`; this draws the frame, on the
+ * game path of artshape-render, and will turn what the game says has
+ * happened into words on the screen once it has something to say. There is
+ * no game logic here.
  */
 import { createContext } from 'artshape-render/gpu/context';
 import { Orbit } from 'artshape-render/gpu/camera';
 import { bakeEnvironment } from 'artshape-render/render/env';
 import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer } from 'artshape-render/game/renderer';
-import { HOLE } from './arena';
 import { createApi } from './debug';
 import { frameCost } from './frame-cost';
-import { Game, type GameEvents } from './game';
-import { Input } from './input';
-import { Progress } from './progress';
+import { Game } from './game';
 import { seeded } from './random';
-import { ARENA_BOX, Scene } from './scene';
+import { ARENA_BOX, staticGroups } from './scene';
 
 /** How many millimetres a world unit is: the renderer fixes a few real sizes by it. */
 const MM_PER_UNIT = 100;
 const LIGHT_CAPACITY = 16,
   EFFECT_CAPACITY = 16,
   PARTICLE_CAPACITY = 1024;
-/** How many of the game's events the test API keeps, before the oldest go. */
-const EVENTS_KEPT = 500;
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const boot = document.getElementById('boot')!;
 const bootMsg = document.getElementById('bootMsg')!;
-const bankPanel = document.getElementById('bank')!;
-const bankText = bankPanel.querySelector('b')!;
 const stats = document.getElementById('stats')!;
 const help = document.getElementById('help')!;
 
@@ -60,41 +54,18 @@ async function main() {
   renderer.camera.far = 500;
   renderer.setSunShadow(ARENA_BOX);
 
-  // ---- the game, and what it says has happened ----
+  // ---- the game ----
 
   const query = new URLSearchParams(location.search);
-  const progress = new Progress();
-  const input = new Input();
-  /** What has happened, a line each, for the test API. */
-  const eventLog: string[] = [];
-  const log = (line: string) => {
-    eventLog.push(line);
-    if (eventLog.length > EVENTS_KEPT) eventLog.splice(0, eventLog.length - EVENTS_KEPT);
-  };
-  const showBank = () => {
-    bankText.textContent = String(progress.save.bank);
-  };
-  const events: GameEvents = {
-    banked(_kind, x, y) {
-      log(`banked ${x.toFixed(1)},${y.toFixed(1)}`);
-      showBank();
-    },
-    dropped(_kind, x, y) {
-      log(`dropped ${x.toFixed(1)},${y.toFixed(1)}`);
-    },
-  };
-  // ?seed=N makes chance the same from before the first ball drops, for a test that wants the same arena every run
+  // ?seed=N makes chance the same from before the game is built, for a test that wants the same arena every run
   const seed = query.get('seed');
-  const game = new Game(progress, events, seed !== null ? { random: seeded(+seed) } : {});
-  const { world, sled } = game;
+  const game = new Game(seed !== null ? { random: seeded(+seed) } : {});
 
   // ---- the scene ----
 
-  const scene = new Scene();
-  renderer.setStatic(scene.static(world.solid));
-  renderer.setDynamic(scene.dynamic());
+  renderer.setStatic(staticGroups(game.solid));
   const lights = new LightPool(LIGHT_CAPACITY);
-  lights.add({ position: [HOLE.x, HOLE.y, 14], radius: 40, colour: [1, 0.85, 0.6], intensity: 30 });
+  lights.add({ position: [0, 0, 14], radius: 40, colour: [1, 0.85, 0.6], intensity: 30 });
   renderer.setLights(lights);
 
   const cam = renderer.camera;
@@ -126,12 +97,6 @@ async function main() {
   addEventListener('resize', resize);
   resize();
 
-  function upload() {
-    const balls = scene.write(world, sled);
-    renderer.move(0, scene.balls, balls);
-    renderer.move(1, scene.sled, 1);
-  }
-
   /** Whether a frame is being measured: the frame loop stands still while one is. */
   let measuring = false;
 
@@ -151,10 +116,7 @@ async function main() {
     measuring = true;
     try {
       return await frameCost(
-        () => {
-          upload();
-          return renderer.frame(view, 'redraw', 1 / 60);
-        },
+        () => renderer.frame(view, 'redraw', 1 / 60),
         () => ctx.device.queue.onSubmittedWorkDone(),
         warm,
       );
@@ -166,10 +128,8 @@ async function main() {
 
   await renderer.ready;
   boot.classList.add('gone');
-  bankPanel.hidden = false;
   stats.hidden = false;
   help.hidden = false;
-  showBank();
 
   // ---- each frame ----
 
@@ -177,16 +137,15 @@ async function main() {
   let smoothed = 0;
   function simulate(dt: number) {
     frames++;
-    game.step(dt, input.read());
+    game.step(dt);
   }
   function draw(dt: number) {
     orbit.update();
     cam.update();
-    upload();
     const t = performance.now();
     renderer.frame(ctx.context.getCurrentTexture().createView(), 'redraw', dt);
     smoothed += (performance.now() - t - smoothed) * 0.05;
-    if (frames % 30 === 0) stats.textContent = `${smoothed.toFixed(1)} ms · ${world.live} on the floor`;
+    if (frames % 30 === 0) stats.textContent = `${smoothed.toFixed(1)} ms`;
   }
 
   // ---- the test API, and the frame loop ----
@@ -208,16 +167,12 @@ async function main() {
     simulate,
     draw,
     frame: () => frames,
-    setDrive: (d) => {
-      input.override = d;
-    },
     look(x, y, view) {
       cam.target = [x, y, 0];
       orbit.setSpherical(view);
       for (let i = 0; i < 400; i++) orbit.update();
     },
     measureFrame,
-    events: eventLog,
   });
 
   let last = performance.now();

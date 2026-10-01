@@ -1,53 +1,39 @@
-import { describe, expect, it } from 'vitest';
-import { BALLS, HOLE } from '../src/arena';
-import { checkInvariants } from '../src/invariants';
-import { DT, newGame, settle, still } from './helpers';
+import { describe, expect, it, vi } from 'vitest';
+import { COLS, FLOOR, ORIGIN_X, ORIGIN_Y, ROWS, TILE, WALL } from '../src/arena';
+import { seeded } from '../src/random';
+import { DT, newGame } from './helpers';
 
 describe('the game', () => {
-  it('starts with its balls on the floor, and nothing that must hold broken', () => {
+  it('is a floor walled in by rock, the wall one tile thick and nothing inside it', () => {
     const { game } = newGame();
-    expect(game.world.live).toBe(BALLS);
-    settle(game);
-    expect(game.world.live).toBe(BALLS);
-    expect(checkInvariants(game)).toEqual([]);
+    const { solid } = game;
+    expect(solid.length).toBe(COLS * ROWS);
+    for (let ty = 0; ty < ROWS; ty++)
+      for (let tx = 0; tx < COLS; tx++) {
+        const edge = tx < WALL || ty < WALL || tx >= COLS - WALL || ty >= ROWS - WALL;
+        expect(solid[ty * COLS + tx], `tile ${tx},${ty}`).toBe(edge ? 1 : 0);
+      }
+    // the floor's edge is where the rock starts, in world units
+    expect(FLOOR.minX).toBe(ORIGIN_X + WALL * TILE);
+    expect(FLOOR.maxY).toBe(ORIGIN_Y + (ROWS - WALL) * TILE);
   });
 
-  it('banks a ball down the hole, drops another, and tells of both', () => {
-    const { game, told } = newGame(2);
-    settle(game);
-    const slot = [...Array(game.world.count).keys()].find((i) => game.world.alive[i])!;
-    game.world.x[slot] = HOLE.x;
-    game.world.y[slot] = HOLE.y;
-    game.world.z[slot] = 2;
-    game.world.wake(slot);
-    settle(game, 180);
-    expect(game.progress.bank).toBe(1);
-    expect(game.progress.save.banked).toBe(1);
-    expect(told.some((t) => t.startsWith('banked'))).toBe(true);
-    expect(told.some((t) => t.startsWith('dropped'))).toBe(true);
-    expect(game.world.live, 'the floor keeps its balls').toBe(BALLS);
-    expect(checkInvariants(game)).toEqual([]);
+  it('keeps its own time, a step at a time', () => {
+    const { game } = newGame();
+    for (let f = 0; f < 90; f++) game.step(DT);
+    expect(game.t).toBeCloseTo(1.5, 12);
   });
 
-  it('writes the save when the bank changes, and not before', () => {
-    const { game, store } = newGame(3);
-    settle(game);
-    expect(store.json).toBe(null);
-    game.progress.deposit(1);
-    game.step(DT, still);
-    expect(store.json).toBe(JSON.stringify({ bank: 1, banked: 1 }));
-  });
-
-  it('shoves a ball with the sled', () => {
-    const { game } = newGame(4);
-    settle(game);
-    const slot = [...Array(game.world.count).keys()].find((i) => game.world.alive[i])!;
-    Object.assign(game.sled, { x: -20, y: 0, yaw: 0, speed: 0 });
-    game.world.x[slot] = -12;
-    game.world.y[slot] = 0;
-    game.world.wake(slot);
-    for (let f = 0; f < 90; f++) game.step(DT, { throttle: 1, steer: 0 });
-    expect(game.world.x[slot]).toBeGreaterThan(-8);
-    expect(checkInvariants(game)).toEqual([]);
+  it('takes its chance from the seed it is given, and never from Math.random', () => {
+    const spy = vi.spyOn(Math, 'random');
+    try {
+      const { game } = newGame(5);
+      for (let f = 0; f < 60; f++) game.step(DT);
+      const reference = seeded(5);
+      for (let k = 0; k < 5; k++) expect(game.random()).toBe(reference());
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -9,50 +9,45 @@ from artshape-game-template in October 2026.
 
 ## Not a helicopter yet
 
-What is in `src/` is still the template's stub, and not Chopdrop: a sled on
-a square floor, shoving balls into a hole. `npm run dev` shows that. It
-gives way to the game one feature at a time, through `/feature`, every gate
-green at each step.
+Nothing of the game is built. `npm run dev` shows an empty square floor
+walled in by rock, and that is all: the template's stub, a sled shoving
+balls into a hole, was taken out in the second commit, and the first
+commit keeps it as the model to copy from. The helicopter and the
+deliveries come one feature at a time, through `/feature`.
 
 ## How it is played
 
 Not settled yet: the helicopter's controls, what a delivery is and where
-it goes are for the first features to decide. The stub drives with
-**W A S D** or the arrows; drag to orbit the camera, wheel to zoom.
+it goes are for the first features to decide. For now, drag to orbit the
+camera and wheel to zoom.
 
 ## What is here
 
-Every gate a finished game has, at the size of one thing, ready to be added
-to:
+The gates that still have something to hold:
 
     npm run check:quick    formatting, types, lint, unit tests (the pre-commit hook)
-    npm run fuzz           a monkey plays it, and the rules are checked
-    npm run determinism    the same seed played twice, hashed
-    npm run leaks          a long game, watching what must stay bounded
-    npm run pace:check     how it plays, held to a baseline both ways
-    npm run bench          what the physics costs a frame, held to a baseline
     npm run perf           boot time, a frame's cost and the download, held to a budget and a baseline
     npm run smoke          the real thing in headless Chromium on the GPU
     npm run look           what it looks like, held to a picture
     npm run check          all of it
 
-The line every change goes down is in `CLAUDE.md`: a spec agreed, tests
-seen failing, the change built, every gate run, the result looked at, a
-report with evidence, then a commit. A red gate stops the line until it is
-fixed, and no baseline is moved to make it green.
+The fuzzer, the determinism check, the leak watch, the pace gate, the
+bench, the save corpus and the play-through held the stub, and went with
+it. Each comes back from the first commit with the first feature that
+gives it something to hold; `CLAUDE.md` says which brings back which.
+
+The line every change goes down is in `CLAUDE.md` too: a spec agreed,
+tests seen failing, the change built, every gate run, the result looked at,
+a report with evidence, then a commit. A red gate stops the line until it
+is fixed, and no baseline is moved to make it green.
 
 ## Layout
 
-    src/game.ts        the game without the picture
-    src/main.ts        the page: events into words, the frame drawn
+    src/game.ts        the game without the picture: the walled floor and the clock
+    src/main.ts        the page: the frame drawn
     src/debug.ts       window.game, the test API
-    src/invariants.ts  what must always hold
-    src/autopilot.ts   the game played by itself, for the gates
-    src/arena.ts       content: the floor, the hole, the balls
-    src/progress.ts    the save, and where it is kept
-    src/physics.ts     the game's side of artshape-physics
+    src/arena.ts       content: the floor and the rock round it
     src/scene.ts       the arena as it is drawn
-    src/sled.ts        the player's machine
-    scripts/           the gates, each with its baseline beside it
-    test/              unit tests, and a corpus of every save shape
-    smoke/             Playwright: boots, drives, plays through, looks right
+    src/random.ts      chance, from one seed
+    test/              unit tests
+    smoke/             Playwright: boots, steps, looks right, within budget

@@ -1,9 +1,9 @@
 /**
  * The game as a player gets it: served by Vite, run in Chromium on the real
- * GPU, with a fresh save each test. What the unit tests cannot reach — the
- * renderer, the keyboard, the frame loop, the page — checked for the things
- * that would make it plainly broken: an error, a black screen, a sled that
- * does not move, a save that does not come back.
+ * GPU. What the unit tests cannot reach — the renderer, the frame loop, the
+ * page — checked for the things that would make it plainly broken: an
+ * error, a black screen, a clock the tests cannot stop and step. Each thing
+ * a player can do or keep gets a test here as it is built.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
@@ -47,49 +47,31 @@ test('boots with no errors and draws the arena', async ({ page }, info) => {
   const problems = watch(page);
   await start(page);
   expect(await framesInASecond(page)).toBeGreaterThan(20);
-  const state = await page.evaluate(() => window.game!.state());
-  expect(state.live, 'balls on the floor').toBeGreaterThan(0);
   const shot = await page.screenshot();
   await info.attach('arena', { body: shot, contentType: 'image/png' });
   const c = content(shot);
   expect(c.lit, 'share of the screen lit').toBeGreaterThan(0.2);
   expect(c.spread, 'variety in the picture').toBeGreaterThan(20);
-  expect(await page.evaluate(() => window.game!.invariants())).toEqual([]);
   expect(problems).toEqual([]);
 });
 
-test('drives the sled by the keyboard', async ({ page }) => {
+test('stops where it was built, steps exactly as told, and goes on again', async ({ page }) => {
+  // every picture and every figure the gates hold is taken this way, so it is held here first
   const problems = watch(page);
-  await start(page);
-  const before = await page.evaluate(() => window.game!.state().sled);
-  await page.keyboard.down('w');
-  await expect
-    .poll(() => page.evaluate(() => window.game!.state().sled.y), { timeout: 5000 })
-    .toBeGreaterThan(before.y + 5);
-  await page.keyboard.down('a');
-  await expect
-    .poll(() => page.evaluate(() => window.game!.state().sled.yaw), { timeout: 5000 })
-    .toBeGreaterThan(before.yaw + 0.3);
-  await page.keyboard.up('a');
-  await page.keyboard.up('w');
-  expect(problems).toEqual([]);
-});
-
-test('keeps the bank across a reload', async ({ page }) => {
-  const problems = watch(page);
-  await start(page);
-  const before = await page.evaluate(() => {
-    const g = window.game!;
-    g.pause();
-    g.deposit(123);
-    g.step(1);
-    g.save();
-    return g.state();
+  await start(page, { paused: true });
+  const built = await page.evaluate(() => window.game!.state());
+  expect(built).toEqual({ t: 0, frame: 0, paused: true });
+  const stepped = await page.evaluate(() => {
+    window.game!.step(30);
+    return window.game!.state();
   });
-  await page.reload();
-  await expect.poll(() => page.evaluate(() => window.game?.ready ?? false), { timeout: 60_000 }).toBe(true);
-  const after = await page.evaluate(() => window.game!.state());
-  expect(after.bank).toBe(before.bank);
+  expect(stepped.frame, 'a frame a step').toBe(30);
+  expect(stepped.t, 'a sixtieth of a second a frame').toBeCloseTo(0.5, 9);
+  // paused, the page goes on drawing and the game does not move
+  await framesInASecond(page);
+  expect(await page.evaluate(() => window.game!.state().frame)).toBe(30);
+  await page.evaluate(() => window.game!.resume());
+  await expect.poll(() => page.evaluate(() => window.game!.state().frame), { timeout: 5000 }).toBeGreaterThan(40);
   expect(problems).toEqual([]);
 });
 
@@ -99,7 +81,7 @@ test.describe('on a phone', () => {
   test('boots, and nothing is wider than the screen', async ({ page }, info) => {
     const problems = watch(page);
     await start(page);
-    await expect(page.locator('#bank')).toBeVisible();
+    await expect(page.locator('#view')).toBeVisible();
     await info.attach('phone', { body: await page.screenshot(), contentType: 'image/png' });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(400);
     expect(problems).toEqual([]);

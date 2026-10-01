@@ -1,12 +1,13 @@
 /**
- * What the smoke tests share: starting the game in a page, from a save if
- * the test wants one, and waiting until it is ready; and watching the page
- * for errors. Everything else a test does goes through `window.game`, the
- * game's test API (`src/debug.ts`), whose types these tests compile against.
+ * What the smoke tests share: starting the game in a page and waiting until
+ * it is ready, and watching the page for errors. Everything else a test does
+ * goes through `window.game`, the game's test API (`src/debug.ts`), whose
+ * types these tests compile against. When the game has a save again, a test
+ * hands one in here, written before the page's own scripts run, and never
+ * over the player's: the first commit shows how.
  */
 import { expect, type Page } from '@playwright/test';
 import type { GameApi } from '../src/debug';
-import type { Save } from '../src/progress';
 
 declare global {
   interface Window {
@@ -26,20 +27,12 @@ export function watch(page: Page): string[] {
 }
 
 /**
- * The game in the page, from a save if given (written before the page's own
- * scripts run, and only on the first load, so a reload keeps what was
- * played), and ready. `seed` makes chance the same from before the game is
- * built, and `paused` stops it before a frame of its own has run, so
- * everything after is the test's own stepping.
+ * The game in the page, and ready. `seed` makes chance the same from before
+ * the game is built, and `paused` stops it before a frame of its own has
+ * run, so everything after is the test's own stepping.
  */
-export async function start(page: Page, options: { save?: Partial<Save>; seed?: number; paused?: boolean } = {}) {
-  const { save, seed, paused } = options;
-  if (save)
-    await page.addInitScript((s) => {
-      if (sessionStorage.getItem('game-test-seeded')) return;
-      localStorage.setItem('chopdrop-save-v1', JSON.stringify(s));
-      sessionStorage.setItem('game-test-seeded', '1');
-    }, save);
+export async function start(page: Page, options: { seed?: number; paused?: boolean } = {}) {
+  const { seed, paused } = options;
   const query = new URLSearchParams();
   if (seed !== undefined) query.set('seed', String(seed));
   if (paused) query.set('paused', '1');
