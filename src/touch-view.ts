@@ -87,9 +87,13 @@ export class TouchView {
     this.stop.style.transform = `translateY(${this.leverAt(TOUCH.stop) + this.handle.offsetHeight / 2}px)`;
   }
 
-  /** Shown while flown by touch, and drawn where the thumbs have them, only if anything has moved. */
-  draw(): void {
-    const shown = this.input.by === 'touch';
+  /**
+   * Shown while flown by touch and not `away` behind the list of levels, and drawn where the thumbs have them, only if
+   * anything has moved. Hidden, they cannot be measured: they are measured as they are shown, so they are hidden
+   * whenever they are away, and a phone that opens on the list measures them when it goes.
+   */
+  draw(away = false): void {
+    const shown = !away && this.input.by === 'touch';
     if (shown !== this.shown) {
       this.shown = shown;
       document.body.classList.toggle('touching', shown);

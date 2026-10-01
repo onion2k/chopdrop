@@ -1,15 +1,17 @@
 /**
  * The words on the screen while a level is flown: what is wanted and at which
  * pad, an arrow turned toward it from where the camera looks and how far off
- * it is, the ring filling while the parcel is loaded or unloaded, and the
- * card at the end with the time and a way to fly it again. It reads where
- * the game has got to and is told the end by the game's event; it writes to
- * the page only when a word or a figure on it changes. Without it a player
- * would not know where to go, nor that they had got there.
+ * it is, the ring filling while the parcel is loaded or unloaded, a button in
+ * the corner back to the list of levels, and the card at the end with the
+ * time, the best time on the level, and the ways on: the next level, the same
+ * one again, or the list. It reads where the game has got to and is told the
+ * end by the game's event; it writes to the page only when a word or a figure
+ * on it changes. Without it a player would not know where to go, nor that
+ * they had got there.
  */
 import type { Point } from './chase';
 import type { Game } from './game';
-import { DELIVERY } from './mission';
+import { DELIVERY, type LevelKind } from './mission';
 
 /** How far round the arrow is turned, in degrees clockwise, to point from `from` toward `to` as seen along the camera. */
 export function pointer(
@@ -35,6 +37,16 @@ export function clock(seconds: number): string {
 /** How finely the ring is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
 const RING_STEPS = 40;
 
+/** What the card says a level of each kind ends with. */
+const DONE: Record<LevelKind, string> = { delivery: 'Delivered!' };
+
+/** What the HUD's buttons do, which is the page's to say: the level again, the next one, and the list of levels. */
+export interface HudActions {
+  again: () => void;
+  next: () => void;
+  levels: () => void;
+}
+
 export class Hud {
   private readonly root: HTMLElement;
   private readonly arrow: SVGElement;
@@ -44,21 +56,30 @@ export class Hud {
   private readonly fill: SVGCircleElement;
   private readonly ringWords: HTMLElement;
   private readonly card: HTMLElement;
+  private readonly title: HTMLElement;
   private readonly time: HTMLElement;
-  private readonly button: HTMLButtonElement;
+  private readonly best: HTMLElement;
+  private readonly next: HTMLButtonElement;
+  private readonly again: HTMLButtonElement;
   /** What is on the page now, so nothing is written that has not changed. */
   private shown = { goal: '', far: '', turn: NaN, ring: -1, ringWords: '', done: false };
+  /** Whether the list of levels is up over it: it is hidden, and its keys are the list's. */
+  private away = false;
 
-  constructor(again: () => void) {
+  constructor(actions: HudActions) {
     this.root = document.createElement('div');
     this.root.id = 'hud';
     this.root.hidden = true;
     this.root.innerHTML = `
+      <button type="button" class="to-levels" aria-label="Levels" title="Levels (Esc)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="7" height="7" rx="2" /><rect x="11" y="2" width="7" height="7" rx="2" /><rect x="2" y="11" width="7" height="7" rx="2" /><rect x="11" y="11" width="7" height="7" rx="2" /></svg></button>
       <div class="top">
         <div class="bar"><svg class="arrow" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0,-11 L8,7 L0,3 L-8,7 Z" /></svg><span class="goal"></span><span class="far"></span></div>
         <div class="ring" hidden><svg viewBox="-15 -15 30 30" aria-hidden="true"><circle class="track" r="11" /><circle class="fill" r="11" transform="rotate(-90)" /></svg><span class="what"></span></div>
       </div>
-      <div class="done" hidden><div class="card"><h2>Delivered!</h2><div class="time"></div><button type="button">Fly again</button></div></div>`;
+      <div class="done" hidden><div class="card"><h2></h2><div class="time"></div><div class="best"></div>
+        <div class="actions"><button type="button" class="next"></button></div>
+        <div class="actions"><button type="button" class="again">Fly again</button><button type="button" class="list">Levels</button></div>
+      </div></div>`;
     document.body.append(this.root);
     const find = <T extends Element>(selector: string) => this.root.querySelector(selector) as T;
     this.arrow = find<SVGElement>('.arrow');
@@ -68,15 +89,27 @@ export class Hud {
     this.fill = find<SVGCircleElement>('.fill');
     this.ringWords = find<HTMLElement>('.what');
     this.card = find<HTMLElement>('.done');
+    this.title = find<HTMLElement>('.card h2');
     this.time = find<HTMLElement>('.time');
-    this.button = find<HTMLButtonElement>('button');
+    this.best = find<HTMLElement>('.card .best');
+    this.next = find<HTMLButtonElement>('.next');
+    this.again = find<HTMLButtonElement>('.again');
     const circle = 2 * Math.PI * 11;
     this.fill.style.strokeDasharray = `0 ${circle}`;
-    this.button.addEventListener('click', again);
+    this.next.addEventListener('click', actions.next);
+    this.again.addEventListener('click', actions.again);
+    find<HTMLButtonElement>('.list').addEventListener('click', actions.levels);
+    find<HTMLButtonElement>('.to-levels').addEventListener('click', actions.levels);
     addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && this.shown.done) {
+      // a key the list has already acted on, or one pressed while the list is up, is the list's
+      if (e.defaultPrevented || this.away || this.root.hidden) return;
+      if (e.key === 'Escape') {
         e.preventDefault();
-        again();
+        actions.levels();
+      } else if (e.key === 'Enter' && this.shown.done) {
+        // the card's first way on: the next level, or the same one again after the last
+        e.preventDefault();
+        (this.next.hidden ? actions.again : actions.next)();
       }
     });
   }
@@ -86,11 +119,22 @@ export class Hud {
     this.root.hidden = false;
   }
 
+  /** Hidden while the list of levels is up over it, and shown again when it goes. */
+  set listing(on: boolean) {
+    this.away = on;
+    this.root.classList.toggle('away', on);
+  }
+
+  /** Whether the card is up: the level is done. */
+  get ended(): boolean {
+    return this.shown.done;
+  }
+
   /** The words for where the level has got to, written only where they have changed. */
   draw(game: Game, camera: { position: Point; target: Point }): void {
     const d = game.mission;
     const step = d.current;
-    if (this.shown.done || !step) return;
+    if (this.away || this.shown.done || !step) return;
     const pad = game.island.pads[step.pad];
     const h = game.helicopter;
     const goal =
@@ -114,18 +158,27 @@ export class Hud {
     if (ringWords !== s.ringWords) this.ringWords.textContent = s.ringWords = ringWords;
   }
 
-  /** The end, as the game tells it: the card, with the time it took. */
-  delivered(seconds: number): void {
+  /**
+   * The end, as the game tells it: the card, with what kind of level it was, the time it took, the best time on it
+   * (null if none is kept, which only a level never lifted off from has) and whether this is it, and the next level's
+   * name, or null after the last.
+   */
+  finished(kind: LevelKind, seconds: number, best: number | null, isBest: boolean, next: string | null): void {
+    this.title.textContent = DONE[kind];
     this.time.textContent = `in ${clock(seconds)}`;
+    this.best.hidden = best === null;
+    this.best.textContent = isBest ? '★ New best' : `Best ${clock(best ?? 0)}`;
+    this.next.hidden = next === null;
+    this.next.textContent = `Next level: ${next ?? ''}`;
     this.card.hidden = false;
     this.ring.hidden = true;
     this.root.classList.add('ended');
     this.shown.done = true;
-    this.button.focus({ preventScroll: true });
+    (next === null ? this.again : this.next).focus({ preventScroll: true });
   }
 
-  /** The start again: the card put away, and everything written afresh on the next draw. */
-  again(): void {
+  /** A level flown from the start: the card put away, and everything written afresh on the next draw. */
+  fly(): void {
     this.card.hidden = true;
     this.root.classList.remove('ended');
     this.shown = { goal: '', far: '', turn: NaN, ring: -1, ringWords: '', done: false };

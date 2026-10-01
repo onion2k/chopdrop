@@ -4,6 +4,7 @@
  * about it than about the game.
  */
 import { describe, expect, it } from 'vitest';
+import { LEVELS } from '../src/arena';
 import { Autopilot } from '../src/autopilot';
 import { Game } from '../src/game';
 import { checkInvariants } from '../src/invariants';
@@ -30,6 +31,14 @@ describe('the autopilot', () => {
     expect(took).not.toBeNull();
     expect(took!).toBeGreaterThan(20);
     expect(took!).toBeLessThan(60);
+  });
+
+  it.each(LEVELS.map((level) => level.id))('flies %s from the start to the end, inside two minutes', (id) => {
+    const game = new Game({ random: seeded(1) });
+    game.play(id);
+    const took = flown(game, 120);
+    expect(took).not.toBeNull();
+    expect(game.mission.level.id).toBe(id);
   });
 
   it('finishes it from wherever a player might leave it: high, low, over the sea and beyond the mountains', () => {

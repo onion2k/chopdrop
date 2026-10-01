@@ -1,20 +1,17 @@
 /**
  * How the game paces, played by the autopilot: how many game minutes it
- * takes to deliver the first level, over a few seeds, held to a baseline
- * both ways. Quicker is as much a change as slower: a parcel that loads
- * itself is a bug the same as one that never will.
+ * takes to fly each level to its end, over a few seeds, each held to a
+ * baseline both ways. Quicker is as much a change as slower: a parcel that
+ * loads itself is a bug the same as one that never will, and a level made
+ * shorter than it was is a level changed.
  *
- * Nothing in the game draws on chance yet, so every seed flies the same
- * level the same way and gives the same figure; the seeds are there for
- * when something does, a parcel's pads or the weather, and the median
- * then keeps one odd run from moving it.
+ * Nothing in the game draws on chance yet, so every seed flies a level the
+ * same way and gives the same figure; the seeds are there for when something
+ * does, a parcel's pads or the weather, and the median then keeps one odd
+ * run from moving it.
  *
-
  * `pace-check.ts` runs it: `npm run pace` for the figures, `npm run
  * pace:check` to hold them, `-- --update` to write the baseline again.
- *
- * The figure is a median over the seeds, so one odd run does not move it
- * once the seeds differ, and the tolerance is set out below.
  */
 import { Autopilot } from '../src/autopilot';
 import { Game } from '../src/game';
@@ -23,7 +20,7 @@ import { seeded } from '../src/random';
 const DT = 1 / 60;
 export const CHECK = { seeds: [1, 2, 3, 4], capMinutes: 3 };
 /**
- * How far the figure may move from the baseline, as a share of it, before the check fails. The autopilot flies the
+ * How far a figure may move from the baseline, as a share of it, before the check fails. The autopilot flies the
  * same way every run and on every seed, so the figure does not wobble at all, and anything that moves it (a quicker
  * helicopter, a longer wait on the pad) is a change to be written down: a fifth, the template's, let a helicopter
  * half as fast again through, at a tenth.
@@ -31,22 +28,42 @@ export const CHECK = { seeds: [1, 2, 3, 4], capMinutes: 3 };
 export const TOLERANCE = 0.02;
 
 export interface PaceRun {
+  level: string;
   seed: number;
-  /** Game minutes to deliver the first level, or the cap if it never did. */
+  /** Game minutes to fly the level to its end, or the cap if it never got there. */
   minutes: number;
   finished: boolean;
 }
 
-/** One game from a seed, flown until the parcel is delivered or the time is up. */
-export function paceRun(seed: number, capMinutes = CHECK.capMinutes): PaceRun {
+/** One game from a seed, the level named `level` flown until it is done or the time is up. */
+export function paceRun(level: string, seed: number, capMinutes = CHECK.capMinutes): PaceRun {
   const game = new Game({ random: seeded(seed) });
+  game.play(level);
   const pilot = new Autopilot(game);
   const frames = capMinutes * 3600;
   for (let f = 0; f < frames; f++) {
     pilot.step(DT);
-    if (game.mission.done) return { seed, minutes: round(game.t / 60), finished: true };
+    if (game.mission.done) return { level, seed, minutes: round(game.t / 60), finished: true };
   }
-  return { seed, minutes: capMinutes, finished: false };
+  return { level, seed, minutes: capMinutes, finished: false };
+}
+
+/** Every level the game has, by its name, in order. */
+export function levels(): string[] {
+  return new Game().levels.map((level) => level.id);
+}
+
+/** What is wrong with the figures against the baseline: a level moved, one with no figure kept, and one kept that is gone. */
+export function compare(baseline: Record<string, number>, figures: Record<string, number>): string[] {
+  const out: string[] = [];
+  for (const [level, now] of Object.entries(figures)) {
+    const was = baseline[level] as number | undefined;
+    if (was === undefined) out.push(`${level} has no figure in the baseline`);
+    else if (moved(was, now)) out.push(`${level} moved: ${was} -> ${now} min`);
+  }
+  for (const level of Object.keys(baseline))
+    if (!(level in figures)) out.push(`${level} is in the baseline and is not a level`);
+  return out;
 }
 
 export function median(xs: number[]): number {

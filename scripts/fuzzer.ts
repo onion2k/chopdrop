@@ -5,13 +5,16 @@
  * climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
  * hill, down onto a pad and low over a wood, bowing its trees, onto the
- * pad the parcel is wanted at and waiting there, and flying the level again — with the
+ * pad the parcel is wanted at and waiting there, flying the level again, on
+ * to the next, or any other the list of levels lets a player pick — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
  * The island is big and tall, so the monkey is put where the action is
  * rather than left to find it: heights are asked for above the ground
- * under it, and the runs start near what they run at.
+ * under it, and the runs start near what they run at. It comes back as a
+ * player does, with a save in which the first few levels are done, so the
+ * list lets it pick from as many levels as chance gives it.
  *
  * Only what a player could do. A monkey that did what no player can would
  * find bugs no player will. A new thing a player can do gets an action here.
@@ -24,8 +27,9 @@ import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
-import { TREE_KINDS } from '../src/arena';
+import { LEVELS, TREE_KINDS } from '../src/arena';
 import { treeSize } from '../src/meshes';
+import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 
 const DT = 1 / 60;
@@ -69,9 +73,17 @@ export function fuzz(seed: number, frames: number): FuzzResult {
   });
 
   try {
+    // a player back for another go, with the first few levels done, as many as chance says, none or all
+    const flown = Math.floor(random() * (LEVELS.length + 1));
+    const save = { best: Object.fromEntries(LEVELS.slice(0, flown).map((level, k) => [level.id, 40 + 20 * k])) };
     const game = new Game({
       random: seeded(seed),
-      events: { loaded: () => count(happened, 'loaded'), delivered: () => count(happened, 'delivered') },
+      progress: new Progress(memoryStore(JSON.stringify(save))),
+      events: {
+        loaded: () => count(happened, 'loaded'),
+        delivered: () => count(happened, 'delivered'),
+        finished: (_id, _seconds, best) => count(happened, best ? 'finished, a best time' : 'finished'),
+      },
     });
     const heli = game.helicopter;
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
@@ -258,7 +270,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       {
         name: 'wanted pad',
         places: true,
-        weight: 2,
+        weight: 5,
         go() {
           // over the pad the parcel is wanted at, down onto it, and waiting there as long as a player does, or not quite
           const target = game.mission.target;
@@ -282,6 +294,27 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         go() {
           // the card's button, which is only there once the level is done
           if (game.mission.done) game.restart();
+        },
+      },
+      {
+        name: 'next level',
+        places: true,
+        weight: 1,
+        go() {
+          // the card's way on, there once the level is done and while there is a level after it
+          const after = game.nextLevel;
+          if (game.mission.done && after) game.play(after.id);
+        },
+      },
+      {
+        name: 'pick a level',
+        places: true,
+        weight: 1,
+        go() {
+          // the list, brought up mid-flight or from the card, and any level on it that is not locked flown from the start
+          const open = game.levelList().filter((level) => level.standing !== 'locked');
+          game.play(open[Math.floor(random() * open.length)].id);
+          count(happened, `flew ${game.mission.level.id}`);
         },
       },
       {

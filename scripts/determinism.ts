@@ -40,8 +40,8 @@ export interface TwiceResult {
 
 /**
  * Everything the game is at this moment, as one number in hex: where the helicopter is, how fast it is going and
- * how it is turned and tilted, its rotor; where the level has got to; every tree moving and how it leans; and the
- * clock. Two games with the same hash are the same game, down to the last bit of every float.
+ * how it is turned and tilted, its rotor; which level, and where it has got to; every tree moving and how it leans;
+ * the best times kept; and the clock. Two games with the same hash are the same game, down to the last bit of every float.
  */
 export function hashGame(game: Game): string {
   const { helicopter: h, mission: d, sway } = game;
@@ -57,6 +57,7 @@ export function hashGame(game: Game): string {
   };
   for (const n of [h.x, h.y, h.z, h.floor, h.vx, h.vy, h.vz, h.yaw, h.yawRate, h.pitch, h.roll, h.rotor, h.rotorSpeed])
     eat(n);
+  eat(game.levels.indexOf(d.level));
   eat(d.next);
   eat(d.ring);
   eat(d.time);
@@ -71,17 +72,19 @@ export function hashGame(game: Game): string {
     eat(sway.leanYRate[k]);
     eat(sway.squashRate[k]);
   }
+  eat(game.progress.best.size);
+  for (const seconds of game.progress.best.values()) eat(seconds);
   eat(game.t);
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-/** A game from a seed, flown by the autopilot for `frames` frames, the level flown again each time it is done. */
+/** A game from a seed, flown by the autopilot for `frames` frames, the levels in turn, and the first again after the last. */
 export function* flight(seed: number, frames: number): Generator<Game> {
   const game = new Game({ random: seeded(seed) });
   const pilot = new Autopilot(game);
   for (let f = 1; f <= frames; f++) {
     pilot.step(DT);
-    if (game.mission.done) game.restart();
+    if (game.mission.done) game.play((game.nextLevel ?? game.levels[0]).id);
     yield game;
   }
 }

@@ -36,21 +36,27 @@ async function hideStats(page: Page) {
   await page.locator('#stats').evaluate((el: HTMLElement) => (el.hidden = true));
 }
 
-/** The parcel loaded on the meadow pad and carried half way to the hilltop pad, flying level at it. */
-async function carrying(page: Page) {
-  await page.evaluate((hover) => {
-    const g = window.game!;
-    const [pickup, drop] = g.state().mission.steps.map((step) => step.pad);
-    const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
-    g.teleport(a.x, a.y, 0, 0);
-    g.step(100);
-    const yaw = Math.atan2(b.y - a.y, b.x - a.x);
-    g.teleport(a.x + 0.45 * (b.x - a.x), a.y + 0.45 * (b.y - a.y), 30, yaw);
-    g.fly(1, 0, hover);
-    g.step(50);
-    g.release();
-  }, HOVER_LIFT);
+/** The parcel loaded on the pad it waits on and carried `along` the way to the pad it is wanted on, flying level at it. */
+async function carrying(page: Page, along = 0.45) {
+  await page.evaluate(
+    ([hover, share]) => {
+      const g = window.game!;
+      const [pickup, drop] = g.state().mission.steps.map((step) => step.pad);
+      const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
+      g.teleport(a.x, a.y, 0, 0);
+      g.step(100);
+      const yaw = Math.atan2(b.y - a.y, b.x - a.x);
+      g.teleport(a.x + share * (b.x - a.x), a.y + share * (b.y - a.y), 30, yaw);
+      g.fly(1, 0, hover);
+      g.step(50);
+      g.release();
+    },
+    [HOVER_LIFT, along],
+  );
 }
+
+/** Two levels done, so the list shows each standing a level can have: done with its time, open and picked, and locked. */
+const TWO_DONE = { best: { 'first-delivery': 41.2, 'over-the-water': 63.5 } };
 
 /**
  * The parcel taken from the meadow pad to the hilltop pad and delivered, the card up: lifted off first, as a player
@@ -176,6 +182,26 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('over the water: the parcel carried out over the lake, toward the lakeside pad', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate(() => window.game!.play('over-the-water'));
+    await carrying(page, 0.62);
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the lakeside pad');
+    await expect(page.locator('#view')).toHaveScreenshot('level-over-the-water.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the list of levels over the island dimmed: two done, the third picked, the last locked', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, list: true, save: TWO_DONE });
+    await page.evaluate(() => window.game!.step(1));
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('levels.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('a small thing added to the island is a change', async ({ page }, info) => {
     // while the pictures are being written this would write its own, button and all, over the island's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');
@@ -245,6 +271,15 @@ test.describe('the first level on a phone, upright', () => {
     await page.evaluate(() => window.game!.restart());
     await delivered(page);
     await expect(page).toHaveScreenshot('level-phone-delivered.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the list of levels, two columns of them', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, list: true, save: TWO_DONE });
+    await page.evaluate(() => window.game!.step(1));
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('levels-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 });

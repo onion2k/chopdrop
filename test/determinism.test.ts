@@ -3,7 +3,7 @@
  * says the frame two runs parted at, so a run that does not repeat itself is found and not just suspected.
  */
 import { describe, expect, it } from 'vitest';
-import { hashGame, playTwice } from '../scripts/determinism';
+import { flight, hashGame, playTwice } from '../scripts/determinism';
 import { Game } from '../src/game';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
@@ -15,6 +15,33 @@ describe('the determinism check', () => {
     expect(r.checkpoints).toHaveLength(12);
     // and the run got somewhere: the checkpoints are not all one
     expect(new Set(r.checkpoints).size).toBeGreaterThan(6);
+  });
+
+  it('flies the levels in turn, each from the start once the one before is done, and the first again after the last', () => {
+    const seen: string[] = [];
+    let at = '';
+    // long enough for all four, about four minutes of game, and the first begun again
+    for (const game of flight(1, 60 * 60 * 5)) {
+      if (game.mission.level.id !== at) seen.push((at = game.mission.level.id));
+    }
+    expect(seen.slice(0, 5)).toEqual([
+      'first-delivery',
+      'over-the-water',
+      'over-the-range',
+      'mountain-drop',
+      'first-delivery',
+    ]);
+  });
+
+  it('sees which level it is and the best times kept, as well as where the helicopter is', () => {
+    const game = () => new Game({ random: seeded(1) });
+    const was = hashGame(game());
+    const other = game();
+    other.play('mountain-drop');
+    expect(hashGame(other)).not.toBe(was);
+    const kept = game();
+    kept.progress.record('first-delivery', 40);
+    expect(hashGame(kept)).not.toBe(was);
   });
 
   it('sees the helicopter moved a thousandth, turned a millionth, a tree leaned, and the ring a hair fuller', () => {

@@ -1,13 +1,15 @@
 /**
  * What the smoke tests share: starting the game in a page and waiting until
- * it is ready, and watching the page for errors. The game starts with the
- * helicopter landed on the home pad, so a test begins there: where it wants
- * to be anywhere else on the island it asks for through `teleport`, with a
- * height above the ground, and for the pads and the edges through `content`. Everything else a test does
- * goes through `window.game`, the game's test API (`src/debug.ts`), whose
- * types these tests compile against. When the game has a save again, a test
- * hands one in here, written before the page's own scripts run, and never
- * over the player's: the first commit shows how.
+ * it is ready, and watching the page for errors. The game opens on the list
+ * of levels; a test is taken straight into the first level, as picking it
+ * there does, unless it is about the list. The helicopter starts landed on
+ * the home pad, so a test begins there: where it wants to be anywhere else on
+ * the island it asks for through `teleport`, with a height above the ground,
+ * and for the pads and the edges through `content`. Everything else a test
+ * does goes through `window.game`, the game's test API (`src/debug.ts`),
+ * whose types these tests compile against. A test's save is handed in here,
+ * written before the page's own scripts run, in the test's own fresh browser
+ * and never over the player's.
  */
 import { expect, type Page } from '@playwright/test';
 import type { GameApi } from '../src/debug';
@@ -36,18 +38,38 @@ export function watch(page: Page): string[] {
   return problems;
 }
 
+/** The key the game keeps its save under, given out with the first save. */
+export const SAVE_KEY = 'chopdrop-save-v1';
+
 /**
  * The game in the page, and ready. `seed` makes chance the same from before
  * the game is built, and `paused` stops it before a frame of its own has
- * run, so everything after is the test's own stepping.
+ * run, so everything after is the test's own stepping. `save` is what the
+ * player has done, as the game writes it, or a string to be kept as it is,
+ * written once before the page first loads, so a reload reads what the game
+ * wrote since. `list` leaves the list of levels up; otherwise the first level
+ * is flown, as picking it there does.
  */
-export async function start(page: Page, options: { seed?: number; paused?: boolean } = {}) {
-  const { seed, paused } = options;
+export async function start(
+  page: Page,
+  options: { seed?: number; paused?: boolean; save?: { best: Record<string, number> } | string; list?: boolean } = {},
+) {
+  const { seed, paused, save, list } = options;
+  if (save !== undefined)
+    await page.addInitScript(
+      ({ key, json }) => {
+        if (sessionStorage.getItem('chopdrop-test-saved')) return;
+        localStorage.setItem(key, json);
+        sessionStorage.setItem('chopdrop-test-saved', '1');
+      },
+      { key: SAVE_KEY, json: typeof save === 'string' ? save : JSON.stringify(save) },
+    );
   const query = new URLSearchParams();
   if (seed !== undefined) query.set('seed', String(seed));
   if (paused) query.set('paused', '1');
   await page.goto(query.size ? `/?${query.toString()}` : '/');
   await ready(page);
+  if (!list) await page.evaluate(() => window.game!.play('first-delivery'));
 }
 
 /** Wait until the game is booted and its frame loop running, or say what the boot screen was stuck on. */

@@ -6,7 +6,8 @@
  * the ground it stands on and the ceiling, never faster, steeper or more
  * banked than it is built to be, and never sinking through the ground it
  * stands on. The ground it says it stands on is the ground under it. The
- * clock only runs forward.
+ * clock only runs forward. A level is at one of its steps, and a best time
+ * is a time, and never slower than the level was just done in.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
@@ -78,6 +79,28 @@ export function checkInvariants(game: Game): string[] {
   if (!Number.isFinite(game.t) || game.t < 0) out.push(`the clock reads ${game.t}`);
   out.push(...checkSway(game.sway));
   out.push(...checkMission(game));
+  out.push(...checkProgress(game));
+  return out;
+}
+
+/**
+ * What must hold of the player's best times: each one is a time, and the level being flown, once done, has a time
+ * kept and one no slower than it was just done in, since a best time is only ever lowered. A level never lifted off
+ * from, which only a test's teleport can finish, is not timed.
+ */
+export function checkProgress(game: Game): string[] {
+  const out: string[] = [];
+  for (const [id, seconds] of game.progress.best)
+    if (!Number.isFinite(seconds) || seconds <= 0) out.push(`the best time on ${id} is ${seconds}, not a time`);
+  const { mission } = game;
+  if (!mission.done || !mission.started) return out;
+  const { id } = mission.level;
+  const best = game.progress.best.get(id);
+  if (best === undefined) out.push(`${id} is done, and no time is kept for it`);
+  else if (best > mission.time + TOLERANCE)
+    out.push(
+      `the best time on ${id} is ${best.toFixed(3)} s, slower than the ${mission.time.toFixed(3)} s it was just done in`,
+    );
   return out;
 }
 

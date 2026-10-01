@@ -9,9 +9,12 @@ rules in `~/.claude/CLAUDE.md` apply too.
 
 The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
-from a recipe, its trees bowing in the rotor's downwash, and one level: a
-parcel picked up on the meadow pad and delivered to the hilltop pad. Nothing
-else is: no second level, no physics and no save. The template's stub, a sled
+from a recipe, its trees bowing in the rotor's downwash, and four levels,
+each a parcel picked up on one pad and delivered to another, opened one by
+one from the list the game opens on, the best time on each kept in a save.
+The ring trials, the search and the course are still to come between them
+(the plan is `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there
+is no physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
 stub and every gate that held it: it is the model to copy from, and
 `git show eda26d8:<path>` reads any of it.
@@ -59,11 +62,11 @@ should not have is looked into.
 
 The game itself is held too, played by the autopilot:
 
-| Property                                                     | Held to                                      | Held by       |
-| ------------------------------------------------------------ | -------------------------------------------- | ------------- |
-| The first level delivered, in game minutes, median seeds 1-4 | `scripts/pace-baseline.json` ± 2%, both ways | `pace:check`  |
-| The same seed played twice is the same game                  | seeds 1-6, 3600 frames, hashed every 300     | `determinism` |
-| What is kept stays bounded over ten game minutes             | ceilings in `scripts/leaks.ts`               | `leaks:check` |
+| Property                                              | Held to                                            | Held by       |
+| ----------------------------------------------------- | -------------------------------------------------- | ------------- |
+| Each level flown to its end, game minutes, median 1-4 | `scripts/pace-baseline.json`, each ± 2%, both ways | `pace:check`  |
+| The same seed played twice is the same game           | seeds 1-6, 3600 frames, hashed every 300           | `determinism` |
+| What is kept stays bounded over ten game minutes      | ceilings in `scripts/leaks.ts`                     | `leaks:check` |
 
 The autopilot flies the same way every run and, with nothing in the game
 drawing on chance yet, on every seed, so the pace does not wobble and is
@@ -75,7 +78,7 @@ back with the first body.
 
     npm run dev            the game at http://localhost:5202
     npm run check:quick    formatting, types, lint, unit tests (the pre-commit hook)
-    npm run check          all of it: check:quick, fuzz, determinism, leaks, pace, then smoke with perf and look (~65 s)
+    npm run check          all of it: check:quick, fuzz, determinism, leaks, pace, then smoke with perf and look (~70 s)
     npm test               unit tests (Vitest, test/)
     npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again
     npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget;
@@ -84,7 +87,7 @@ back with the first body.
     npm run look           the scenes held to the pictures in smoke/screens, to the pixel
     npm run determinism    seeds flown twice by the autopilot, the same each time
     npm run leaks          an hour flown, watching what is kept (leaks:check, in the check, is ten minutes)
-    npm run pace           game minutes to deliver the first level (pace:check holds it; -- --update writes it)
+    npm run pace           game minutes to fly each level to its end (pace:check holds them; -- --update writes them)
 
 A unit test is allowed thirty seconds, and `vitest.config.ts` says why: the
 limit is there to catch a test that never ends.
@@ -110,8 +113,10 @@ says why. Look at every picture.
   the height of what it can stand on at every point, not the island.
 - `src/main.ts` is the page. It draws the frame, and turns the game's
   events into words on the screen through `src/hud.ts`: the objective, the
-  arrow and distance to the pad wanted, the ring, and the card at the end
-  with "Fly again". There is no game logic here.
+  arrow and distance to the pad wanted, the ring, the corner button back to
+  the levels, and the card at the end with "Next level", "Fly again" and
+  "Levels". `src/level-list.ts` is the list of levels the game opens on,
+  which holds the game while it is up. There is no game logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
   fingers as numbers and tested headless, and drawn and fed by the page in
@@ -131,8 +136,10 @@ says why. Look at every picture.
   nothing held sinks; `release`; `teleport`, which takes a height above the
   ground and not a height above the sea), the ground (`groundAt`), what is
   on the island (`content`: the pads, home, the bounds and the ceiling), the
-  level (`state().delivery`, `events()`, which takes what the game has
-  told, and `restart`), the trees (`treesNear`, each with its height and
+  level (`state().mission`, `events()`, which takes what the game has
+  told, `restart`, and `play`, which flies any level as the list does, locked
+  or not), the levels and the save (`levels`, `save`), what is on the
+  screen (`state().screen`), the trees (`treesNear`, each with its height and
   spread as drawn, and `sway`:
   which are moving and how each leans), the
   camera (`look` parks it, `chase` sends it back), how it is being flown
@@ -151,7 +158,10 @@ says why. Look at every picture.
   seeded noise. Chance comes from `random.ts`, handed in. `scene.ts` is the
   island and the helicopter as drawn; `matrix.ts` places, tilts and spins;
   `meshes.ts` builds the shapes.
-- There is no physics or save yet. `artshape-physics` stays pinned in
+- `src/progress.ts` is the save: the best time on each level by its
+  name, kept under `chopdrop-save-v1`, read as if anyone had written it.
+  Which levels are open is worked out from it, never kept.
+- There is no physics yet. `artshape-physics` stays pinned in
   `package.json`, and `src/physics.ts` comes back as the one door to it with
   the first body; nothing else imports the package. A change it needs goes
   in that repo, with a version bump here.
@@ -171,15 +181,13 @@ none, because it looks like it does. Each comes back from `eda26d8` with
 the first feature that gives it something to hold, in the same change, with
 its `package.json` script, its place in `npm run check` and its unit tests:
 
-- **The save** (`src/progress.ts`, `test/saves/`, the save in
-  `smoke/game.ts`'s `start`), with the first thing kept between visits. Its
-  key is `chopdrop-save-v1`.
 - **The physics, the bench and the body invariants** (`src/physics.ts`,
   `scripts/bench.ts`, `scripts/benching.ts`), with the first body on the
   island, a delivery most likely.
   The invariants and the fuzzer came back with the helicopter; the
   autopilot, determinism, leaks, pace and the play-through
-  (`smoke/progress.spec.ts`) with the first level. The leak watch reads the
+  (`smoke/progress.spec.ts`, every level in turn) with the first level; the
+  save (`test/saves/`) with the levels. The leak watch reads the
   heap and the memory behind typed arrays, which Node keeps apart: a pool
   kept for ever is in the second, and reading the heap alone let 345 MB of
   them by.
@@ -206,6 +214,14 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   and "fly again"; flown through by key and by touch in
   `smoke/game.spec.ts`, and pictured (`level-loading.png`,
   `level-carrying.png`, `level-delivered.png`, and on a phone).
+- **A level**, for anything a player can finish: its steps in `LEVELS`,
+  its name in players' saves; a tile on the list (`level-list.ts`), its
+  best time kept by `game.ts` through `progress.ts` and ruled by
+  `checkProgress`; flown on to by the fuzzer's "next level" and "pick a
+  level", which comes back with a save; timed by `pace`, flown in turn by
+  `determinism` and `leaks`, and finished by the play-through; its pads
+  pinned in `test/levels.test.ts`; the list pictured (`levels.png`,
+  `levels-phone.png`) and worked in `smoke/levels.spec.ts`.
 - **The island**, for anything on the land: its recipe in `arena.ts`,
   generated by `island.ts` from `heightfield.ts` and `noise.ts`, once, at
   boot. Its ground, the land and the water over it and the pads' tops, is
@@ -261,9 +277,9 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   weighed against the download budget before it is added.
 - **Every kind of thing is handled everywhere.** A new body kind, event,
   save field or scene has to work in every path it can reach.
-- **Save compatibility.** Once there is a save, a new field needs a default
-  in `progress.ts` and a save in the new shape in `test/saves/`; the corpus
-  test fails until it is there.
+- **Save compatibility.** A new field needs a default in `progress.ts`
+  and a save in the new shape in `test/saves/`; the corpus test fails until
+  it is there. A level's `id` is in players' saves: it is never changed.
 - **Match the style.** Comments are full sentences in the house voice,
   saying why and not what. Prettier decides the formatting.
 
@@ -306,8 +322,9 @@ Use headless Playwright (`start()` in `smoke/game.ts`) for anything seen or
 measured; the in-app browser pane pauses when hidden. Control time through
 the API: `pause()`, `seed(n)`, then `step(frames)`, never a timeout; fly
 with `fly()` or real keys, and take a fixed view with `look()`. Never
-write over the player's save; once there is one, a test save goes in
-through `start(page, { save })`, as in the first commit.
+write over the player's save: a test's goes in through
+`start(page, { save })`, which flies the first level unless asked to leave
+the list up with `list: true`.
 
 ## Commits
 

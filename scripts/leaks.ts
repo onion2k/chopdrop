@@ -1,7 +1,8 @@
 /**
  * A long game played through, watching the things that must not keep
- * growing: the trees moving in the downwash, and the heap. The autopilot
- * flies the level, and flies it again each time it is delivered.
+ * growing: the trees moving in the downwash, the best times kept, and the
+ * heap. The autopilot flies the levels in turn, and the first again after
+ * the last.
  *
  * A map that is added to and never emptied does not throw, break a rule, or
  * move any gate's figure. It shows up an hour into a game as a machine that
@@ -16,7 +17,9 @@
  * through is not. A new list, map or cache in the game gets a line in
  * `WATCH` and a reading in `sizes`.
  */
+import { LEVELS } from '../src/arena';
 import type { Game } from '../src/game';
+import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
 import { flight } from './determinism';
 
@@ -28,6 +31,8 @@ import { flight } from './determinism';
 export const WATCH: Partial<Record<string, { ceiling: number; steady?: boolean }>> = {
   // the pool the moving trees are kept in has room for this many and no more; the most seen is 150
   'trees moving': { ceiling: SWAY.capacity },
+  // a time for each level the game has, and those a save brought with it, which is cut short at its own limit
+  'best times kept': { ceiling: LEVELS.length + SAVE.kept },
   // the catch-all for what is leaking and has no name here; noisy, so it is given a lot of room
   'heap MB': { ceiling: 300, steady: true },
 };
@@ -36,6 +41,7 @@ export const WATCH: Partial<Record<string, { ceiling: number; steady?: boolean }
 export function sizes(game: Game): Record<string, number> {
   return {
     'trees moving': game.sway.count,
+    'best times kept': game.progress.best.size,
     // the heap and the memory behind typed arrays, which Node keeps apart from it: a pool kept for ever is in the second
     'heap MB': Math.round((process.memoryUsage().heapUsed + process.memoryUsage().arrayBuffers) / 1e5) / 10,
   };

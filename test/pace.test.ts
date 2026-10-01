@@ -1,6 +1,7 @@
-/** The pace gate's arithmetic: what it holds, and how it decides a figure has moved. */
+/** The pace gate's arithmetic: what it holds, level by level, and how it decides a figure has moved. */
 import { describe, expect, it } from 'vitest';
-import { median, moved, paceRun } from '../scripts/pace';
+import { LEVELS } from '../src/arena';
+import { compare, levels, median, moved, paceRun } from '../scripts/pace';
 
 describe('the pace gate', () => {
   it('takes the median, so one odd run does not move the figure', () => {
@@ -14,20 +15,41 @@ describe('the pace gate', () => {
     expect(moved(10, 9.7)).toBe(true);
   });
 
-  it('gives the same figure on every seed, which is why it is held so close', () => {
-    expect(new Set([1, 2, 3, 4].map((seed) => paceRun(seed).minutes)).size).toBe(1);
+  it('times every level the game has, by its name, in order', () => {
+    expect(levels()).toEqual(LEVELS.map((level) => level.id));
   });
 
-  it('times the first level delivered, in game minutes', () => {
-    const run = paceRun(1);
-    expect(run.finished).toBe(true);
-    expect(run.minutes).toBeGreaterThan(0.3);
-    expect(run.minutes).toBeLessThan(1);
+  it('gives the same figure on every seed, which is why it is held so close', () => {
+    expect(new Set([1, 2, 3, 4].map((seed) => paceRun('first-delivery', seed).minutes)).size).toBe(1);
+  });
+
+  it('times the level it is asked for flown to its end, in game minutes', () => {
+    const first = paceRun('first-delivery', 1);
+    expect(first).toMatchObject({ level: 'first-delivery', finished: true });
+    expect(first.minutes).toBeGreaterThan(0.3);
+    expect(first.minutes).toBeLessThan(1);
+    // and the longest, over the range, takes longer, by what was measured when it was made: 73 s
+    const range = paceRun('over-the-range', 1);
+    expect(range.finished).toBe(true);
+    expect(range.minutes).toBeCloseTo(73.4 / 60, 1);
   });
 
   it('gives up at the cap, and says so', () => {
-    const run = paceRun(1, 0.05);
+    const run = paceRun('first-delivery', 1, 0.05);
     expect(run.finished).toBe(false);
     expect(run.minutes).toBe(0.05);
+  });
+
+  it('holds each level to its own figure, and refuses a level it has no figure for, or a figure for no level', () => {
+    const was = { 'first-delivery': 0.59, 'over-the-water': 0.88 };
+    expect(compare(was, { 'first-delivery': 0.59, 'over-the-water': 0.89 })).toEqual([]);
+    expect(compare(was, { 'first-delivery': 0.59, 'over-the-water': 0.95 })).toEqual([
+      'over-the-water moved: 0.88 -> 0.95 min',
+    ]);
+    expect(compare(was, { 'first-delivery': 0.5, 'over-the-water': 0.88 })).toEqual([
+      'first-delivery moved: 0.59 -> 0.5 min',
+    ]);
+    expect(compare(was, { ...was, 'mountain-drop': 1 })).toEqual(['mountain-drop has no figure in the baseline']);
+    expect(compare(was, { 'first-delivery': 0.59 })).toEqual(['over-the-water is in the baseline and is not a level']);
   });
 });

@@ -278,12 +278,12 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   const told = await page.evaluate(() => window.game!.events());
   expect(told).toHaveLength(2);
   expect(told[0]).toBe(`delivered ${drop}`);
-  expect(told[1]).toMatch(/^finished \d+\.\d\d$/);
+  expect(told[1]).toMatch(/^finished first-delivery \d+\.\d\d best$/);
   await expect(page.locator('#hud .card h2')).toHaveText('Delivered!');
   await expect(page.locator('#hud .time')).toHaveText(/^in \d+:\d\d$/);
 
   // flown again by the button: home, landed, the parcel waiting
-  await page.locator('#hud .card button').click();
+  await page.locator('#hud .card .again').click();
   await step(1);
   s = await state();
   expect(s.mission).toMatchObject({ next: 0, ring: 0, time: 0, started: false });
@@ -549,7 +549,7 @@ for (const [name, viewport] of [
         await step(240);
       }
       expect((await state()).mission.done).toBe(true);
-      const button = page.locator('#hud .card button');
+      const button = page.locator('#hud .card .again');
       await expect(button).toBeVisible();
       const box = (await button.boundingBox())!;
       expect(box.height, 'a thumb-sized button').toBeGreaterThanOrEqual(44);

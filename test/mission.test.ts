@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../src/arena';
 import { Game } from '../src/game';
 import { HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
-import { DELIVERY, onPad } from '../src/mission';
+import { DELIVERY, onPad, type Level } from '../src/mission';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
 
@@ -20,7 +20,7 @@ function played() {
     events: {
       loaded: (pad) => told.push(`loaded ${pad}`),
       delivered: (pad) => told.push(`delivered ${pad}`),
-      finished: (seconds) => told.push(`finished ${seconds.toFixed(3)}`),
+      finished: (id, seconds) => told.push(`finished ${id} ${seconds.toFixed(3)}`),
     },
   });
   const { pads } = game.island;
@@ -112,8 +112,8 @@ describe('the first level', () => {
     fly(DELIVERY.load + 0.1);
     expect(mission.done).toBe(true);
     expect(told.slice(0, 2)).toEqual([`loaded ${pickup}`, `delivered ${drop}`]);
-    const seconds = Number(told[2].split(' ')[1]);
-    expect(told[2]).toMatch(/^finished /);
+    const seconds = Number(told[2].split(' ')[2]);
+    expect(told[2]).toMatch(/^finished first-delivery /);
     // the lift-off came a frame or so into that second, and the rest was on the ground
     expect(seconds).toBeGreaterThan(1 + 2 * DELIVERY.load);
     expect(seconds).toBeLessThan(1.1 + 2 * (DELIVERY.load + 0.1));
@@ -159,5 +159,75 @@ describe('on a pad', () => {
     expect(onPad(h, p)).toBe(false);
     // a floor that is not the pad's top, as a hillside beside a pad would be
     expect(onPad({ x: p.x, y: p.y, z: p.z + 1, landed: true }, p)).toBe(false);
+  });
+});
+
+describe('a level of more steps', () => {
+  // two parcels: one from the meadow to the hilltop, then one from the hilltop on to the lakeside
+  const level: Level = {
+    id: 'two-parcels',
+    name: 'Two parcels',
+    kind: 'delivery',
+    steps: [
+      { kind: 'pickup', pad: 4 },
+      { kind: 'drop', pad: 1 },
+      { kind: 'pickup', pad: 1 },
+      { kind: 'drop', pad: 2 },
+    ],
+  };
+
+  it('is done a step at a time, in order, and finished only at the last', () => {
+    const { game, told, land, fly } = played();
+    const mission = game.mission;
+    mission.play(level);
+    const seen: [number, boolean, number][] = [];
+    for (const step of level.steps) {
+      seen.push([mission.target, mission.carrying, mission.waiting]);
+      fly(0.5, { forward: 0, turn: 0, lift: 1 });
+      land(step.pad);
+      fly(DELIVERY.load + 0.1);
+    }
+    seen.push([mission.target, mission.carrying, mission.waiting]);
+    // the pad wanted, whether a parcel is aboard, and the pad one stands on: with the second aboard, the first stands
+    // where it was delivered
+    expect(seen).toEqual([
+      [4, false, 4],
+      [1, true, -1],
+      [1, false, 1],
+      [2, true, 1],
+      [-1, false, 2],
+    ]);
+    expect(told.slice(0, 4)).toEqual(['loaded 4', 'delivered 1', 'loaded 1', 'delivered 2']);
+    expect(told[4]).toMatch(/^finished /);
+    expect(told).toHaveLength(5);
+    expect(mission.done).toBe(true);
+  });
+
+  it('pays no heed to a pad of a step to come, nor one already done', () => {
+    const { game, told, land, fly } = played();
+    game.mission.play(level);
+    for (const pad of [1, 2]) {
+      land(pad);
+      fly(DELIVERY.load + 0.5);
+    }
+    expect(game.mission.next).toBe(0);
+    land(4);
+    fly(DELIVERY.load + 0.1);
+    land(4);
+    fly(DELIVERY.load + 0.5);
+    expect(game.mission.next).toBe(1);
+    expect(told).toEqual(['loaded 4']);
+  });
+
+  it('is flown from the start when it is handed in, whatever was flown before', () => {
+    const { game, land, fly } = played();
+    land(4);
+    fly(DELIVERY.load + 0.1);
+    game.mission.time = 12;
+    game.mission.started = true;
+    game.mission.play(level);
+    expect([game.mission.level, game.mission.next, game.mission.ring, game.mission.time, game.mission.started]).toEqual(
+      [level, 0, 0, 0, false],
+    );
   });
 });

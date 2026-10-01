@@ -5,6 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { WATCH, grew, leakRun, sizes, trouble } from '../scripts/leaks';
+import { LEVELS } from '../src/arena';
+import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
 import { DT, newGame, thickestWood } from './helpers';
 
@@ -12,7 +14,7 @@ describe('what must stay bounded', () => {
   it('reads the sizes off a game, and has a ceiling for every one', () => {
     const { game } = newGame();
     const now = sizes(game);
-    for (const key of ['trees moving', 'heap MB']) {
+    for (const key of ['trees moving', 'best times kept', 'heap MB']) {
       expect(Object.keys(now), `${key} measured`).toContain(key);
       expect(Number.isFinite(now[key])).toBe(true);
       expect(Object.keys(WATCH), `a ceiling for ${key}`).toContain(key);
@@ -23,6 +25,10 @@ describe('what must stay bounded', () => {
     game.helicopter.placeAbove(wood.x, wood.y, 4, 0);
     for (let f = 0; f < 60; f++) game.step(DT, { forward: 0, turn: 0, lift: 0.25 });
     expect(sizes(game)['trees moving']).toBeGreaterThan(20);
+    // and a level done, its time kept, is counted, under a ceiling of the levels and a save's worth more
+    game.progress.record('first-delivery', 40);
+    expect(sizes(game)['best times kept']).toBe(1);
+    expect(WATCH['best times kept']!.ceiling).toBe(LEVELS.length + SAVE.kept);
   });
 
   it('knows a size that grows from one that wanders', () => {

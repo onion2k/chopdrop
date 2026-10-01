@@ -27,7 +27,7 @@
  */
 import { TREE_KINDS, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
-import type { Game } from './game';
+import type { Game, ListedLevel } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
 import { checkInvariants } from './invariants';
 import { TREE_STRIDE } from './island';
@@ -46,6 +46,8 @@ export interface GameState {
   t: number;
   frame: number;
   paused: boolean;
+  /** What is on the screen: the list of levels, with the game held behind it; a level being flown; or the card at its end. */
+  screen: 'levels' | 'flying' | 'card';
   /**
    * Where the helicopter is and how it is going. `z` is its skids' height above the sea, `floor` the height of the
    * ground it stands on here (the most under its middle and its skids) and `height` the one above the other; `vz` is
@@ -162,6 +164,12 @@ export interface GameApi {
   events(): string[];
   /** The level from the start again, as "Fly again" does. */
   restart(): void;
+  /** The level named `id` flown from the start, as picking it from the list does, whether the list would let it be or not. */
+  play(id: string): void;
+  /** Every level as the list shows it: locked, open or done, and the best time on it. */
+  levels(): ListedLevel[];
+  /** What the player has done, as it is saved, and why the save the game found could not be read, if it could not. */
+  save(): { best: Record<string, number>; refused: string | null };
   /** The autopilot flying in place of the player, or not: what the play-through flies the level by. */
   autopilot(on: boolean): void;
   /** Every rule that must always hold and does not, as `invariants.ts` says: none, if all is well. */
@@ -204,6 +212,10 @@ export interface DebugHost {
   events(): string[];
   /** The level from the start again, as the page's "Fly again" does. */
   restart(): void;
+  /** The level named `id` flown from the start, as picking it from the list does. */
+  play(id: string): void;
+  /** What is on the screen. */
+  screen(): GameState['screen'];
   /** The autopilot flying in place of the keys and touch, or not. */
   setAutopilot(on: boolean): void;
   /** Play one frame of `dt`, without drawing. */
@@ -243,6 +255,7 @@ export function createApi(host: DebugHost): GameApi {
         t: game.t,
         frame: host.frame(),
         paused: host.paused(),
+        screen: host.screen(),
         helicopter: {
           x: helicopter.x,
           y: helicopter.y,
@@ -321,6 +334,9 @@ export function createApi(host: DebugHost): GameApi {
 
     events: () => host.events(),
     restart: () => host.restart(),
+    play: (id) => host.play(id),
+    levels: () => game.levelList(),
+    save: () => ({ ...game.progress.toJSON(), refused: game.progress.refused }),
     autopilot: (on) => host.setAutopilot(on),
     invariants: () => checkInvariants(game),
     fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),

@@ -189,6 +189,27 @@ describe('what must always hold', () => {
     d.time = NaN;
     expect(checkInvariants(game).join('\n')).toMatch(/clock reads NaN/);
   });
+
+  it('holds of a level done and kept, and reports a best time slower than the level was just done in, or not a time', () => {
+    const { game } = newGame();
+    const { pads } = game.island;
+    for (let f = 0; f < 30; f++) game.step(DT, { forward: 0, turn: 0, lift: 1 });
+    while (!game.mission.done) {
+      const pad = pads[game.mission.target];
+      game.helicopter.placeAbove(pad.x, pad.y, 0, 0);
+      for (let f = 0; f < 100; f++) game.step(DT);
+    }
+    expect(checkInvariants(game)).toEqual([]);
+    const id = game.mission.level.id;
+    game.progress.best.set(id, game.mission.time + 1);
+    expect(checkInvariants(game).join('\n')).toMatch(
+      /the best time on first-delivery is \d+\.\d+ s, slower than the \d+\.\d+ s it was just done in/,
+    );
+    game.progress.best.set(id, -2);
+    expect(checkInvariants(game).join('\n')).toMatch(/the best time on first-delivery is -2, not a time/);
+    game.progress.best.set(id, NaN);
+    expect(checkInvariants(game).join('\n')).toMatch(/not a time/);
+  });
 });
 
 /** A game with the helicopter hovering four up over the thickest wood for two seconds, its trees bowed. */

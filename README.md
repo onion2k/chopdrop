@@ -18,13 +18,17 @@ some seven thousand trees of five kinds, which bow away from the rotor's
 downwash when the helicopter comes down low over them and spring back when
 it has gone, and nine landing pads with home on the south coast.
 
-The first level is a delivery: a crate waits on the meadow pad, a gold
-beacon over it, and an arrow at the top of the screen points the way and
-says how far. Land on the pad and stay while the ring fills, and the crate
-is strapped under the helicopter and the beacon moves to the hilltop pad;
-land there and stay, and it is delivered, with the time it took from the
-first lift-off and a button to fly it again. More levels, and where they
-go, come one feature at a time, through `/feature`. The template's stub,
+The game opens on a list of four levels, each opened by finishing the one
+before, with the best time on each kept in the browser. Each is a delivery:
+a crate waits on one pad, a gold beacon over it, and an arrow at the top of
+the screen points the way and says how far. Land on the pad and stay while
+the ring fills, and the crate is strapped under the helicopter and the
+beacon moves to the pad it is wanted on; land there and stay, and it is
+delivered, with the time it took from the first lift-off, and the way on to
+the next level, to fly it again, or back to the list. The first is a short
+hop from the meadow to a hilltop; then over a lake, over the mountains, and
+up to a pad on the shoulder of the range. Ring trials, a search and a
+course come between them, one feature at a time, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -55,8 +59,8 @@ The gates that still have something to hold:
     npm run look           what it looks like, held to a picture
     npm run determinism    the same seed, flown twice by the autopilot, the same game
     npm run leaks          an hour flown, and nothing kept that keeps growing
-    npm run pace           how long the autopilot takes to deliver the first level, held to a baseline
-    npm run check          all of it, and the first level played to the end in the page
+    npm run pace           how long the autopilot takes to fly each level, held to a baseline
+    npm run check          all of it, and every level played to the end in the page
 
 The bench and the save corpus held the stub, and went with it. Each comes
 back from the first commit with the first feature that gives it something
@@ -72,6 +76,8 @@ is fixed, and no baseline is moved to make it green.
     src/game.ts        the game without the picture: the island, the helicopter, the mission, the clock
     src/mission.ts     the level as it is flown: its steps, a parcel picked up on one pad and delivered to another
     src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
+    src/level-list.ts  the list of levels the game opens on: locked, open or done, and the best times
+    src/progress.ts    the save: the best time on each level, kept in the browser
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn

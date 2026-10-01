@@ -1,6 +1,7 @@
 /**
  * The game itself, without the picture or the page: the island, the
- * helicopter flying over it and the clock, a step at a time.
+ * helicopter flying over it, the level being flown, the player's best times
+ * and the clock, a step at a time.
  *
  * It is kept apart from the page, so the same game runs in the page and in
  * Node, and what the tests try is what is played. Chance is handed in here
@@ -12,12 +13,27 @@ import { Canopy } from './canopy';
 import { Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
-import { Mission, type MissionEvents } from './mission';
+import { Mission, type Level, type LevelKind, type MissionEvents } from './mission';
+import { Progress, type Standing } from './progress';
 import type { Random } from './random';
 import { Sway, reachedLean } from './sway';
 
-/** What the game tells the page as it happens, so the page can put it into words. */
-export type GameEvents = MissionEvents;
+/**
+ * What the game tells the page as it happens, so the page can put it into words: a parcel loaded and delivered, and a
+ * level done, by its name, with the time it took and whether that is the best time on it yet.
+ */
+export interface GameEvents extends Omit<MissionEvents, 'finished'> {
+  finished?(level: string, seconds: number, best: boolean): void;
+}
+
+/** A level as the list of levels shows it: what it is, where it stands for the player, and the best time on it. */
+export interface ListedLevel {
+  id: string;
+  name: string;
+  kind: LevelKind;
+  standing: Standing;
+  best: number | null;
+}
 
 export interface GameOptions {
   /** What happens, told as it does; nothing is told unless something is listening. */
@@ -26,6 +42,10 @@ export interface GameOptions {
   random?: Random;
   /** The land to fly over; the one island unless told otherwise. */
   island?: Island;
+  /** The levels, in order; the arena's unless told otherwise. */
+  levels?: readonly Level[];
+  /** What the player has done, and where it is kept; a save in memory unless told otherwise, so nothing is written. */
+  progress?: Progress;
 }
 
 export class Game {
@@ -40,8 +60,12 @@ export class Game {
    * in the wash. Built once with the island; the game itself never reads it.
    */
   readonly canopy: Canopy;
-  /** The level being flown, and how far it has got: the first level. */
+  /** The levels, in order, as the list shows them. */
+  readonly levels: readonly Level[];
+  /** The level being flown, and how far it has got: the first, until another is asked for. */
   readonly mission: Mission;
+  /** The player's best time on each level, kept as each is done. */
+  readonly progress: Progress;
   /** Game time, in seconds. */
   t = 0;
   /** Where chance comes from: replaced by the test API's `seed`. */
@@ -61,7 +85,46 @@ export class Game {
       { trees, stride: TREE_STRIDE, count: treeCount, bounds },
       TREE_KINDS.map((kind, k) => ({ ...treeSize(kind), lean: reachedLean(give[k]) })),
     );
-    this.mission = new Mission(pads, LEVELS[0], options.events);
+    this.levels = options.levels ?? LEVELS;
+    this.progress = options.progress ?? new Progress();
+    const events = options.events ?? {};
+    this.mission = new Mission(pads, this.levels[0], {
+      loaded: events.loaded,
+      delivered: events.delivered,
+      // the time kept before it is told, so what is told is what is kept; a level never lifted off from, which only a
+      // test's teleport can finish, was not flown and is not timed
+      finished: (seconds) => {
+        const { id } = this.mission.level;
+        const best = this.mission.started && this.progress.record(id, seconds);
+        if (best) this.progress.persist();
+        events.finished?.(id, seconds, best);
+      },
+    });
+  }
+
+  /** The level named `id` flown from the start; a name the game does not have is refused. */
+  play(id: string): void {
+    const level = this.levels.find((l) => l.id === id);
+    if (!level) throw new Error(`no such level: ${id}`);
+    this.mission.play(level);
+    this.restart();
+  }
+
+  /** The level after the one being flown, or none after the last. */
+  get nextLevel(): Level | undefined {
+    return this.levels[this.levels.indexOf(this.mission.level) + 1];
+  }
+
+  /** Every level, as the list shows it. */
+  levelList(): ListedLevel[] {
+    const ids = this.levels.map((level) => level.id);
+    return this.levels.map(({ id, name, kind }, k) => ({
+      id,
+      name,
+      kind,
+      standing: this.progress.standing(ids, k),
+      best: this.progress.best.get(id) ?? null,
+    }));
   }
 
   /** The level from the start again: the helicopter landed on home, facing as it was built, and the first step waiting. */

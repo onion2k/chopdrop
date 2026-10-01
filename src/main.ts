@@ -19,6 +19,8 @@ import { frameCost } from './frame-cost';
 import { Game } from './game';
 import { Hud } from './hud';
 import { Input } from './input';
+import { LevelList } from './level-list';
+import { Progress, browserStore } from './progress';
 import { seeded } from './random';
 import { Scene } from './scene';
 import { TouchView } from './touch-view';
@@ -152,19 +154,33 @@ async function main() {
     told.push(line);
     if (told.length > EVENTS_KEPT) told.shift();
   };
-  // built before the game, which tells it the end; "Fly again" is `again`, below, which puts the game back
-  const hud = new Hud(again);
+  // what the player has done, from the browser's storage: a save that cannot be read is said so, and begun afresh
+  const progress = new Progress(browserStore());
+  if (progress.refused)
+    console.warn(
+      `The save could not be read (${progress.refused}), so the game starts afresh, and writes over it once a level is done.`,
+    );
+  // built before the game, which tells it the end; what their buttons do is below, where the game is put back
+  const hud = new Hud({ again, next, levels: showLevels });
   const game = new Game({
     ...(seed !== null ? { random: seeded(+seed) } : {}),
+    progress,
     events: {
       loaded: (pad) => tell(`loaded ${pad}`),
       delivered: (pad) => tell(`delivered ${pad}`),
-      finished: (seconds) => {
-        tell(`finished ${seconds.toFixed(2)}`);
-        hud.delivered(seconds);
+      finished: (id, seconds, best) => {
+        tell(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`);
+        hud.finished(
+          game.mission.level.kind,
+          seconds,
+          progress.best.get(id) ?? null,
+          best,
+          game.nextLevel?.name ?? null,
+        );
       },
     },
   });
+  const list = new LevelList(game.levels, { fly: play, close: carryOn });
 
   // ---- the scene ----
 
@@ -182,12 +198,44 @@ async function main() {
   // a phone shows its touch controls from the start; anything else, once a finger is put on it
   if (matchMedia('(pointer: coarse)').matches) input.by = 'touch';
   const touchView = new TouchView(input, document.getElementById('stage')!);
-  /** The level from the start again: the game, the camera behind the helicopter, the lever down and the card put away. */
-  function again() {
-    game.restart();
+  /** Whether a level has been picked to fly since the page opened: until one is, the list has no flight to go back to. */
+  let underway = false;
+  /** The level named `id` from the start: the game, the camera behind the helicopter, the lever down and the card and the list put away. */
+  function play(id: string) {
+    game.play(id);
     rig.snap(game.helicopter);
     input.touch.reset();
-    hud.again();
+    hud.fly();
+    carryOn();
+    underway = true;
+  }
+  /** The same level from the start again. */
+  function again() {
+    play(game.mission.level.id);
+  }
+  /** The level after this one, from the start. */
+  function next() {
+    const after = game.nextLevel;
+    if (after) play(after.id);
+  }
+  /**
+   * The list of levels up, and the game held behind it: the level being flown picked, if there is one to go back to,
+   * and otherwise the one to fly next. Fingers on the glass are let go, so none is left holding the stick.
+   */
+  function showLevels() {
+    const resumable = underway && !game.mission.done;
+    const ids = game.levels.map((level) => level.id);
+    const picked = resumable ? game.levels.indexOf(game.mission.level) : progress.pick(ids);
+    input.touch.release();
+    list.show(game.levelList(), picked, resumable);
+    hud.listing = true;
+    document.body.classList.add('listing');
+  }
+  /** The list put away, and the game going on from where it was held. */
+  function carryOn() {
+    list.hide();
+    hud.listing = false;
+    document.body.classList.remove('listing');
   }
   /** The autopilot, when the test API has it flying in place of the player; never otherwise. */
   let pilot: Autopilot | null = null;
@@ -260,12 +308,15 @@ async function main() {
   stats.hidden = false;
   help.hidden = false;
   hud.show();
+  showLevels();
 
   // ---- each frame ----
 
   let frames = 0;
   let smoothed = 0;
   function simulate(dt: number) {
+    // held while the list of levels is up: nothing moves, the camera neither, until it goes
+    if (list.shown) return;
     frames++;
     const controls = pilot ? pilot.drive() : input.read();
     flown.forward = controls.forward;
@@ -275,7 +326,7 @@ async function main() {
     rig.step(dt, game.helicopter);
   }
   function draw(dt: number) {
-    touchView.draw();
+    touchView.draw(list.shown);
     hud.draw(game, rig);
     upload();
     cam.update();
@@ -311,6 +362,8 @@ async function main() {
     input: () => ({ by: input.by, controls: { ...flown }, lever: input.touch.lever }),
     events: () => told.splice(0),
     restart: again,
+    play,
+    screen: () => (list.shown ? 'levels' : hud.ended ? 'card' : 'flying'),
     setAutopilot: (on) => {
       pilot = on ? new Autopilot(game) : null;
     },

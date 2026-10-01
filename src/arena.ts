@@ -265,10 +265,18 @@ function delivery(id: string, name: string, pickup: number, drop: number): Level
 }
 
 /**
- * The levels, in order, each pad held by a test to what it is. The first is a short one with a climb at the end:
- * from the meadow pad, 187 inland of home, to the hilltop pad 187 beyond it and 53 up.
+ * The levels, in order, each flown from home and each pad held by a test to what it is. They are the deliveries for
+ * now; the ring trials, the search and the course come between them as each is built. The first is a short one with
+ * a climb at the end, from the meadow pad 187 inland of home to the hilltop pad 187 beyond it. Then 646 from the river
+ * mouth to the lakeside pad, across a lake; 501 from the northern meadow pad over the range, its peaks past 140, to
+ * the beach; and 392 from the lakeside pad up a river valley to the shoulder pad, 79 up the mountain.
  */
-export const LEVELS: readonly Level[] = [delivery('first-delivery', 'First delivery', 4, 1)];
+export const LEVELS: readonly Level[] = [
+  delivery('first-delivery', 'First delivery', 4, 1),
+  delivery('over-the-water', 'Over the water', 3, 2),
+  delivery('over-the-range', 'Over the range', 7, 5),
+  delivery('mountain-drop', 'Mountain drop', 2, 6),
+];
 
 /**
  * The one island, built from the recipe the first time it is asked for and
