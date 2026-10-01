@@ -10,7 +10,16 @@ import type { GameGroup } from 'artshape-render/game/renderer';
 import { COLS, FLOOR, ORIGIN_X, ORIGIN_Y, ROWS, TILE } from './arena';
 import { HELICOPTER } from './helicopter';
 import { place, placeFrame, placePart } from './matrix';
-import { box, helicopterBody, helicopterDark, helicopterGlass, mainRotor, square, tailRotor } from './meshes';
+import {
+  box,
+  helicopterBody,
+  helicopterDark,
+  helicopterGlass,
+  helicopterTrim,
+  mainRotor,
+  square,
+  tailRotor,
+} from './meshes';
 
 /** Where the helicopter is and how it is tilted and spinning: what the scene draws it from. */
 export interface HelicopterPose {
@@ -27,9 +36,10 @@ export interface HelicopterPose {
 /** How tall the rock stands. */
 const ROCK_HEIGHT = 3;
 
-/** The helicopter's paint, each named once: the shell, the canopy, and the dark metal the rotors share. */
+/** The helicopter's paint, each named once: the shell, the cream trim on it, the glass, and the dark metal the rotors share. */
 type Rgb = [number, number, number];
 const BODY_PAINT = { albedo: [0.85, 0.33, 0.17] as Rgb, roughness: 0.5 };
+const TRIM_PAINT = { albedo: [0.93, 0.89, 0.78] as Rgb, roughness: 0.5 };
 const GLASS_PAINT = { albedo: [0.17, 0.29, 0.39] as Rgb, roughness: 0.15 };
 const DARK_PAINT = { albedo: [0.17, 0.17, 0.19] as Rgb, roughness: 0.6 };
 
@@ -72,6 +82,7 @@ export class Scene {
     };
     return [
       group(helicopterBody(), BODY_PAINT),
+      group(helicopterTrim(), TRIM_PAINT),
       group(helicopterGlass(), GLASS_PAINT),
       group(helicopterDark(), DARK_PAINT),
       group(mainRotor(), DARK_PAINT),
@@ -81,9 +92,10 @@ export class Scene {
 
   /** Everything where it is this frame. */
   write(pose: HelicopterPose): void {
-    const [body, glass, dark, main, tail] = this.pools;
+    const [body, trim, glass, dark, main, tail] = this.pools;
     const { mastTop, tailRotorAt } = HELICOPTER.size;
     placeFrame(body, 0, pose.x, pose.y, pose.z, pose.yaw, pose.pitch, pose.roll);
+    trim.set(body);
     glass.set(body);
     dark.set(body);
     placePart(main, 0, body, 0, 0, 0, mastTop, 'z', pose.rotor);
