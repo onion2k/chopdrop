@@ -6,9 +6,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../src/arena';
-import { DELIVERY, onPad } from '../src/delivery';
 import { Game } from '../src/game';
 import { HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
+import { DELIVERY, onPad } from '../src/mission';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
 
@@ -19,11 +19,12 @@ function played() {
     random: seeded(1),
     events: {
       loaded: (pad) => told.push(`loaded ${pad}`),
-      delivered: (pad, seconds) => told.push(`delivered ${pad} ${seconds.toFixed(3)}`),
+      delivered: (pad) => told.push(`delivered ${pad}`),
+      finished: (seconds) => told.push(`finished ${seconds.toFixed(3)}`),
     },
   });
   const { pads } = game.island;
-  const { pickup, drop } = LEVELS[0];
+  const [pickup, drop] = LEVELS[0].steps.map((step) => step.pad);
   const fly = (seconds: number, controls: Controls = IDLE) => {
     for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, controls);
   };
@@ -32,7 +33,7 @@ function played() {
     const p = pads[pad];
     game.helicopter.placeAbove(p.x + dx, p.y + dy, 0, p.yaw);
   };
-  return { game, told, pads, pickup, drop, fly, land, delivery: game.delivery };
+  return { game, told, pads, pickup, drop, fly, land, mission: game.mission };
 }
 
 describe('the first level', () => {
@@ -46,83 +47,84 @@ describe('the first level', () => {
   });
 
   it('wants the pickup pad, then the drop pad, then none', () => {
-    const { delivery, pickup, drop, land, fly } = played();
-    expect(delivery.target).toBe(pickup);
+    const { mission, pickup, drop, land, fly } = played();
+    expect(mission.target).toBe(pickup);
     land(pickup);
     fly(DELIVERY.load + 0.1);
-    expect(delivery.target).toBe(drop);
+    expect(mission.target).toBe(drop);
     land(drop);
     fly(DELIVERY.load + 0.1);
-    expect(delivery.target).toBe(-1);
+    expect(mission.target).toBe(-1);
   });
 
   it('loads the parcel after a full ring landed on the pickup pad, and tells it', () => {
-    const { delivery, told, pickup, land, fly } = played();
+    const { mission, told, pickup, land, fly } = played();
     land(pickup);
     fly(DELIVERY.load - 0.1);
-    expect(delivery.stage).toBe('pickup');
-    expect(delivery.ring).toBeCloseTo(DELIVERY.load - 0.1, 6);
+    expect(mission.next).toBe(0);
+    expect(mission.ring).toBeCloseTo(DELIVERY.load - 0.1, 6);
     fly(0.2);
-    expect(delivery.stage).toBe('carry');
-    expect(delivery.ring).toBe(0);
+    expect(mission.next).toBe(1);
+    expect(mission.ring).toBe(0);
     expect(told).toEqual([`loaded ${pickup}`]);
   });
 
   it('empties the ring if the helicopter lifts before it is full', () => {
-    const { delivery, pickup, land, fly } = played();
+    const { mission, pickup, land, fly } = played();
     land(pickup);
     fly(1);
     fly(0.5, { forward: 0, turn: 0, lift: 1 });
-    expect(delivery.ring).toBe(0);
+    expect(mission.ring).toBe(0);
     land(pickup);
     fly(DELIVERY.load - 0.2);
-    expect(delivery.stage).toBe('pickup');
+    expect(mission.next).toBe(0);
     // a full ring from where it set down again, and no sooner
     fly(0.3);
-    expect(delivery.stage).toBe('carry');
+    expect(mission.next).toBe(1);
   });
 
   it('pays no heed to hovering low over the pad, the wrong pad, the pad landed in the wrong order, or beside it', () => {
-    const { game, delivery, told, pads, pickup, drop, land, fly } = played();
+    const { game, mission, told, pads, pickup, drop, land, fly } = played();
     land(pickup);
     // a tenth up, nearer the pad than its skids may be from its top and still be on it: only landing counts
     game.helicopter.placeAbove(pads[pickup].x, pads[pickup].y, 0.1, 0);
     fly(3, { forward: 0, turn: 0, lift: HOVER_LIFT });
-    expect(delivery.ring).toBe(0);
+    expect(mission.ring).toBe(0);
     for (const pad of [0, drop, 7]) {
       land(pad);
       fly(3);
     }
     land(pickup, pads[pickup].radius + 4, 0);
     fly(3);
-    expect(delivery.stage).toBe('pickup');
+    expect(mission.next).toBe(0);
     expect(told).toEqual([]);
   });
 
   it('delivers after a full ring on the drop pad, timed from the first lift-off, and stops the clock', () => {
-    const { delivery, told, pickup, drop, land, fly } = played();
+    const { mission, told, pickup, drop, land, fly } = played();
     // the clock waits on the ground
     fly(5);
-    expect(delivery.time).toBe(0);
+    expect(mission.time).toBe(0);
     fly(1, { forward: 0, turn: 0, lift: 1 });
     land(pickup);
     fly(DELIVERY.load + 0.1);
     land(drop);
     fly(DELIVERY.load + 0.1);
-    expect(delivery.stage).toBe('delivered');
-    const seconds = Number(told[1].split(' ')[2]);
-    expect(told[1]).toMatch(new RegExp(`^delivered ${drop} `));
+    expect(mission.done).toBe(true);
+    expect(told.slice(0, 2)).toEqual([`loaded ${pickup}`, `delivered ${drop}`]);
+    const seconds = Number(told[2].split(' ')[1]);
+    expect(told[2]).toMatch(/^finished /);
     // the lift-off came a frame or so into that second, and the rest was on the ground
     expect(seconds).toBeGreaterThan(1 + 2 * DELIVERY.load);
     expect(seconds).toBeLessThan(1.1 + 2 * (DELIVERY.load + 0.1));
-    expect(delivery.time).toBeCloseTo(seconds, 3);
+    expect(mission.time).toBeCloseTo(seconds, 3);
     fly(5, { forward: 1, turn: 0, lift: 1 });
-    expect(delivery.time).toBeCloseTo(seconds, 3);
-    expect(told).toHaveLength(2);
+    expect(mission.time).toBeCloseTo(seconds, 3);
+    expect(told).toHaveLength(3);
   });
 
   it('puts it all back on a restart: home, landed, the parcel waiting and the clock at nothing', () => {
-    const { game, delivery, pads, pickup, drop, land, fly } = played();
+    const { game, mission, pads, pickup, drop, land, fly } = played();
     fly(1, { forward: 1, turn: 0.5, lift: 1 });
     land(pickup);
     fly(DELIVERY.load + 0.1);
@@ -131,8 +133,8 @@ describe('the first level', () => {
     game.restart();
     const h = game.helicopter;
     expect([h.x, h.y, h.yaw, h.landed]).toEqual([pads[0].x, pads[0].y, pads[0].yaw, true]);
-    expect([delivery.stage, delivery.ring, delivery.time, delivery.started]).toEqual(['pickup', 0, 0, false]);
-    expect(delivery.target).toBe(pickup);
+    expect([mission.next, mission.ring, mission.time, mission.started]).toEqual([0, 0, 0, false]);
+    expect(mission.target).toBe(pickup);
   });
 });
 

@@ -44,7 +44,7 @@ export function paceRun(seed: number, capMinutes = CHECK.capMinutes): PaceRun {
   const frames = capMinutes * 3600;
   for (let f = 0; f < frames; f++) {
     pilot.step(DT);
-    if (game.delivery.stage === 'delivered') return { seed, minutes: round(game.t / 60), finished: true };
+    if (game.mission.done) return { seed, minutes: round(game.t / 60), finished: true };
   }
   return { seed, minutes: capMinutes, finished: false };
 }

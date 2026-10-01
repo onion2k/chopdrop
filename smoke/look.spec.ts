@@ -40,7 +40,7 @@ async function hideStats(page: Page) {
 async function carrying(page: Page) {
   await page.evaluate((hover) => {
     const g = window.game!;
-    const { pickup, drop } = g.state().delivery;
+    const [pickup, drop] = g.state().mission.steps.map((step) => step.pad);
     const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
     g.teleport(a.x, a.y, 0, 0);
     g.step(100);
@@ -59,7 +59,7 @@ async function carrying(page: Page) {
 async function delivered(page: Page) {
   await page.evaluate(() => {
     const g = window.game!;
-    const { pickup, drop } = g.state().delivery;
+    const [pickup, drop] = g.state().mission.steps.map((step) => step.pad);
     const pads = g.content().pads;
     g.fly(0, 0, 1);
     g.step(30);
@@ -149,7 +149,7 @@ test.describe('what it looks like', () => {
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => {
       const g = window.game!;
-      const pad = g.content().pads[g.state().delivery.pickup];
+      const pad = g.content().pads[g.state().mission.steps[0].pad];
       g.teleport(pad.x, pad.y, 0, 2.3);
       g.step(45);
     });

@@ -261,7 +261,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         weight: 2,
         go() {
           // over the pad the parcel is wanted at, down onto it, and waiting there as long as a player does, or not quite
-          const target = game.delivery.target;
+          const target = game.mission.target;
           if (target < 0) return;
           const pad = pads[target];
           const spread = pad.radius * 0.5;
@@ -280,8 +280,8 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         places: true,
         weight: 1,
         go() {
-          // the card's button, which is only there once the parcel is delivered
-          if (game.delivery.stage === 'delivered') game.restart();
+          // the card's button, which is only there once the level is done
+          if (game.mission.done) game.restart();
         },
       },
       {

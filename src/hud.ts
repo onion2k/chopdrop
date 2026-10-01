@@ -8,8 +8,8 @@
  * would not know where to go, nor that they had got there.
  */
 import type { Point } from './chase';
-import { DELIVERY } from './delivery';
 import type { Game } from './game';
+import { DELIVERY } from './mission';
 
 /** How far round the arrow is turned, in degrees clockwise, to point from `from` toward `to` as seen along the camera. */
 export function pointer(
@@ -86,18 +86,19 @@ export class Hud {
     this.root.hidden = false;
   }
 
-  /** The words for where the delivery has got to, written only where they have changed. */
+  /** The words for where the level has got to, written only where they have changed. */
   draw(game: Game, camera: { position: Point; target: Point }): void {
-    const d = game.delivery;
-    if (this.shown.done || d.target < 0) return;
-    const pad = game.island.pads[d.target];
+    const d = game.mission;
+    const step = d.current;
+    if (this.shown.done || !step) return;
+    const pad = game.island.pads[step.pad];
     const h = game.helicopter;
     const goal =
-      d.stage === 'pickup' ? `Pick up the parcel at the ${pad.site} pad` : `Deliver it to the ${pad.site} pad`;
+      step.kind === 'pickup' ? `Pick up the parcel at the ${pad.site} pad` : `Deliver it to the ${pad.site} pad`;
     const far = `${Math.round(Math.hypot(pad.x - h.x, pad.y - h.y))} m`;
     const turn = pointer(camera, h, pad);
     const ring = d.ring > 0 ? Math.round((d.ring / DELIVERY.load) * RING_STEPS) : -1;
-    const ringWords = d.stage === 'pickup' ? 'Loading the parcel' : 'Unloading the parcel';
+    const ringWords = step.kind === 'pickup' ? 'Loading the parcel' : 'Unloading the parcel';
     const s = this.shown;
     if (goal !== s.goal) this.goal.textContent = s.goal = goal;
     if (far !== s.far) this.far.textContent = s.far = far;

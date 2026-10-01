@@ -27,12 +27,12 @@
  */
 import { TREE_KINDS, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
-import type { Stage } from './delivery';
 import type { Game } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
 import { checkInvariants } from './invariants';
 import { TREE_STRIDE } from './island';
 import { treeSize } from './meshes';
+import type { Step } from './mission';
 import { seeded } from './random';
 
 declare global {
@@ -70,17 +70,20 @@ export interface GameState {
   /** How it is being flown (by the keys or by touch), the controls it was flown with at the last step, and the touch lever's lift. */
   input: InputState;
   /**
-   * Where the level has got to: the stage, the pad wanted now (−1 once delivered), the ring (seconds landed on that
-   * pad), the time since the first lift-off and whether that has come, and the level's two pads.
+   * Where the level has got to: which level, its steps and the one being done (the steps' length once all are), the
+   * pad wanted now (−1 once done), whether a parcel is aboard, the ring (seconds landed on that pad), and the time
+   * since the first lift-off and whether that has come.
    */
-  delivery: {
-    stage: Stage;
+  mission: {
+    level: string;
+    steps: Step[];
+    next: number;
+    done: boolean;
     target: number;
+    carrying: boolean;
     ring: number;
     time: number;
     started: boolean;
-    pickup: number;
-    drop: number;
   };
 }
 
@@ -155,7 +158,7 @@ export interface GameApi {
   /** The trees moving in the downwash, and how. */
   sway(): SwayState;
 
-  /** What the game has told since this was last asked, oldest first, as lines: `loaded 4`, `delivered 1 47.25`. */
+  /** What the game has told since this was last asked, oldest first, as lines: `loaded 4`, `delivered 1`, `finished 47.25`. */
   events(): string[];
   /** The level from the start again, as "Fly again" does. */
   restart(): void;
@@ -256,14 +259,16 @@ export function createApi(host: DebugHost): GameApi {
         },
         camera: { mode: rig.mode, position: [...rig.position], target: [...rig.target] },
         input: host.input(),
-        delivery: {
-          stage: game.delivery.stage,
-          target: game.delivery.target,
-          ring: game.delivery.ring,
-          time: game.delivery.time,
-          started: game.delivery.started,
-          pickup: game.delivery.job.pickup,
-          drop: game.delivery.job.drop,
+        mission: {
+          level: game.mission.level.id,
+          steps: game.mission.level.steps.map((step) => ({ ...step })),
+          next: game.mission.next,
+          done: game.mission.done,
+          target: game.mission.target,
+          carrying: game.mission.carrying,
+          ring: game.mission.ring,
+          time: game.mission.time,
+          started: game.mission.started,
         },
       };
     },

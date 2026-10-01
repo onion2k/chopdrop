@@ -8,13 +8,13 @@
  * no memory beyond the game's, so the same game flown by it is flown the
  * same way twice.
  *
- * The gates play the game through it: the pace of a delivery, the same game
+ * The gates play the game through it: the pace of a level, the same game
  * twice, nothing kept for ever over a long play, and the play-through in the
  * page. Without it none of them has anything to time or watch.
  */
-import { onPad } from './delivery';
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
+import { onPad } from './mission';
 
 /** How it flies. Distances are world units, speeds a second. */
 export const PILOT = {
@@ -48,12 +48,12 @@ export class Autopilot {
   /** What it would ask for now, from where the helicopter is and the pad that is wanted. Nothing is made. */
   drive(): Controls {
     const c = this.controls;
-    const { delivery, helicopter: h, island } = this.game;
+    const { mission, helicopter: h, island } = this.game;
     c.forward = 0;
     c.turn = 0;
     c.lift = 0;
-    if (delivery.target < 0) return c;
-    const pad = island.pads[delivery.target];
+    if (mission.target < 0) return c;
+    const pad = island.pads[mission.target];
     // on the pad that is wanted: still, while the ring fills
     if (onPad(h, pad)) return c;
 

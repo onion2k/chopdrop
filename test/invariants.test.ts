@@ -158,10 +158,10 @@ describe('what must always hold', () => {
     expect(TREE_STRIDE).toBe(7);
   });
 
-  it('holds of a level flown through, and reports a delivery at no stage, a ring out of range or off the pad, and a clock gone wrong', () => {
+  it('holds of a level flown through, and reports a level at no step, a ring out of range or off the pad, and a clock gone wrong', () => {
     const { game } = newGame();
     const { pads } = game.island;
-    const target = () => pads[game.delivery.target];
+    const target = () => pads[game.mission.target];
     for (let leg = 0; leg < 2; leg++) {
       game.helicopter.placeAbove(target().x, target().y, 0, 0);
       for (let f = 0; f < 60; f++) {
@@ -170,11 +170,13 @@ describe('what must always hold', () => {
       }
       for (let f = 0; f < 60; f++) game.step(DT, { forward: 0, turn: 0, lift: 0 });
     }
-    expect(game.delivery.stage).toBe('delivered');
-    const d = game.delivery;
+    expect(game.mission.done).toBe(true);
+    const d = game.mission;
     game.restart();
-    (d as { stage: string }).stage = 'lost';
-    expect(checkInvariants(game).join('\n')).toMatch(/no such stage/);
+    d.next = 3;
+    expect(checkInvariants(game).join('\n')).toMatch(/no such step: the level is at step 3 of 2/);
+    d.next = 0.5;
+    expect(checkInvariants(game).join('\n')).toMatch(/no such step/);
     game.restart();
     d.ring = 9;
     expect(checkInvariants(game).join('\n')).toMatch(/the ring reads 9/);

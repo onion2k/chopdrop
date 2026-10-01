@@ -238,7 +238,7 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
   const state = () => page.evaluate(() => window.game!.state());
   const pads = await page.evaluate(() => window.game!.content().pads);
-  const { pickup, drop } = (await state()).delivery;
+  const [pickup, drop] = (await state()).mission.steps.map((step) => step.pad);
   await step(1);
   await expect(page.locator('#hud .goal')).toHaveText('Pick up the parcel at the meadow pad');
   await expect(page.locator('#hud .far')).toHaveText(/^\d+ m$/);
@@ -255,29 +255,30 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   await landOn(pickup);
   await step(100);
   let s = await state();
-  expect(s.delivery.stage).toBe('carry');
+  expect(s.mission.carrying).toBe(true);
   expect(await page.evaluate(() => window.game!.events())).toEqual([`loaded ${pickup}`]);
   await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the hilltop pad');
 
   // lifted off before the ring is full: it empties, and the wait begins again
   await landOn(drop);
   await step(45);
-  expect((await state()).delivery.ring).toBeGreaterThan(0.5);
+  expect((await state()).mission.ring).toBeGreaterThan(0.5);
   await expect(page.locator('#hud .ring')).toBeVisible();
   await page.keyboard.down('Space');
   await step(20);
   await page.keyboard.up('Space');
-  expect((await state()).delivery.ring).toBe(0);
+  expect((await state()).mission.ring).toBe(0);
   await expect(page.locator('#hud .ring')).toBeHidden();
   await page.keyboard.down('Shift');
   for (let f = 0; f < 300 && !(await state()).helicopter.landed; f += 10) await step(10);
   await page.keyboard.up('Shift');
   await step(100);
   s = await state();
-  expect(s.delivery.stage).toBe('delivered');
+  expect(s.mission.done).toBe(true);
   const told = await page.evaluate(() => window.game!.events());
-  expect(told).toHaveLength(1);
-  expect(told[0]).toMatch(new RegExp(`^delivered ${drop} \\d+\\.\\d\\d$`));
+  expect(told).toHaveLength(2);
+  expect(told[0]).toBe(`delivered ${drop}`);
+  expect(told[1]).toMatch(/^finished \d+\.\d\d$/);
   await expect(page.locator('#hud .card h2')).toHaveText('Delivered!');
   await expect(page.locator('#hud .time')).toHaveText(/^in \d+:\d\d$/);
 
@@ -285,7 +286,7 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   await page.locator('#hud .card button').click();
   await step(1);
   s = await state();
-  expect(s.delivery).toMatchObject({ stage: 'pickup', ring: 0, time: 0, started: false });
+  expect(s.mission).toMatchObject({ next: 0, ring: 0, time: 0, started: false });
   expect(s.helicopter.landed).toBe(true);
   expect([s.helicopter.x, s.helicopter.y]).toEqual([pads[0].x, pads[0].y]);
   await expect(page.locator('#hud .done')).toBeHidden();
@@ -299,7 +300,7 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   await expect(page.locator('#hud .done')).toBeVisible();
   await page.keyboard.press('Enter');
   await step(1);
-  expect((await state()).delivery.stage).toBe('pickup');
+  expect((await state()).mission.next).toBe(0);
   await expect(page.locator('#hud .done')).toBeHidden();
   expect(problems).toEqual([]);
 });
@@ -541,13 +542,13 @@ for (const [name, viewport] of [
       const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
       const state = () => page.evaluate(() => window.game!.state());
       const pads = await page.evaluate(() => window.game!.content().pads);
-      const { pickup, drop } = (await state()).delivery;
+      const [pickup, drop] = (await state()).mission.steps.map((step) => step.pad);
       // the lever starts at the sink: set over a pad, the helicopter settles onto it and the parcel goes on and off
       for (const pad of [pickup, drop]) {
         await page.evaluate((p) => window.game!.teleport(p.x, p.y, 4, 0), pads[pad]);
         await step(240);
       }
-      expect((await state()).delivery.stage).toBe('delivered');
+      expect((await state()).mission.done).toBe(true);
       const button = page.locator('#hud .card button');
       await expect(button).toBeVisible();
       const box = (await button.boundingBox())!;
@@ -558,7 +559,7 @@ for (const [name, viewport] of [
       await hand.down(9, box.x + box.width / 2, box.y + box.height / 2);
       await hand.up(9);
       await step(1);
-      expect((await state()).delivery.stage).toBe('pickup');
+      expect((await state()).mission.next).toBe(0);
       await expect(page.locator('#hud .done')).toBeHidden();
       expect(problems).toEqual([]);
     });

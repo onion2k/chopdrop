@@ -16,7 +16,6 @@ import type { Box } from 'artshape-render/game/shadows';
 import type { Mesh } from 'artshape-render/mesh/types';
 import { ISLAND, TREE_KINDS } from './arena';
 import { HELICOPTER } from './helicopter';
-import type { Job, Stage } from './delivery';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
@@ -159,11 +158,14 @@ const BEACON_PAINT: Paint = { albedo: seen(0xffc23a), roughness: 0.9 };
 const BEACON = { width: 0.9, height: 140, above: 20, near: 40 };
 const CRATE_OUT = 0.65;
 
-/** Where the delivery has got to, as the scene draws it: the stage, the pad wanted now, and the job's two pads. */
-export interface DeliveryPose {
-  stage: Stage;
+/**
+ * Where the level has got to, as the scene draws it: whether the parcel is aboard, the pad it stands on if it is not
+ * (−1 for none), and the pad wanted now (−1 once the level is done).
+ */
+export interface ParcelPose {
+  carrying: boolean;
+  waiting: number;
   target: number;
-  job: Job;
 }
 
 /** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
@@ -612,7 +614,7 @@ export class Scene {
    * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
    * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again.
    */
-  write(pose: HelicopterPose, sway?: Sway, delivery?: DeliveryPose): void {
+  write(pose: HelicopterPose, sway?: Sway, parcel?: ParcelPose): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
     this.changed.fill(0, HELICOPTER_GROUPS);
@@ -624,7 +626,7 @@ export class Scene {
     dark.set(body);
     placePart(main, 0, body, 0, 0, 0, mastTop, 'z', pose.rotor);
     placePart(tail, 0, body, 0, tailRotorAt[0], tailRotorAt[1], tailRotorAt[2], 'y', pose.tailRotor);
-    if (delivery && this.islandPads.length > 0) this.parcel(pose, delivery);
+    if (parcel && this.islandPads.length > 0) this.parcel(pose, parcel);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -635,21 +637,19 @@ export class Scene {
   }
 
   /**
-   * The parcel where the delivery has it (on the pad it waits on, under the helicopter, or on the pad it was wanted
-   * on), and the beacon over the pad wanted now, out once the helicopter is near it or the parcel is delivered.
+   * The parcel where the level has it (on the pad it waits on, under the helicopter, or on the pad it was wanted
+   * on), and the beacon over the pad wanted now, out once the helicopter is near it or the level is done.
    */
-  private parcel(pose: HelicopterPose, delivery: DeliveryPose): void {
+  private parcel(pose: HelicopterPose, parcel: ParcelPose): void {
     const at = this.parcelAt;
     const [wood, straps, light] = [this.pools[at], this.pools[at + 1], this.pools[at + 2]];
-    if (delivery.stage === 'carry') {
-      // strapped under the belly, between the skids, turning and tilting with the helicopter
-      placePart(wood, 0, this.pools[0], 0, 0.25, 0, 0.02, 'z', 0);
-    } else {
-      const pad = this.islandPads[delivery.stage === 'pickup' ? delivery.job.pickup : delivery.job.drop];
-      onPadEdge(wood, pad);
-    }
+    // strapped under the belly, between the skids, turning and tilting with the helicopter
+    if (parcel.carrying) placePart(wood, 0, this.pools[0], 0, 0.25, 0, 0.02, 'z', 0);
+    else if (parcel.waiting >= 0) onPadEdge(wood, this.islandPads[parcel.waiting]);
+    // none: drawn at no size at all
+    else place(wood, 0, pose.x, pose.y, pose.z, 0, 0);
     straps.set(wood);
-    const target = delivery.target >= 0 ? this.islandPads[delivery.target] : undefined;
+    const target = parcel.target >= 0 ? this.islandPads[parcel.target] : undefined;
     if (target && Math.hypot(pose.x - target.x, pose.y - target.y) > BEACON.near)
       place(light, 0, target.x, target.y, target.z + BEACON.above, 0);
     // out: drawn at no size at all, so nothing of it is seen

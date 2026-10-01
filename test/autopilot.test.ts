@@ -10,7 +10,7 @@ import { checkInvariants } from '../src/invariants';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
 
-/** Flown by the autopilot until delivered or `seconds` have gone, every frame checked; the seconds it took, or null. */
+/** Flown by the autopilot until the level is done or `seconds` have gone, every frame checked; the seconds it took, or null. */
 function flown(game: Game, seconds: number): number | null {
   const pilot = new Autopilot(game);
   const from = game.t;
@@ -18,7 +18,7 @@ function flown(game: Game, seconds: number): number | null {
     pilot.step(DT);
     const broken = checkInvariants(game);
     if (broken.length) throw new Error(`at ${game.t.toFixed(2)} s: ${broken.join('; ')}`);
-    if (game.delivery.stage === 'delivered') return game.t - from;
+    if (game.mission.done) return game.t - from;
   }
   return null;
 }
@@ -51,17 +51,17 @@ describe('the autopilot', () => {
 
   it('carries on from a parcel already on board', () => {
     const game = new Game({ random: seeded(1) });
-    const pickup = game.island.pads[game.delivery.job.pickup];
+    const pickup = game.island.pads[game.mission.target];
     game.helicopter.placeAbove(pickup.x, pickup.y, 0, 0);
     for (let f = 0; f < 120; f++) game.step(DT);
-    expect(game.delivery.stage).toBe('carry');
+    expect(game.mission.carrying).toBe(true);
     expect(flown(game, 60)).not.toBeNull();
   });
 
   it('asks for nothing once the parcel is delivered, and for nothing on the pad while the ring fills', () => {
     const game = new Game({ random: seeded(1) });
     const pilot = new Autopilot(game);
-    const pickup = game.island.pads[game.delivery.job.pickup];
+    const pickup = game.island.pads[game.mission.target];
     game.helicopter.placeAbove(pickup.x, pickup.y, 0, 0);
     expect(pilot.drive()).toEqual({ forward: 0, turn: 0, lift: 0 });
     flown(game, 60);

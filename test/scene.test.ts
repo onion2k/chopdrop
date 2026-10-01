@@ -645,14 +645,13 @@ describe('the parcel and the beacon', () => {
   const parcelScene = new Scene();
   const parcelGroups = parcelScene.dynamic(island);
   const at = (name: string) => parcelGroups[parcelScene.movers.indexOf(name)].matrices;
-  const { pickup, drop } = LEVELS[0];
-  const job = { pickup, drop };
+  const [pickup, drop] = LEVELS[0].steps.map((step) => step.pad);
   const pads = island.pads;
   const far = pose({ x: pads[0].x, y: pads[0].y, z: pads[0].z });
   const foot = (m: Float32Array) => [m[12], m[13], m[14]];
 
   it('stands the crate on the pickup pad, beside its middle, and the beacon over that pad from high up', () => {
-    parcelScene.write(far, undefined, { stage: 'pickup', target: pickup, job });
+    parcelScene.write(far, undefined, { carrying: false, waiting: pickup, target: pickup });
     const p = pads[pickup];
     const [x, y, z] = foot(at('crate'));
     expect(z).toBeCloseTo(p.z, 4);
@@ -667,7 +666,7 @@ describe('the parcel and the beacon', () => {
 
   it('carries the crate under the helicopter, turning and tilting with it, and moves the beacon to the drop pad', () => {
     const flying = pose({ x: 40, y: -200, z: 60, yaw: 1.1, pitch: 0.2, roll: -0.1 });
-    parcelScene.write(flying, undefined, { stage: 'carry', target: drop, job });
+    parcelScene.write(flying, undefined, { carrying: true, waiting: -1, target: drop });
     const c = at('crate');
     const body = parcelScene.pools[0];
     // the crate's axes are the body's: it is strapped on
@@ -681,9 +680,13 @@ describe('the parcel and the beacon', () => {
 
   it('puts the beacon out once the helicopter is near the pad, and once the parcel is delivered, and leaves the crate on the drop pad', () => {
     const p = pads[pickup];
-    parcelScene.write(pose({ x: p.x + 30, y: p.y, z: p.z + 10 }), undefined, { stage: 'pickup', target: pickup, job });
+    parcelScene.write(pose({ x: p.x + 30, y: p.y, z: p.z + 10 }), undefined, {
+      carrying: false,
+      waiting: pickup,
+      target: pickup,
+    });
     expect(Array.from(at('beacon').subarray(0, 11)).every((v) => v === 0)).toBe(true);
-    parcelScene.write(far, undefined, { stage: 'delivered', target: -1, job });
+    parcelScene.write(far, undefined, { carrying: false, waiting: drop, target: -1 });
     expect(Array.from(at('beacon').subarray(0, 11)).every((v) => v === 0)).toBe(true);
     const d = pads[drop];
     const [x, y, z] = foot(at('crate'));
@@ -691,11 +694,17 @@ describe('the parcel and the beacon', () => {
     expect(z).toBeCloseTo(d.z, 4);
   });
 
-  it('writes the parcel and the beacon every frame, and only when told where the delivery is', () => {
+  it('draws no crate where the level has no parcel, aboard or on a pad', () => {
+    parcelScene.write(far, undefined, { carrying: false, waiting: -1, target: pickup });
+    expect(Array.from(at('crate').subarray(0, 11)).every((v) => v === 0)).toBe(true);
+    expect(Array.from(at('crate straps'))).toEqual(Array.from(at('crate')));
+  });
+
+  it('writes the parcel and the beacon every frame, and only when told where the level is', () => {
     const k = parcelScene.movers.indexOf('crate');
     parcelScene.write(far);
     expect(Array.from(parcelScene.changed.subarray(k, k + 3))).toEqual([0, 0, 0]);
-    parcelScene.write(far, undefined, { stage: 'pickup', target: pickup, job });
+    parcelScene.write(far, undefined, { carrying: false, waiting: pickup, target: pickup });
     expect(Array.from(parcelScene.changed.subarray(k, k + 3))).toEqual([1, 1, 1]);
   });
 });

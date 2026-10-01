@@ -12,16 +12,13 @@
  * Each broken rule is a line saying what and where.
  */
 import { CHASE, type ChaseCamera } from './chase';
-import { DELIVERY, onPad } from './delivery';
 import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
+import { DELIVERY, onPad } from './mission';
 import type { Sway } from './sway';
-
-/** The stages a delivery can be at: anything else, set from outside, is a broken rule. */
-const STAGES: readonly string[] = ['pickup', 'carry', 'delivered'];
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
 const TOLERANCE = 1e-9;
@@ -80,26 +77,29 @@ export function checkInvariants(game: Game): string[] {
 
   if (!Number.isFinite(game.t) || game.t < 0) out.push(`the clock reads ${game.t}`);
   out.push(...checkSway(game.sway));
-  out.push(...checkDelivery(game));
+  out.push(...checkMission(game));
   return out;
 }
 
 /**
- * What must hold of the delivery: it is at one of its three stages; its ring is a number from nothing to short of a
- * full one, and runs only while the helicopter is landed on the pad it is wanted on; and its clock is a number that
- * has not started before the first lift-off.
+ * What must hold of the level being flown: it is at one of its steps, or past the last; the pad it wants is one of the
+ * island's; its ring is a number from nothing to short of a full one, and runs only while the helicopter is landed on
+ * the pad it is wanted on; and its clock is a number that has not started before the first lift-off.
  */
-export function checkDelivery(game: Game): string[] {
+export function checkMission(game: Game): string[] {
   const out: string[] = [];
-  const d = game.delivery;
-  if (!STAGES.includes(d.stage)) return [`no such stage: the delivery is at ${String(d.stage)}`];
+  const d = game.mission;
+  const steps = d.level.steps.length;
+  if (!Number.isInteger(d.next) || d.next < 0 || d.next > steps)
+    return [`no such step: the level is at step ${d.next} of ${steps}`];
+  if (d.target < -1 || d.target >= game.island.pads.length || !Number.isInteger(d.target))
+    return [`no such pad: the level wants pad ${d.target} of ${game.island.pads.length}`];
   if (!Number.isFinite(d.ring) || d.ring < 0 || d.ring >= DELIVERY.load)
     out.push(`the ring reads ${d.ring}, and runs from 0 to short of ${DELIVERY.load}`);
   else if (d.ring > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
     out.push(`the ring runs off the pad: ${d.ring.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
-  if (!Number.isFinite(d.time) || d.time < 0) out.push(`the delivery's clock reads ${d.time}`);
-  else if (!d.started && d.time > 0)
-    out.push(`the delivery's clock ran before the first lift-off: ${d.time.toFixed(3)}`);
+  if (!Number.isFinite(d.time) || d.time < 0) out.push(`the level's clock reads ${d.time}`);
+  else if (!d.started && d.time > 0) out.push(`the level's clock ran before the first lift-off: ${d.time.toFixed(3)}`);
   return out;
 }
 

@@ -5,8 +5,8 @@
  * generator in `island.ts` is the same for any recipe, and the lower modules
  * go on knowing nothing of what is on it.
  */
-import type { Job } from './delivery';
 import { buildIsland, type Island, type IslandRecipe } from './island';
+import type { Level } from './mission';
 import { seeded } from './random';
 
 /** The kinds of tree, in the order the island's trees name them by. Each has its habitat in the recipe, at the same index. */
@@ -251,12 +251,24 @@ export const ISLAND: IslandRecipe = {
   },
 };
 
+/** A level that is a parcel waiting on one pad and wanted on another, the pads by their place in the island's list. */
+function delivery(id: string, name: string, pickup: number, drop: number): Level {
+  return {
+    id,
+    name,
+    kind: 'delivery',
+    steps: [
+      { kind: 'pickup', pad: pickup },
+      { kind: 'drop', pad: drop },
+    ],
+  };
+}
+
 /**
- * The levels, in order: each a parcel waiting on one pad and wanted on another, the pads by their place in the
- * island's list, which a test holds to what they are. The first is a short one with a climb at the end: from the
- * meadow pad, 187 inland of home, to the hilltop pad 187 beyond it and 53 up.
+ * The levels, in order, each pad held by a test to what it is. The first is a short one with a climb at the end:
+ * from the meadow pad, 187 inland of home, to the hilltop pad 187 beyond it and 53 up.
  */
-export const LEVELS: readonly (Job & { name: string })[] = [{ name: 'First delivery', pickup: 4, drop: 1 }];
+export const LEVELS: readonly Level[] = [delivery('first-delivery', 'First delivery', 4, 1)];
 
 /**
  * The one island, built from the recipe the first time it is asked for and

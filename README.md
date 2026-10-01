@@ -69,8 +69,8 @@ is fixed, and no baseline is moved to make it green.
 
 ## Layout
 
-    src/game.ts        the game without the picture: the island, the helicopter, the delivery, the clock
-    src/delivery.ts    the level: a parcel picked up on one pad and delivered to another
+    src/game.ts        the game without the picture: the island, the helicopter, the mission, the clock
+    src/mission.ts     the level as it is flown: its steps, a parcel picked up on one pad and delivered to another
     src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
