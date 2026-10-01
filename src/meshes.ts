@@ -848,6 +848,23 @@ export function crate(): { wood: Mesh; straps: Mesh } {
   };
 }
 
+/**
+ * A ring to fly through: a tube of `thickness` round a circle of `radius` about its middle, standing upright in the
+ * y–z plane, so that it faces along x and is turned to face its way by a yaw alone.
+ */
+export function ring(radius: number, thickness: number): Mesh {
+  const path: Vec3[] = [];
+  for (let k = 0; k <= RING_SEGMENTS; k++) {
+    const a = (k / RING_SEGMENTS) * Math.PI * 2;
+    path.push([0, Math.cos(a) * radius, Math.sin(a) * radius]);
+  }
+  return tube(path, thickness, RING_SIDES);
+}
+
+/** How finely a ring is made: round enough at the size it is seen, and no finer. */
+const RING_SEGMENTS = 48,
+  RING_SIDES = 12;
+
 /** The beacon over a pad that is wanted: a tall square column standing on z = 0, seen from across the island. */
 export function beacon(width: number, height: number): Mesh {
   return box(width, width, height);

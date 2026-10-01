@@ -43,6 +43,14 @@ export interface Ground {
   heightAt(x: number, y: number): number;
 }
 
+/**
+ * What it cannot fly into, which pushes it back out and knocks it back when it has, written straight into it; whether
+ * it touched anything. Handed in, as the ground is.
+ */
+export interface Solid {
+  collide(body: { x: number; y: number; z: number; vx: number; vy: number; vz: number }): boolean;
+}
+
 /** Where it starts: a place on the ground, landed, and which way it faces. */
 export interface Start {
   x: number;
@@ -107,6 +115,11 @@ export const HELICOPTER = {
     tailRotorRadius: 0.8,
     /** From the skids to the top of the rotor hub, and a little: for the shadow's reach. */
     height: 3.6,
+    /**
+     * Its middle, above the skids, a little under the rotor: what flies through a ring, and the middle of the ball of
+     * the rotor's reach that it is to anything solid.
+     */
+    middle: 2.2,
   },
   /** How far its middle stays from the world's edge: the rotor's reach, and a margin, so the blades never leave the world. */
   reach: ROTOR_RADIUS + 0.5,
@@ -150,8 +163,12 @@ export class Helicopter {
   readonly bounds: Bounds;
   private readonly ground: Ground;
 
-  /** On `ground`, landed where `start` says. */
-  constructor(ground: Ground, start: Start = HELICOPTER.start) {
+  /** On `ground`, landed where `start` says, and kept out of `solid` if it is handed one. */
+  constructor(
+    ground: Ground,
+    start: Start = HELICOPTER.start,
+    private readonly solid?: Solid,
+  ) {
     const r = HELICOPTER.reach;
     const edge = ground.bounds;
     this.ground = ground;
@@ -264,6 +281,8 @@ export class Helicopter {
 
     this.x += this.vx * dt;
     this.y += this.vy * dt;
+    // out of anything solid it has flown into, and knocked back off it, before the edge and the ground have their say
+    this.solid?.collide(this);
     const b = this.bounds;
     if (this.x < b.minX) {
       this.x = b.minX;
@@ -306,8 +325,15 @@ export class Helicopter {
     this.y = clamp(y, b.minY, b.maxY);
     this.floor = this.floorAt(this.x, this.y);
     this.z = clamp(z, this.floor, HELICOPTER.ceiling);
-    this.yaw = wrapYaw(yaw);
     this.vx = this.vy = this.vz = 0;
+    // put inside something solid, it is put just outside it instead, and stands on the ground there
+    if (this.solid?.collide(this)) {
+      this.x = clamp(this.x, b.minX, b.maxX);
+      this.y = clamp(this.y, b.minY, b.maxY);
+      this.floor = this.floorAt(this.x, this.y);
+      this.z = clamp(this.z, this.floor, HELICOPTER.ceiling);
+    }
+    this.yaw = wrapYaw(yaw);
     this.yawRate = 0;
     this.pitch = this.landed ? this.slopePitch() : 0;
     this.roll = this.landed ? this.slopeRoll() : 0;

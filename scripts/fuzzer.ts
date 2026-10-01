@@ -6,7 +6,8 @@
  * else, taking off from a pad, flying out to the edge of the world, up at a
  * hill, down onto a pad and low over a wood, bowing its trees, onto the
  * pad the parcel is wanted at and waiting there, flying the level again, on
- * to the next, or any other the list of levels lets a player pick — with the
+ * to the next, or any other the list of levels lets a player pick, flying
+ * at a ring from any side and through one in its turn — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
@@ -82,10 +83,20 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       events: {
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
+        passed: () => count(happened, 'passed a ring'),
         finished: (_id, _seconds, best) => count(happened, best ? 'finished, a best time' : 'finished'),
       },
     });
     const heli = game.helicopter;
+    /** A level picked from the list: the one it offers, flown by Enter as most players do, or else any not locked. */
+    const pick = () => {
+      const ids = game.levels.map((level) => level.id);
+      const open = game.levelList().filter((level) => level.standing !== 'locked');
+      game.play(random() < 0.5 ? ids[game.progress.pick(ids)] : open[Math.floor(random() * open.length)].id);
+      count(happened, `flew ${game.mission.level.id}`);
+    };
+    // the game opens on the list, so the first thing a player does is pick from it
+    pick();
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
     const rig = new ChaseCamera(game.island.ground, game.canopy);
     rig.snap(heli);
@@ -288,6 +299,53 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         },
       },
       {
+        name: 'ring run',
+        places: true,
+        weight: 2,
+        go() {
+          // at one of the level's rings from any side, any height near it and any speed, as a player who has misjudged
+          // one does: knocked off its tube, through it the wrong way, or round it
+          const rings = game.mission.level.steps.filter((step) => step.kind === 'ring');
+          if (!rings.length) return;
+          const ring = rings[Math.floor(random() * rings.length)];
+          const round = between(-Math.PI, Math.PI);
+          const away = between(12, 40);
+          const x = ring.x + Math.cos(round) * away,
+            y = ring.y + Math.sin(round) * away;
+          heli.place(
+            x,
+            y,
+            ring.z - HELICOPTER.size.middle + between(-ring.opening, ring.opening),
+            round + Math.PI + between(-0.4, 0.4),
+          );
+          controls = { forward: between(0.3, 1), turn: between(-0.2, 0.2), lift: HOVER_LIFT };
+          hold.busy = Math.floor(between(60, 180));
+        },
+      },
+      {
+        name: 'through the ring',
+        places: true,
+        weight: 4,
+        go() {
+          // lined up on the ring wanted, before it, at its height, and through it as a player who has it right does
+          const ring = game.mission.current;
+          if (ring?.kind !== 'ring') return;
+          // from rest it covers 18 in a second and a half and 44 in two and a half: through, and on past it
+          const back = between(10, 25);
+          const ax = Math.cos(ring.yaw),
+            ay = Math.sin(ring.yaw);
+          const off = between(-ring.opening / 3, ring.opening / 3);
+          heli.place(
+            ring.x - ax * back - ay * off,
+            ring.y - ay * back + ax * off,
+            ring.z - HELICOPTER.size.middle,
+            ring.yaw,
+          );
+          controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
+          hold.busy = 150;
+        },
+      },
+      {
         name: 'fly again',
         places: true,
         weight: 1,
@@ -311,10 +369,8 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         places: true,
         weight: 1,
         go() {
-          // the list, brought up mid-flight or from the card, and any level on it that is not locked flown from the start
-          const open = game.levelList().filter((level) => level.standing !== 'locked');
-          game.play(open[Math.floor(random() * open.length)].id);
-          count(happened, `flew ${game.mission.level.id}`);
+          // the list, brought up mid-flight or from the card, and a level on it flown from the start
+          pick();
         },
       },
       {
@@ -395,6 +451,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       const wasSwaying = game.sway.count;
       game.step(DT, controls);
       rig.step(DT, heli);
+      if (game.solids.touched) count(happened, 'knocked off a ring');
       if (wasSwaying === 0 && game.sway.count > 0) count(happened, 'trees swayed');
       if (wasSwaying > 0 && game.sway.count === 0) count(happened, 'trees settled');
       if (wasLanded && !landed()) count(happened, 'took off');

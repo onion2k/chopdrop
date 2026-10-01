@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { flight, hashGame, playTwice } from '../scripts/determinism';
+import { LEVELS } from '../src/arena';
 import { Game } from '../src/game';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
@@ -20,17 +21,11 @@ describe('the determinism check', () => {
   it('flies the levels in turn, each from the start once the one before is done, and the first again after the last', () => {
     const seen: string[] = [];
     let at = '';
-    // long enough for all four, about four minutes of game, and the first begun again
-    for (const game of flight(1, 60 * 60 * 5)) {
+    // long enough for all six, about five minutes of game, and the first begun again
+    for (const game of flight(1, 60 * 60 * 6)) {
       if (game.mission.level.id !== at) seen.push((at = game.mission.level.id));
     }
-    expect(seen.slice(0, 5)).toEqual([
-      'first-delivery',
-      'over-the-water',
-      'over-the-range',
-      'mountain-drop',
-      'first-delivery',
-    ]);
+    expect(seen.slice(0, 7)).toEqual([...LEVELS.map((level) => level.id), LEVELS[0].id]);
   });
 
   it('sees which level it is and the best times kept, as well as where the helicopter is', () => {

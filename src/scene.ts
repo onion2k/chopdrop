@@ -19,9 +19,11 @@ import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
+import { RING, RINGS, type Step } from './mission';
 import {
   beacon,
   crate,
+  ring,
   helicopterBody,
   helicopterDark,
   helicopterGlass,
@@ -151,6 +153,19 @@ const STRAP_PAINT: Paint = { albedo: seen(0x3a2a1c), roughness: 0.9 };
 const BEACON_PAINT: Paint = { albedo: seen(0xffc23a), roughness: 0.9 };
 
 /**
+ * The rings: the one wanted in the beacon's gold, made brighter than a surface can be so the glow takes it, and the
+ * rings after it white, which reads against the grass and the water and leaves the gold one plainly next. A ring
+ * passed is not drawn. Chosen from a mock.
+ */
+const RING_NEXT_PAINT: Paint = { albedo: seen(0xffc23a).map((c) => c * 1.6) as Rgb, roughness: 0.4 };
+const RING_PAINT: Paint = { albedo: seen(0xf5f3e8), roughness: 0.4 };
+/**
+ * The opening the ring is made at. A ring of another opening is drawn this one scaled to its size, its tube scaled
+ * with it: a valley ring of 8 looks a sixth thinner than the solid tube it is, which is a hair at the size it is seen.
+ */
+const RING_DRAWN = 10;
+
+/**
  * The beacon: how wide and tall it stands, how far above the pad it starts so it never stands through the helicopter
  * on the pad, and how near the helicopter must come for it to go out, its work done. A crate on a pad sits this far
  * from the pad's middle, as a share of its radius, past the ends of the H and inside the painted ring.
@@ -166,6 +181,12 @@ export interface ParcelPose {
   carrying: boolean;
   waiting: number;
   target: number;
+}
+
+/** Where a level of rings has got to, as the scene draws them: its steps, and the one wanted (their number once done). */
+export interface RingsPose {
+  level: { steps: readonly Step[] };
+  next: number;
 }
 
 /** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
@@ -478,6 +499,12 @@ export class Scene {
   /** The pads, which the parcel and the beacon stand on, and where in `pools` the parcel's groups start. */
   private islandPads: readonly Pad[] = [];
   private parcelAt = 0;
+  /** Where the ring groups are among the pools, and what they were last written for, so they are written only on a change. */
+  private ringsAt = -1;
+  private ringsFor: { steps: readonly Step[] } | null = null;
+  private ringsNext = -1;
+  /** One ring, its opening the one most levels have; a ring of another opening is drawn at its size by its placing. */
+  private readonly ringMesh = ring(RING_DRAWN + RING.tube, RING.tube);
 
   /**
    * The box the sun's shadow is fitted to, which the renderer holds and `write` moves: a stretch of the island
@@ -571,6 +598,10 @@ export class Scene {
       add('crate straps', straps, STRAP_PAINT);
       add('beacon', beacon(BEACON.width, BEACON.height), BEACON_PAINT);
       this.islandPads = island.pads;
+      // the rings, one lit and room for every other a level may have, written only when the ring wanted changes
+      this.ringsAt = this.pools.length;
+      add('rings', this.ringMesh, RING_PAINT, new Float32Array(RINGS.capacity * 16), RINGS.capacity);
+      add('ring next', this.ringMesh, RING_NEXT_PAINT);
     }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
@@ -614,7 +645,7 @@ export class Scene {
    * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
    * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again.
    */
-  write(pose: HelicopterPose, sway?: Sway, parcel?: ParcelPose): void {
+  write(pose: HelicopterPose, sway?: Sway, parcel?: ParcelPose, rings?: RingsPose): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
     this.changed.fill(0, HELICOPTER_GROUPS);
@@ -627,6 +658,7 @@ export class Scene {
     placePart(main, 0, body, 0, 0, 0, mastTop, 'z', pose.rotor);
     placePart(tail, 0, body, 0, tailRotorAt[0], tailRotorAt[1], tailRotorAt[2], 'y', pose.tailRotor);
     if (parcel && this.islandPads.length > 0) this.parcel(pose, parcel);
+    if (rings && this.ringsAt >= 0) this.rings(rings);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -655,6 +687,28 @@ export class Scene {
     // out: drawn at no size at all, so nothing of it is seen
     else place(light, 0, pose.x, pose.y, pose.z, 0, 0);
     this.changed.fill(1, at, at + 3);
+  }
+
+  /**
+   * The rings of the level where it has got to: the one wanted lit, those after it white, those passed not drawn, and
+   * every slot past the last at no size; written only when the level or the ring wanted has changed.
+   */
+  private rings({ level, next }: RingsPose): void {
+    const at = this.ringsAt;
+    if (level === this.ringsFor && next === this.ringsNext) return;
+    this.ringsFor = level;
+    this.ringsNext = next;
+    const [later, lit] = [this.pools[at], this.pools[at + 1]];
+    later.fill(0);
+    lit.fill(0);
+    let n = 0;
+    level.steps.forEach((step, k) => {
+      if (step.kind !== 'ring' || k < next) return;
+      const size = (step.opening + RING.tube) / (RING_DRAWN + RING.tube);
+      if (k === next) place(lit, 0, step.x, step.y, step.z, step.yaw, size);
+      else place(later, n++, step.x, step.y, step.z, step.yaw, size);
+    });
+    this.changed[at] = this.changed[at + 1] = 1;
   }
 
   /** Each tree the sway is moving leaned as it says, and each it has let go since the last write stood up again. */

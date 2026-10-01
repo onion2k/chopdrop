@@ -13,6 +13,7 @@
  */
 import { expect, type Page } from '@playwright/test';
 import type { GameApi } from '../src/debug';
+import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 
 declare global {
   interface Window {
@@ -149,4 +150,34 @@ export function leverTravel(page: Page): Promise<number> {
     const handle = document.querySelector<HTMLElement>('#touch .handle')!;
     return track.clientHeight - handle.offsetHeight;
   });
+}
+
+/**
+ * The level being flown, finished as a player finishes it: lifted off, then each step done in turn, landed on its pad
+ * and waited on, or lined up a short way before its ring at its height and flown through. The game must be paused.
+ */
+export async function finish(page: Page) {
+  await page.evaluate(
+    ([middle, hover]) => {
+      const g = window.game!;
+      g.fly(0, 0, 1);
+      g.step(30);
+      g.release();
+      const pads = g.content().pads;
+      for (const step of g.state().mission.steps) {
+        if (step.kind === 'ring') {
+          const [ax, ay] = [Math.cos(step.yaw), Math.sin(step.yaw)];
+          const [x, y] = [step.x - ax * 12, step.y - ay * 12];
+          g.teleport(x, y, step.z - middle - g.groundAt(x, y), step.yaw);
+          g.fly(1, 0, hover);
+          g.step(90);
+          g.release();
+        } else {
+          g.teleport(pads[step.pad].x, pads[step.pad].y, 0);
+          g.step(100);
+        }
+      }
+    },
+    [HELICOPTER.size.middle, HOVER_LIFT],
+  );
 }

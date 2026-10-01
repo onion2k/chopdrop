@@ -24,6 +24,10 @@ const KINDS: Record<LevelKind, { label: string; icon: string }> = {
     label: 'Delivery',
     icon: '<path d="M3 6 L10 3 L17 6 L17 14 L10 17 L3 14 Z M3 6 L10 9 L17 6 M10 9 L10 17" />',
   },
+  rings: {
+    label: 'Rings',
+    icon: '<ellipse cx="7" cy="10" rx="3.5" ry="6" /><ellipse cx="14" cy="10" rx="3" ry="5" />',
+  },
 };
 
 const LOCK = '<path d="M6 9 V6.5 a4 4 0 0 1 8 0 V9" /><rect x="4" y="9" width="12" height="9" rx="2" />';

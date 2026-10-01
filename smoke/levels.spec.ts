@@ -6,25 +6,10 @@
  * down on each pad through the test API; the play-through flies them.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { SAVE_KEY, fingers, leverTravel, start, watch } from './game';
+import { SAVE_KEY, fingers, finish, leverTravel, start, watch } from './game';
 
 const state = (page: Page) => page.evaluate(() => window.game!.state());
 const step = (page: Page, frames: number) => page.evaluate((n) => window.game!.step(n), frames);
-
-/** The level being flown, finished as a player finishes it: lifted off, then landed on each step's pad and waited on. */
-async function finish(page: Page) {
-  await page.evaluate(() => {
-    const g = window.game!;
-    g.fly(0, 0, 1);
-    g.step(30);
-    g.release();
-    const pads = g.content().pads;
-    for (const { pad } of g.state().mission.steps) {
-      g.teleport(pads[pad].x, pads[pad].y, 0);
-      g.step(100);
-    }
-  });
-}
 
 /** Each tile in the list as it reads: its standing, whether it is picked, and the best time on it. */
 function tiles(page: Page) {
@@ -46,8 +31,10 @@ test('opens on the list over the island, the game held behind it, and flies the 
   await expect(page.locator('#levels')).toBeVisible();
   expect(await tiles(page)).toEqual([
     { name: 'First delivery', standing: 'open', picked: true, best: '' },
+    { name: 'Ring trial', standing: 'locked', picked: false, best: '' },
     { name: 'Over the water', standing: 'locked', picked: false, best: '' },
     { name: 'Over the range', standing: 'locked', picked: false, best: '' },
+    { name: 'Up the valley', standing: 'locked', picked: false, best: '' },
     { name: 'Mountain drop', standing: 'locked', picked: false, best: '' },
   ]);
   await expect(page.locator('#levels .go')).toHaveText('Fly level 1 · First delivery');
@@ -75,21 +62,23 @@ test('lets no locked level be flown, by click or by key, and picks any other by 
     ['open', true, ''],
     ['locked', false, ''],
     ['locked', false, ''],
+    ['locked', false, ''],
+    ['locked', false, ''],
   ]);
   // a locked tile clicked, and the arrows run past the last open one: still the second picked
   await page.locator('#levels .lv').nth(3).click({ force: true });
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowDown');
-  expect((await tiles(page)).map((t) => t.picked)).toEqual([false, true, false, false]);
+  expect((await tiles(page)).map((t) => t.picked)).toEqual([false, true, false, false, false, false]);
   // back to the first, done, by key, and on to it again by a click
   await page.keyboard.press('ArrowLeft');
-  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false]);
+  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false, false, false]);
   await page.locator('#levels .lv').nth(1).click();
-  await expect(page.locator('#levels .go')).toHaveText('Fly level 2 · Over the water');
+  await expect(page.locator('#levels .go')).toHaveText('Fly level 2 · Ring trial');
   await page.locator('#levels .go').click();
   await step(page, 1);
-  expect((await state(page)).mission.level).toBe('over-the-water');
-  await expect(page.locator('#hud .goal')).toHaveText('Pick up the parcel at the rivermouth pad');
+  expect((await state(page)).mission.level).toBe('ring-trial');
+  await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 1 of 6');
   expect(problems).toEqual([]);
 });
 
@@ -104,7 +93,7 @@ test('keeps a level done, opens the next, and goes on to it from the card; a rel
   const card = page.locator('#hud .card');
   await expect(card.locator('h2')).toHaveText('Delivered!');
   await expect(card.locator('.best')).toHaveText('★ New best');
-  await expect(card.locator('.next')).toHaveText('Next level: Over the water');
+  await expect(card.locator('.next')).toHaveText('Next level: Ring trial');
   await expect(card.locator('.again')).toHaveText('Fly again');
   await expect(card.locator('.list')).toHaveText('Levels');
   const kept = await page.evaluate(
@@ -128,19 +117,26 @@ test('keeps a level done, opens the next, and goes on to it from the card; a rel
     ['open', true],
     ['locked', false],
     ['locked', false],
+    ['locked', false],
+    ['locked', false],
   ]);
   await expect(page.locator('#levels .close')).toBeHidden();
   await page.keyboard.press('Escape');
   await expect(page.locator('#levels')).toBeVisible();
   await page.locator('#levels .go').click();
-  expect((await state(page)).mission.level).toBe('over-the-water');
+  // the trial, from its own pad beside the meadow, and not from home
+  const trial = await state(page);
+  const lakeside = (await page.evaluate(() => window.game!.content().pads))[2];
+  expect([trial.mission.level, trial.mission.start]).toEqual(['ring-trial', 2]);
+  expect([trial.helicopter.x, trial.helicopter.y, trial.helicopter.landed]).toEqual([lakeside.x, lakeside.y, true]);
 
   // and from the card of that one, straight on by Enter
   await finish(page);
-  await expect(card.locator('.next')).toHaveText('Next level: Over the range');
+  await expect(card.locator('h2')).toHaveText('Trial complete!');
+  await expect(card.locator('.next')).toHaveText('Next level: Over the water');
   await page.keyboard.press('Enter');
   await step(page, 1);
-  expect([(await state(page)).mission.level, (await state(page)).screen]).toEqual(['over-the-range', 'flying']);
+  expect([(await state(page)).mission.level, (await state(page)).screen]).toEqual(['over-the-water', 'flying']);
 
   // a reload reads back what was kept
   await page.reload();
@@ -149,6 +145,8 @@ test('keeps a level done, opens the next, and goes on to it from the card; a rel
     ['done', false],
     ['done', false],
     ['open', true],
+    ['locked', false],
+    ['locked', false],
     ['locked', false],
   ]);
   expect(problems).toEqual([]);
@@ -168,7 +166,7 @@ test('goes back to the list mid-flight by Esc or the corner button, and carries 
   await page.keyboard.press('Escape');
   await expect(page.locator('#levels')).toBeVisible();
   await expect(page.locator('#levels .close')).toBeVisible();
-  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false]);
+  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false, false, false]);
   await step(page, 60);
   // held where it was, and Esc again carries on from there
   expect((await state(page)).helicopter).toEqual(before.helicopter);
@@ -210,7 +208,14 @@ test('refuses a save it cannot read, saying why, starts afresh, and leaves it be
   await start(page, { seed: 11, paused: true, list: true, save: '{"best": {"first-delivery": 40' });
   expect(warned.join('\n')).toMatch(/save could not be read \(it is not JSON\)/);
   expect((await page.evaluate(() => window.game!.save())).refused).toBe('it is not JSON');
-  expect((await tiles(page)).map((t) => t.standing)).toEqual(['open', 'locked', 'locked', 'locked']);
+  expect((await tiles(page)).map((t) => t.standing)).toEqual([
+    'open',
+    'locked',
+    'locked',
+    'locked',
+    'locked',
+    'locked',
+  ]);
   expect(await page.evaluate((key) => localStorage.getItem(key), SAVE_KEY)).toBe('{"best": {"first-delivery": 40');
   await page.keyboard.press('Enter');
   await finish(page);

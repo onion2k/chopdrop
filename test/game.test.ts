@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LEVELS, theIsland } from '../src/arena';
 import { Game } from '../src/game';
-import { HELICOPTER } from '../src/helicopter';
-import { DELIVERY, type Level } from '../src/mission';
+import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import { checkInvariants } from '../src/invariants';
+import { DELIVERY, RING, type Level, type Ring } from '../src/mission';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 import { DT, newGame } from './helpers';
@@ -78,6 +79,7 @@ describe('the game', () => {
 function finish(game: Game, airborne = 1) {
   for (let f = 0, n = Math.round(airborne / DT); f < n; f++) game.step(DT, { forward: 0, turn: 0, lift: 1 });
   for (const step of game.mission.level.steps) {
+    if (step.kind === 'ring') continue;
     const pad = game.island.pads[step.pad];
     game.helicopter.placeAbove(pad.x, pad.y, 0, pad.yaw);
     for (let f = 0, n = Math.round((DELIVERY.load + 0.1) / DT); f < n; f++) game.step(DT);
@@ -117,7 +119,8 @@ describe('the levels in play', () => {
       0,
       false,
     ]);
-    expect(game.mission.target).toBe(LEVELS[1].steps[0].pad);
+    const first = LEVELS.find((level) => level.id === 'over-the-water')!.steps[0];
+    expect(game.mission.target).toBe(first.kind === 'pickup' ? first.pad : NaN);
   });
 
   it('refuses by name a level it does not have', () => {
@@ -128,7 +131,7 @@ describe('the levels in play', () => {
 
   it('knows the level after the one being flown, and that there is none after the last', () => {
     const { game } = played();
-    expect(game.nextLevel?.id).toBe('over-the-water');
+    expect(game.nextLevel?.id).toBe('ring-trial');
     game.play('mountain-drop');
     expect(game.nextLevel).toBeUndefined();
   });
@@ -159,8 +162,10 @@ describe('the levels in play', () => {
     const { game } = played('{"best": {"first-delivery": 40}}');
     expect(game.levelList()).toEqual([
       { id: 'first-delivery', name: 'First delivery', kind: 'delivery', standing: 'done', best: 40 },
-      { id: 'over-the-water', name: 'Over the water', kind: 'delivery', standing: 'open', best: null },
+      { id: 'ring-trial', name: 'Ring trial', kind: 'rings', standing: 'open', best: null },
+      { id: 'over-the-water', name: 'Over the water', kind: 'delivery', standing: 'locked', best: null },
       { id: 'over-the-range', name: 'Over the range', kind: 'delivery', standing: 'locked', best: null },
+      { id: 'up-the-valley', name: 'Up the valley', kind: 'rings', standing: 'locked', best: null },
       { id: 'mountain-drop', name: 'Mountain drop', kind: 'delivery', standing: 'locked', best: null },
     ]);
   });
@@ -180,6 +185,53 @@ describe('the levels in play', () => {
     expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(7));
     game.play(LEVELS[0].id);
     expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(0));
+  });
+
+  it('flies each ring trial from its own pad with its rings solid, and a delivery from home with none', () => {
+    const { game } = played();
+    const h = game.helicopter;
+    const on = (pad: number) =>
+      [h.x, h.y, h.landed].join() === [game.island.pads[pad].x, game.island.pads[pad].y, true].join();
+    game.play('ring-trial');
+    expect([on(2), game.solids.count]).toEqual([true, 6]);
+    game.play('up-the-valley');
+    expect([on(7), game.solids.count]).toEqual([true, 9]);
+    game.play('first-delivery');
+    expect([on(0), game.solids.count]).toEqual([true, 0]);
+  });
+
+  it('knocks the helicopter back off a ring it flies into, and never lets it inside', () => {
+    const { game } = played();
+    game.play('ring-trial');
+    const ring = game.mission.current as Ring;
+    const h = game.helicopter;
+    // fifteen short of the ring on its axis, a tube's width to the side, so it flies straight at the tube
+    const side = ring.opening + RING.tube;
+    const x = ring.x - Math.cos(ring.yaw) * 15 - Math.sin(ring.yaw) * side;
+    const y = ring.y - Math.sin(ring.yaw) * 15 + Math.cos(ring.yaw) * side;
+    h.placeAbove(x, y, 0, ring.yaw);
+    h.z = ring.z - HELICOPTER.size.middle;
+    let into = 0;
+    let back = false;
+    for (let f = 0; f < 120; f++) {
+      game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+      const along = h.vx * Math.cos(ring.yaw) + h.vy * Math.sin(ring.yaw);
+      into = Math.max(into, along);
+      if (along < 0) back = true;
+      expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+    }
+    expect(into, 'it got up to speed').toBeGreaterThan(10);
+    expect(back, 'and was knocked back').toBe(true);
+    expect(game.mission.next, 'and did not pass the ring').toBe(0);
+  });
+
+  it('pushes the helicopter out of a ring it is put inside', () => {
+    const { game } = played();
+    game.play('ring-trial');
+    const ring = game.mission.current as Ring;
+    // its middle on the top of the tube's centre line, as a careless teleport would put it
+    game.helicopter.place(ring.x, ring.y, ring.z + ring.opening + RING.tube - HELICOPTER.size.middle, 0);
+    expect(checkInvariants(game)).toEqual([]);
   });
 
   it('keeps its save in memory unless handed a store, so a game run without a page writes nowhere', () => {

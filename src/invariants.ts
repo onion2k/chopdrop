@@ -7,7 +7,8 @@
  * banked than it is built to be, and never sinking through the ground it
  * stands on. The ground it says it stands on is the ground under it. The
  * clock only runs forward. A level is at one of its steps, and a best time
- * is a time, and never slower than the level was just done in.
+ * is a time, and never slower than the level was just done in. The
+ * helicopter is never inside anything solid.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
@@ -18,7 +19,7 @@ import type { Game } from './game';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
-import { DELIVERY, onPad } from './mission';
+import { DELIVERY, RING, onPad } from './mission';
 import type { Sway } from './sway';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
@@ -80,7 +81,18 @@ export function checkInvariants(game: Game): string[] {
   out.push(...checkSway(game.sway));
   out.push(...checkMission(game));
   out.push(...checkProgress(game));
+  out.push(...checkSolids(game));
   return out;
+}
+
+/** What must hold of the solids: the helicopter is never inside one, its middle never nearer a ring's tube than it can be. */
+export function checkSolids(game: Game): string[] {
+  const { depth, ring } = game.solids.inside(game.helicopter);
+  if (depth <= TOLERANCE) return [];
+  const touch = RING.tube + HELICOPTER.size.rotorRadius;
+  return [
+    `the helicopter is inside ring ${ring} of ${game.solids.count}: its middle ${(touch - depth).toFixed(3)} from the tube's centre line, and it reaches ${touch.toFixed(3)}`,
+  ];
 }
 
 /**

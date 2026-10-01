@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
+import { RING, type Ring } from '../src/mission';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
 import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
@@ -188,6 +189,22 @@ describe('what must always hold', () => {
     expect(checkInvariants(game).join('\n')).toMatch(/clock ran before the first lift-off/);
     d.time = NaN;
     expect(checkInvariants(game).join('\n')).toMatch(/clock reads NaN/);
+  });
+
+  it('reports the helicopter inside a ring, which nothing a player does can leave it', () => {
+    const { game } = newGame();
+    game.play('ring-trial');
+    const ring = game.mission.current as Ring;
+    const h = game.helicopter;
+    expect(checkInvariants(game)).toEqual([]);
+    // set by hand, past the push a placing would give it: its middle on the top of the first ring's tube
+    h.x = ring.x;
+    h.y = ring.y;
+    h.z = ring.z + ring.opening + RING.tube - HELICOPTER.size.middle;
+    h.floor = h.floorAt(h.x, h.y);
+    expect(checkInvariants(game).join('\n')).toMatch(
+      /inside ring 1 of 6: its middle 0\.0+ from the tube's centre line/,
+    );
   });
 
   it('holds of a level done and kept, and reports a best time slower than the level was just done in, or not a time', () => {

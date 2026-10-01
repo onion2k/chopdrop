@@ -7,10 +7,10 @@
 import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../src/arena';
 import { Game } from '../src/game';
-import { HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
-import { DELIVERY, onPad, type Level } from '../src/mission';
+import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
+import { DELIVERY, onPad, type Level, type Ring } from '../src/mission';
 import { seeded } from '../src/random';
-import { DT } from './helpers';
+import { DT, padsOf } from './helpers';
 
 /** A game whose events are written down as they are told. */
 function played() {
@@ -24,7 +24,7 @@ function played() {
     },
   });
   const { pads } = game.island;
-  const [pickup, drop] = LEVELS[0].steps.map((step) => step.pad);
+  const [pickup, drop] = padsOf(LEVELS[0]);
   const fly = (seconds: number, controls: Controls = IDLE) => {
     for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, controls);
   };
@@ -199,10 +199,10 @@ describe('a level of more steps', () => {
     const mission = game.mission;
     mission.play(level);
     const seen: [number, boolean, number][] = [];
-    for (const step of level.steps) {
+    for (const pad of padsOf(level)) {
       seen.push([mission.target, mission.carrying, mission.waiting]);
       fly(0.5, { forward: 0, turn: 0, lift: 1 });
-      land(step.pad);
+      land(pad);
       fly(DELIVERY.load + 0.1);
     }
     seen.push([mission.target, mission.carrying, mission.waiting]);
@@ -251,5 +251,92 @@ describe('a level of more steps', () => {
       game.mission.time,
       game.mission.started,
     ]).toEqual([level, 0, 0, 0, false]);
+  });
+});
+
+describe('a trial of rings', () => {
+  // three rings high over the island, out of reach of any ground, in a line along +x
+  const RINGS: Ring[] = [0, 60, 120].map((x) => ({ kind: 'ring', x, y: 0, z: 200, yaw: 0, opening: 8 }));
+  const trial: Level = { id: 'trial', name: 'Trial', kind: 'rings', steps: RINGS };
+  /** A game flying the trial, its events written down, with the helicopter set so its middle is at (x, y, z), facing yaw. */
+  const flying = () => {
+    const told: string[] = [];
+    const game = new Game({
+      random: seeded(1),
+      levels: [trial],
+      events: {
+        passed: (ring, of) => told.push(`passed ${ring} ${of}`),
+        finished: (id, seconds) => told.push(`finished ${id} ${seconds.toFixed(2)}`),
+      },
+    });
+    game.play('trial');
+    const h = game.helicopter;
+    const put = (x: number, y: number, z: number, yaw = 0) => {
+      h.placeAbove(x, y, 0, yaw);
+      h.z = z - HELICOPTER.size.middle;
+      h.vz = 0;
+    };
+    /** Flown level at full speed along the heading for `seconds`, holding the height. */
+    const fly = (seconds: number, controls: Controls = { forward: 1, turn: 0, lift: HOVER_LIFT }) => {
+      for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, controls);
+    };
+    return { game, told, mission: game.mission, h, put, fly };
+  };
+
+  it('wants the first ring, its middle the goal, and no pad', () => {
+    const { mission } = flying();
+    expect(mission.current).toBe(RINGS[0]);
+    expect(mission.target).toBe(-1);
+    expect({ ...mission.goal }).toEqual({ x: 0, y: 0, z: 200 });
+    expect([mission.ringNumber, mission.ringCount]).toEqual([1, 3]);
+  });
+
+  it('passes a ring flown through its opening the way it faces, tells it, and wants the next', () => {
+    const { mission, told, put, fly } = flying();
+    // from rest it is 31 on in two seconds: through the first, and short of the second
+    put(-20, 3, 202);
+    fly(2);
+    expect(told).toEqual(['passed 1 3']);
+    expect(mission.current).toBe(RINGS[1]);
+    expect([mission.ringNumber, mission.ringCount]).toEqual([2, 3]);
+  });
+
+  it('passes nothing flown round a ring, through it backwards, or through the ring after the one wanted', () => {
+    const { mission, told, put, fly } = flying();
+    // beside it and under it, clear of its tube
+    put(-20, 14.5, 200);
+    fly(2);
+    put(-20, 0, 185.5);
+    fly(2);
+    // backwards, from the far side
+    put(20, 0, 200, Math.PI);
+    fly(2);
+    // the second ring, not yet wanted
+    put(40, 0, 200);
+    fly(2);
+    expect(told).toEqual([]);
+    expect(mission.next).toBe(0);
+  });
+
+  it('passes nothing for a helicopter put from one side to the other, which no flight could do in a step', () => {
+    const { mission, told, put, game } = flying();
+    put(-3, 0, 200);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    put(3, 0, 200);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(told).toEqual([]);
+    expect(mission.next).toBe(0);
+  });
+
+  it('ends at the last ring, timed from the first lift-off, and wants nothing after', () => {
+    const { mission, told, put, fly } = flying();
+    put(-20, 0, 200);
+    fly(7);
+    expect(told.slice(0, 3)).toEqual(['passed 1 3', 'passed 2 3', 'passed 3 3']);
+    expect(told[3]).toMatch(/^finished trial \d+\.\d\d$/);
+    expect(mission.done).toBe(true);
+    expect(mission.goal).toBeNull();
+    expect(mission.carrying).toBe(false);
+    expect(mission.waiting).toBe(-1);
   });
 });

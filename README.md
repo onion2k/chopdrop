@@ -18,8 +18,12 @@ some seven thousand trees of five kinds, which bow away from the rotor's
 downwash when the helicopter comes down low over them and spring back when
 it has gone, and nine landing pads with home on the south coast.
 
-The game opens on a list of four levels, each opened by finishing the one
-before, with the best time on each kept in the browser. Each is a delivery:
+The game opens on a list of six levels, each opened by finishing the one
+before, with the best time on each kept in the browser and the clock
+running at the top of the screen from the first lift-off. Two are ring
+trials: rings to fly through in order, the one wanted lit gold, solid
+enough to knock the helicopter back, six over the meadow and nine up a
+river valley. The rest are deliveries:
 a crate waits on one pad, a gold beacon over it, and an arrow at the top of
 the screen points the way and says how far. Land on the pad and stay while
 the loader fills, and the crate is strapped under the helicopter and the
@@ -27,8 +31,8 @@ beacon moves to the pad it is wanted on; land there and stay, and it is
 delivered, with the time it took from the first lift-off, and the way on to
 the next level, to fly it again, or back to the list. The first is a short
 hop from the meadow to a hilltop; then over a lake, over the mountains, and
-up to a pad on the shoulder of the range. Ring trials, a search and a
-course come between them, one feature at a time, through `/feature`. The template's stub,
+up to a pad on the shoulder of the range. A search and a course come
+next, one feature at a time, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -74,7 +78,8 @@ is fixed, and no baseline is moved to make it green.
 ## Layout
 
     src/game.ts        the game without the picture: the island, the helicopter, the mission, the clock
-    src/mission.ts     the level as it is flown: its steps, a parcel picked up on one pad and delivered to another
+    src/mission.ts     the level as it is flown: its steps, parcels picked up and delivered and rings flown through
+    src/solids.ts      what the helicopter cannot fly into: the rings' tubes, which knock it back
     src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
     src/level-list.ts  the list of levels the game opens on: locked, open or done, and the best times
     src/progress.ts    the save: the best time on each level, kept in the browser

@@ -10,12 +10,13 @@
  */
 import { LEVELS, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
 import { Canopy } from './canopy';
-import { Helicopter, IDLE, type Controls } from './helicopter';
+import { HELICOPTER, Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
-import { Mission, type Level, type LevelKind, type MissionEvents } from './mission';
+import { Mission, type Level, type LevelKind, type MissionEvents, type Ring } from './mission';
 import { Progress, type Standing } from './progress';
 import type { Random } from './random';
+import { Solids } from './solids';
 import { Sway, reachedLean } from './sway';
 
 /**
@@ -66,6 +67,8 @@ export class Game {
   readonly mission: Mission;
   /** The player's best time on each level, kept as each is done. */
   readonly progress: Progress;
+  /** What the helicopter cannot fly into: the rings of the level being flown. */
+  readonly solids: Solids;
   /** Game time, in seconds. */
   t = 0;
   /** Where chance comes from: replaced by the test API's `seed`. */
@@ -75,9 +78,17 @@ export class Game {
     this.random = options.random ?? Math.random;
     this.island = options.island ?? theIsland();
     const { ground, bounds, pads } = this.island;
-    const home = pads[0];
+    this.levels = options.levels ?? LEVELS;
+    const first = this.levels[0];
+    const { middle, rotorRadius } = HELICOPTER.size;
+    this.solids = new Solids({ middle, radius: rotorRadius });
+    this.solids.set(rings(first));
     // the grid reads itself through `this`, so it is bound once here and not each time the helicopter asks the height
-    this.helicopter = new Helicopter({ bounds, heightAt: ground.heightAt.bind(ground) }, home);
+    this.helicopter = new Helicopter(
+      { bounds, heightAt: ground.heightAt.bind(ground) },
+      pads[first.start ?? 0],
+      this.solids,
+    );
     const { trees, treeCount } = this.island;
     const give = TREE_KINDS.map((kind) => TREE_GIVE[kind]);
     this.sway = new Sway({ trees, stride: TREE_STRIDE, count: treeCount, bounds, give });
@@ -85,12 +96,12 @@ export class Game {
       { trees, stride: TREE_STRIDE, count: treeCount, bounds },
       TREE_KINDS.map((kind, k) => ({ ...treeSize(kind), lean: reachedLean(give[k]) })),
     );
-    this.levels = options.levels ?? LEVELS;
     this.progress = options.progress ?? new Progress();
     const events = options.events ?? {};
-    this.mission = new Mission(pads, this.levels[0], {
+    this.mission = new Mission(pads, first, {
       loaded: events.loaded,
       delivered: events.delivered,
+      passed: events.passed,
       // the time kept before it is told, so what is told is what is kept; a level never lifted off from, which only a
       // test's teleport can finish, was not flown and is not timed
       finished: (seconds) => {
@@ -107,6 +118,7 @@ export class Game {
     const level = this.levels.find((l) => l.id === id);
     if (!level) throw new Error(`no such level: ${id}`);
     this.mission.play(level);
+    this.solids.set(rings(level));
     this.restart();
   }
 
@@ -143,4 +155,9 @@ export class Game {
     // and the level, which goes by where the helicopter has landed
     this.mission.step(dt, this.helicopter);
   }
+}
+
+/** The rings among a level's steps, in order. */
+function rings(level: Level): Ring[] {
+  return level.steps.filter((step): step is Ring => step.kind === 'ring');
 }

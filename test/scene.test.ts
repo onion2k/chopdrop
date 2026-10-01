@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ISLAND, LEVELS, TREE_KINDS, theIsland } from '../src/arena';
+import { RINGS, type Ring } from '../src/mission';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
 import {
@@ -18,7 +19,7 @@ import {
   treeSize,
 } from '../src/meshes';
 import { Scene, type HelicopterPose } from '../src/scene';
-import { DT, islandSway, thickestWood } from './helpers';
+import { DT, islandSway, padsOf, thickestWood } from './helpers';
 
 const pose = (over: Partial<HelicopterPose> = {}): HelicopterPose => ({
   x: 10,
@@ -451,8 +452,8 @@ describe('the trees', () => {
 
   it('move, after the helicopter, and are not among what stands still', () => {
     expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
-    expect(scene.movers.slice(6, -3)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
-    expect(scene.movers.slice(-3)).toEqual(['crate', 'crate straps', 'beacon']);
+    expect(scene.movers.slice(6, -5)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.movers.slice(-5)).toEqual(['crate', 'crate straps', 'beacon', 'rings', 'ring next']);
     expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
     expect(scene.pools).toHaveLength(movers.length);
     movers.forEach((g, k) => expect(g.matrices).toBe(scene.pools[k]));
@@ -645,7 +646,7 @@ describe('the parcel and the beacon', () => {
   const parcelScene = new Scene();
   const parcelGroups = parcelScene.dynamic(island);
   const at = (name: string) => parcelGroups[parcelScene.movers.indexOf(name)].matrices;
-  const [pickup, drop] = LEVELS[0].steps.map((step) => step.pad);
+  const [pickup, drop] = padsOf(LEVELS[0]);
   const pads = island.pads;
   const far = pose({ x: pads[0].x, y: pads[0].y, z: pads[0].z });
   const foot = (m: Float32Array) => [m[12], m[13], m[14]];
@@ -706,5 +707,56 @@ describe('the parcel and the beacon', () => {
     expect(Array.from(parcelScene.changed.subarray(k, k + 3))).toEqual([0, 0, 0]);
     parcelScene.write(far, undefined, { carrying: false, waiting: pickup, target: pickup });
     expect(Array.from(parcelScene.changed.subarray(k, k + 3))).toEqual([1, 1, 1]);
+  });
+});
+
+describe('the rings', () => {
+  const ringScene = new Scene();
+  const ringGroups = ringScene.dynamic(island);
+  const pool = (name: string) => ringGroups[ringScene.movers.indexOf(name)].matrices;
+  const level = LEVELS.find((l) => l.id === 'ring-trial')!;
+  const rings = level.steps as Ring[];
+  const far = pose({ x: island.pads[0].x, y: island.pads[0].y, z: island.pads[0].z });
+  const foot = (m: Float32Array, k = 0) => [m[k * 16 + 12], m[k * 16 + 13], m[k * 16 + 14]];
+  const none = (m: Float32Array, k: number) => Array.from(m.subarray(k * 16, k * 16 + 11)).every((v) => v === 0);
+
+  it(`has room for ${RINGS.capacity} rings to come, and one lit`, () => {
+    expect(ringGroups[ringScene.movers.indexOf('rings')].count).toBe(RINGS.capacity);
+    expect(ringGroups[ringScene.movers.indexOf('ring next')].count).toBe(1);
+  });
+
+  it('lights the ring wanted where it stands, turned the way it faces, draws the rings after it in white, and none passed', () => {
+    ringScene.write(far, undefined, undefined, { level, next: 2 });
+    const lit = pool('ring next');
+    expect(foot(lit).map((v) => +v.toFixed(3))).toEqual([rings[2].x, rings[2].y, rings[2].z].map((v) => +v.toFixed(3)));
+    expect(lit[0]).toBeCloseTo(Math.cos(rings[2].yaw), 6);
+    expect(lit[1]).toBeCloseTo(Math.sin(rings[2].yaw), 6);
+    const later = pool('rings');
+    for (let k = 0; k < 3; k++)
+      expect(foot(later, k).map((v) => +v.toFixed(3))).toEqual(
+        [rings[3 + k].x, rings[3 + k].y, rings[3 + k].z].map((v) => +v.toFixed(3)),
+      );
+    for (let k = 3; k < RINGS.capacity; k++) expect(none(later, k), `slot ${k}`).toBe(true);
+  });
+
+  it('draws no ring at all once the last is passed, nor for a level of deliveries', () => {
+    ringScene.write(far, undefined, undefined, { level, next: rings.length });
+    expect(none(pool('ring next'), 0)).toBe(true);
+    for (let k = 0; k < RINGS.capacity; k++) expect(none(pool('rings'), k)).toBe(true);
+    ringScene.write(far, undefined, undefined, { level: LEVELS[0], next: 0 });
+    expect(none(pool('ring next'), 0)).toBe(true);
+    for (let k = 0; k < RINGS.capacity; k++) expect(none(pool('rings'), k)).toBe(true);
+  });
+
+  it('writes the rings only when the level or the ring wanted has changed', () => {
+    const [a, b] = [ringScene.movers.indexOf('rings'), ringScene.movers.indexOf('ring next')];
+    ringScene.write(far, undefined, undefined, { level, next: 1 });
+    expect([ringScene.changed[a], ringScene.changed[b]]).toEqual([1, 1]);
+    ringScene.write(far, undefined, undefined, { level, next: 1 });
+    expect([ringScene.changed[a], ringScene.changed[b]]).toEqual([0, 0]);
+    ringScene.write(far, undefined, undefined, { level, next: 2 });
+    expect([ringScene.changed[a], ringScene.changed[b]]).toEqual([1, 1]);
+    ringScene.write(far, undefined, undefined, { level: LEVELS[0], next: 0 });
+    expect([ringScene.changed[a], ringScene.changed[b]]).toEqual([1, 1]);
   });
 });

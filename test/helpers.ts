@@ -8,6 +8,7 @@ import type { Canopy, CanopyKind } from '../src/canopy';
 import { DOWNWASH } from '../src/downwash';
 import { Game } from '../src/game';
 import type { Ground } from '../src/helicopter';
+import type { Level } from '../src/mission';
 import { TREE_STRIDE } from '../src/island';
 import { seeded } from '../src/random';
 import { SWAY, Sway } from '../src/sway';
@@ -97,4 +98,9 @@ export function canopyKinds(): readonly CanopyKind[] {
 /** What the camera keeps over on the island, as the game builds it. */
 export function islandCanopy(): Canopy {
   return new Game({ random: seeded(1) }).canopy;
+}
+
+/** The pads of a level's steps, in order: where its parcels wait and where they are wanted. */
+export function padsOf(level: Level): number[] {
+  return level.steps.flatMap((step) => (step.kind === 'ring' ? [] : [step.pad]));
 }

@@ -17,7 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { HOVER_LIFT } from '../src/helicopter';
+import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { WOOD, fingers, leverTravel, standardView, start, watch } from './game';
 
 /**
@@ -41,7 +41,7 @@ async function carrying(page: Page, along = 0.45) {
   await page.evaluate(
     ([hover, share]) => {
       const g = window.game!;
-      const [pickup, drop] = g.state().mission.steps.map((step) => step.pad);
+      const [pickup, drop] = g.state().mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
       const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
       g.teleport(a.x, a.y, 0, 0);
       g.step(100);
@@ -55,8 +55,39 @@ async function carrying(page: Page, along = 0.45) {
   );
 }
 
+/**
+ * A ring trial under way: the level `id` flown, its rings before `ring` passed by lining up on each and flying through,
+ * and the helicopter `back` before that one on its axis, at its height, flying at it; the camera behind it.
+ */
+async function ringAhead(page: Page, id: string, ring: number, back: number) {
+  await page.evaluate(
+    ([level, n, b, middle, hover]) => {
+      const g = window.game!;
+      g.play(level);
+      g.fly(0, 0, 1);
+      g.step(30);
+      const rings = g.state().mission.steps.filter((s) => s.kind === 'ring');
+      const before = (k: number, d: number) => {
+        const r = rings[k];
+        const [x, y] = [r.x - Math.cos(r.yaw) * d, r.y - Math.sin(r.yaw) * d];
+        g.teleport(x, y, r.z - middle - g.groundAt(x, y), r.yaw);
+      };
+      for (let k = 0; k < n; k++) {
+        before(k, 12);
+        g.fly(1, 0, hover);
+        g.step(90);
+      }
+      before(n, b);
+      g.fly(0.6, 0, hover);
+      g.step(40);
+      g.release();
+    },
+    [id, ring, back, HELICOPTER.size.middle, HOVER_LIFT] as const,
+  );
+}
+
 /** Two levels done, so the list shows each standing a level can have: done with its time, open and picked, and locked. */
-const TWO_DONE = { best: { 'first-delivery': 41.2, 'over-the-water': 63.5 } };
+const TWO_DONE = { best: { 'first-delivery': 41.2, 'ring-trial': 33.5 } };
 
 /**
  * The parcel taken from the meadow pad to the hilltop pad and delivered, the card up: lifted off first, as a player
@@ -65,7 +96,7 @@ const TWO_DONE = { best: { 'first-delivery': 41.2, 'over-the-water': 63.5 } };
 async function delivered(page: Page) {
   await page.evaluate(() => {
     const g = window.game!;
-    const [pickup, drop] = g.state().mission.steps.map((step) => step.pad);
+    const [pickup, drop] = g.state().mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
     const pads = g.content().pads;
     g.fly(0, 0, 1);
     g.step(30);
@@ -155,7 +186,9 @@ test.describe('what it looks like', () => {
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => {
       const g = window.game!;
-      const pad = g.content().pads[g.state().mission.steps[0].pad];
+      const first = g.state().mission.steps[0];
+      if (first.kind === 'ring') throw new Error('the first level starts with a parcel');
+      const pad = g.content().pads[first.pad];
       g.teleport(pad.x, pad.y, 0, 2.3);
       g.step(45);
     });
@@ -190,6 +223,26 @@ test.describe('what it looks like', () => {
     await hideStats(page);
     await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the lakeside pad');
     await expect(page.locator('#view')).toHaveScreenshot('level-over-the-water.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the ring trial: the ring wanted lit ahead, the rings after it white, the one passed gone', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await ringAhead(page, 'ring-trial', 1, 45);
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 2 of 6');
+    await expect(page.locator('#view')).toHaveScreenshot('rings.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('up the valley: climbing the river to the fourth ring, the rest above it', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await ringAhead(page, 'up-the-valley', 3, 40);
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 4 of 9');
+    await expect(page.locator('#view')).toHaveScreenshot('rings-valley.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -271,6 +324,15 @@ test.describe('the first level on a phone, upright', () => {
     await page.evaluate(() => window.game!.restart());
     await delivered(page);
     await expect(page).toHaveScreenshot('level-phone-delivered.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the ring trial, the ring wanted lit ahead', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await ringAhead(page, 'ring-trial', 1, 45);
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('rings-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 

@@ -1,8 +1,10 @@
 {
   "levels": {
     "first-delivery": 0.59,
+    "ring-trial": 0.53,
     "over-the-water": 0.88,
     "over-the-range": 1.22,
+    "up-the-valley": 0.7,
     "mountain-drop": 1
   }
 }

@@ -40,27 +40,43 @@ test('every level, played to the end in turn, each opened by the one before', as
   await page.locator('#levels .go').click();
 
   for (const [k, level] of levels.entries()) {
-    const [from, to] = SITES[level.id];
     await page.evaluate(() => window.game!.step(1));
     expect((await state()).mission.level, `level ${k + 1}`).toBe(level.id);
-    await expect(page.locator('#hud .goal')).toHaveText(`Pick up the parcel at the ${from} pad`);
     await page.evaluate(() => window.game!.autopilot(true));
-    // to the pad the parcel waits on, and loaded
-    for (let f = 0; f < 7200 && (await state()).mission.next === 0; f += 300) await play(page, 300);
-    expect((await state()).mission.carrying, `${level.id}: the parcel loaded`).toBe(true);
-    await expect(page.locator('#hud .goal')).toHaveText(`Deliver it to the ${to} pad`);
-    if (k === 0) await info.attach('carrying', { body: await page.screenshot(), contentType: 'image/png' });
-    // to the pad it is wanted on, and delivered
-    for (let f = 0; f < 7200 && (await state()).mission.next === 1; f += 300) await play(page, 300);
-    const end = await state();
-    expect(end.mission.done, `${level.id}: delivered`).toBe(true);
-    await page.evaluate(() => window.game!.autopilot(false));
-    const [pickup, drop] = end.mission.steps.map((step) => step.pad);
-    const told = await page.evaluate(() => window.game!.events());
-    expect(told.slice(0, 2)).toEqual([`loaded ${pickup}`, `delivered ${drop}`]);
-    expect(told[2]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
-    expect(told).toHaveLength(3);
-    await expect(page.locator('#hud .card h2')).toHaveText('Delivered!');
+    if (level.kind === 'rings') {
+      // each ring in turn, the words following it, and the last ends it
+      const of = (await state()).mission.steps.length;
+      for (let n = 1; n <= of; n++) {
+        await expect(page.locator('#hud .goal')).toHaveText(`Fly through ring ${n} of ${of}`);
+        for (let f = 0; f < 3600 && (await state()).mission.next === n - 1; f += 120) await play(page, 120);
+        expect((await state()).mission.next, `${level.id}: ring ${n} passed`).toBe(n);
+      }
+      await page.evaluate(() => window.game!.autopilot(false));
+      const told = await page.evaluate(() => window.game!.events());
+      expect(told.slice(0, of)).toEqual(Array.from({ length: of }, (_, r) => `passed ${r + 1} ${of}`));
+      expect(told[of]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
+      expect(told).toHaveLength(of + 1);
+      await expect(page.locator('#hud .card h2')).toHaveText('Trial complete!');
+    } else {
+      const [from, to] = SITES[level.id];
+      await expect(page.locator('#hud .goal')).toHaveText(`Pick up the parcel at the ${from} pad`);
+      // to the pad the parcel waits on, and loaded
+      for (let f = 0; f < 7200 && (await state()).mission.next === 0; f += 300) await play(page, 300);
+      expect((await state()).mission.carrying, `${level.id}: the parcel loaded`).toBe(true);
+      await expect(page.locator('#hud .goal')).toHaveText(`Deliver it to the ${to} pad`);
+      if (k === 0) await info.attach('carrying', { body: await page.screenshot(), contentType: 'image/png' });
+      // to the pad it is wanted on, and delivered
+      for (let f = 0; f < 7200 && (await state()).mission.next === 1; f += 300) await play(page, 300);
+      const end = await state();
+      expect(end.mission.done, `${level.id}: delivered`).toBe(true);
+      await page.evaluate(() => window.game!.autopilot(false));
+      const [pickup, drop] = end.mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
+      const told = await page.evaluate(() => window.game!.events());
+      expect(told.slice(0, 2)).toEqual([`loaded ${pickup}`, `delivered ${drop}`]);
+      expect(told[2]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
+      expect(told).toHaveLength(3);
+      await expect(page.locator('#hud .card h2')).toHaveText('Delivered!');
+    }
     await expect(page.locator('#hud .time')).toHaveText(/^in \d:\d\d$/);
     await expect(page.locator('#hud .card .best')).toHaveText('★ New best');
     const after = levels[k + 1] as (typeof levels)[number] | undefined;

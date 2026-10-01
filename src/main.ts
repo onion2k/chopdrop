@@ -168,6 +168,7 @@ async function main() {
     events: {
       loaded: (pad) => tell(`loaded ${pad}`),
       delivered: (pad) => tell(`delivered ${pad}`),
+      passed: (ring, of) => tell(`passed ${ring} ${of}`),
       finished: (id, seconds, best) => {
         tell(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`);
         hud.finished(
@@ -264,7 +265,7 @@ async function main() {
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter, game.sway, game.mission);
+    scene.write(game.helicopter, game.sway, game.mission, game.mission);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });

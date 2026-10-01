@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../src/arena';
 import { Autopilot } from '../src/autopilot';
 import { Game } from '../src/game';
+import { HELICOPTER } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
@@ -57,6 +58,28 @@ describe('the autopilot', () => {
       expect(flown(game, 150), `from ${x}, ${y}, ${height} up`).not.toBeNull();
     }
   });
+
+  it.each(['ring-trial', 'up-the-valley'])(
+    'finishes %s from wherever a player might leave it: high, low, beyond the course, in front of a ring and inside one',
+    (id) => {
+      // over the sea, on a hill above the rings, in front of the first, in the middle of the second's opening, at the
+      // top of the valley and in the last ring of it
+      const places: [number, number, number][] = [
+        [0, 0, 150],
+        [-300, 200, 3],
+        [130, 0, 40],
+        [95, -40, 43.5 - HELICOPTER.size.middle],
+        [-40, 300, 90],
+        [5, 341, 107 - HELICOPTER.size.middle],
+      ];
+      for (const [x, y, z] of places) {
+        const game = new Game({ random: seeded(1) });
+        game.play(id);
+        game.helicopter.place(x, y, z, 1);
+        expect(flown(game, 150), `from ${x}, ${y}, ${z} up`).not.toBeNull();
+      }
+    },
+  );
 
   it('carries on from a parcel already on board', () => {
     const game = new Game({ random: seeded(1) });

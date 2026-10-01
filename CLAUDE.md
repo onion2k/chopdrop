@@ -9,12 +9,12 @@ rules in `~/.claude/CLAUDE.md` apply too.
 
 The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
-from a recipe, its trees bowing in the rotor's downwash, and four levels,
-each a parcel picked up on one pad and delivered to another, opened one by
-one from the list the game opens on, the best time on each kept in a save.
-The ring trials, the search and the course are still to come between them
-(the plan is `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there
-is no physics. The template's stub, a sled
+from a recipe, its trees bowing in the rotor's downwash, and six levels,
+four deliveries and two ring trials, opened one by one from the list the
+game opens on, the best time on each kept in a save. The search and the
+course are still to come (the plan is
+`~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
+physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
 stub and every gate that held it: it is the model to copy from, and
 `git show eda26d8:<path>` reads any of it.
@@ -104,10 +104,14 @@ says why. Look at every picture.
   step at a time, and `restart`. It knows nothing of the renderer or the
   page; what happens in it is told through the `GameEvents` handed in.
   `src/mission.ts` is the level as it is flown: its steps done in order
-  (a parcel picked up, a parcel dropped), the loading that fills while the
-  helicopter is landed on the pad it is wanted on (`onPad`, said once), and
-  the clock from the first lift-off; the levels themselves are content,
-  `LEVELS` in `arena.ts`, each known by an `id` that is a name.
+  (a parcel picked up, a parcel dropped, a ring flown through), the loading
+  that fills while the helicopter is landed on the pad it is wanted on
+  (`onPad`, said once), a ring passed by the helicopter's middle crossing
+  its opening the way it faces, and the clock from the first lift-off; the
+  levels themselves are content, `LEVELS` in `arena.ts`, each known by an
+  `id` that is a name and flown from its `start` pad, home unless it says.
+  `src/solids.ts` is what the helicopter cannot enter, the level's ring
+  tubes, handed to it as the ground is: it is pushed out and knocked back.
 - `src/helicopter.ts` is the player's machine: the flight, and the numbers
   and size in `HELICOPTER`, said once. It is handed a ground, an edge and
   the height of what it can stand on at every point, not the island.
@@ -214,6 +218,14 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   and "fly again"; flown through by key and by touch in
   `smoke/game.spec.ts`, and pictured (`level-loading.png`,
   `level-carrying.png`, `level-delivered.png`, and on a phone).
+- **The rings**, for anything solid or flown through: a `ring` step in
+  `mission.ts`, its tube a solid in `solids.ts` that `game.ts` sets for the
+  level; drawn by `scene.ts` (lit when wanted, white after, gone once
+  passed); flown by the autopilot along its axis; ruled by `checkSolids`;
+  flown at and through by the fuzzer's "ring run" and "through the ring";
+  the courses held to their rules in `test/levels.test.ts`; flown by key
+  and touch in `smoke/rings.spec.ts`; pictured (`rings.png`,
+  `rings-valley.png`, `rings-phone.png`).
 - **A level**, for anything a player can finish: its steps in `LEVELS`,
   its name in players' saves; a tile on the list (`level-list.ts`), its
   best time kept by `game.ts` through `progress.ts` and ruled by

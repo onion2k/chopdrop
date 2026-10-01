@@ -6,7 +6,7 @@
  * go on knowing nothing of what is on it.
  */
 import { buildIsland, type Island, type IslandRecipe } from './island';
-import type { Level } from './mission';
+import type { Level, Ring } from './mission';
 import { seeded } from './random';
 
 /** The kinds of tree, in the order the island's trees name them by. Each has its habitat in the recipe, at the same index. */
@@ -265,16 +265,61 @@ function delivery(id: string, name: string, pickup: number, drop: number): Level
 }
 
 /**
- * The levels, in order, each flown from home and each pad held by a test to what it is. They are the deliveries for
- * now; the ring trials, the search and the course come between them as each is built. The first is a short one with
- * a climb at the end, from the meadow pad 187 inland of home to the hilltop pad 187 beyond it. Then 646 from the river
- * mouth to the lakeside pad, across a lake; 501 from the northern meadow pad over the range, its peaks past 140, to
- * the beach; and 392 from the lakeside pad up a river valley to the shoulder pad, 79 up the mountain.
+ * A level that is a run of rings to fly through, from the pad `start`, whose middle is at `from`: each ring at its
+ * middle `[x, y, z]`, an `opening` wide, facing the way from the ring before it, and the first the way from the pad,
+ * so that it is flown straight into. `from` is said here so that the levels can be read without building the island;
+ * a test holds it to the pad.
+ */
+function trial(
+  id: string,
+  name: string,
+  start: number,
+  from: readonly [number, number],
+  opening: number,
+  middles: readonly (readonly [number, number, number])[],
+): Level {
+  const steps: Ring[] = middles.map(([x, y, z], k) => {
+    const [px, py] = k ? middles[k - 1] : from;
+    return { kind: 'ring', x, y, z, yaw: Math.atan2(y - py, x - px), opening };
+  });
+  return { id, name, kind: 'rings', start, steps };
+}
+
+/**
+ * The levels, in order, each pad held by a test to what it is. The deliveries are flown from home: the first a
+ * short one with a climb at the end, from the meadow pad 187 inland of home to the hilltop pad 187 beyond it; then 646
+ * from the river mouth to the lakeside pad, across a lake; 501 from the northern meadow pad over the range, its peaks
+ * past 140, to the beach; and 392 from the lakeside pad up a river valley to the shoulder pad, 79 up the mountain.
+ *
+ * The ring trials are flown from a pad beside their course. The first, from the lakeside pad, is six rings of 10 in a
+ * circuit of 365 over the meadow, west and round the meadow pad and back east. The second, from that meadow pad, is
+ * nine rings of 8 up the river that falls from the gorge, 454 of them, climbing from 37 up to 107 and turning with
+ * the water. They were found by a script that held every ring clear of the trees and 8 over the ground under it, and
+ * every run between rings 10 over the ground and the treetops; the tests hold them to it still.
  */
 export const LEVELS: readonly Level[] = [
   delivery('first-delivery', 'First delivery', 4, 1),
+  trial('ring-trial', 'Ring trial', 2, [201, -15], 10, [
+    [140, -10, 42],
+    [95, -40, 43.5],
+    [40, -20, 40],
+    [15, 50, 43.5],
+    [50, 90, 43.5],
+    [120, 100, 43.5],
+  ]),
   delivery('over-the-water', 'Over the water', 3, 2),
   delivery('over-the-range', 'Over the range', 7, 5),
+  trial('up-the-valley', 'Up the valley', 7, [69, 69], 8, [
+    [39, 41, 37.5],
+    [-23, 47, 43],
+    [-55, 80, 42.5],
+    [-35, 126, 53.5],
+    [-53, 174, 72],
+    [-59, 219, 84.5],
+    [-65, 264, 95.5],
+    [-47, 315, 87.5],
+    [5, 341, 107],
+  ]),
   delivery('mountain-drop', 'Mountain drop', 2, 6),
 ];
 

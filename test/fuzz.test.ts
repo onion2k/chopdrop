@@ -24,8 +24,13 @@ describe('the fuzzer', () => {
       'fly again',
       'next level',
       'pick a level',
+      'ring run',
+      'through the ring',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
+    // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 12; seed++) for (const key of Object.keys(fuzz(seed, 4000).happened)) seen.add(key);
     for (const happening of [
       'took off',
       'landed',
@@ -35,8 +40,11 @@ describe('the fuzzer', () => {
       'trees swayed',
       'trees settled',
       'loaded',
+      'delivered',
+      'passed a ring',
+      'knocked off a ring',
     ])
-      expect(r.happened[happening], happening).toBeGreaterThan(0);
+      expect(seen, happening).toContain(happening);
   });
 
   it('comes back with a save, and flies every level the list lets it pick, over the seeds `npm run fuzz` plays', () => {
