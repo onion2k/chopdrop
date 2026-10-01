@@ -77,10 +77,13 @@ const TERRAIN_PAINT: Record<number, { name: string; paint: Paint }> = {
 
 /**
  * The water. The sea is two blues and the deeper one runs on beyond the grid to the horizon; the lakes and rivers
- * are a fresher blue, and all of it is glossy where the land is not, so the sun glances off it.
+ * are a fresher blue. The shallows, the lakes and the rivers are glossy, so the sun glances off them, but the open
+ * sea is matte: a glossy sea reflects the sky at a graze, and the nearer the horizon the more, so far out, where
+ * the haze has not quite taken it, it was paler than the sky above it, and the sea's cut edge at the far plane
+ * showed as a hard line across the sky. A matte sea fades into the haze by the same arithmetic as the sky does.
  */
 const SHALLOW_PAINT: Paint = { albedo: seen(0x3fd0d4), roughness: 0.2 };
-const DEEP_PAINT: Paint = { albedo: seen(0x1f67c9), roughness: 0.2 };
+const DEEP_PAINT: Paint = { albedo: seen(0x1f67c9), roughness: 0.9 };
 const LAKE_PAINT: Paint = { albedo: seen(0x2a8ae0), roughness: 0.2 };
 const RIVER_PAINT: Paint = { albedo: seen(0x36a0f0), roughness: 0.2 };
 

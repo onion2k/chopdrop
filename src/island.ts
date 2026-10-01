@@ -341,12 +341,14 @@ export interface IslandRecipe {
     sand: number;
     bank: number;
     /**
-     * Gullies where the land is this much lower than the ground two cells either side of it, and at least
-     * `gullyArea` cells drain through, on ground steeper than `gullyFlat` (a normal's upward part).
+     * Gullies along the lines of running water: where at least `gullyArea` cells drain through, on ground steeper
+     * than `gullyFlat` (a normal's upward part, taken from the land round the line, over `gullyBlur` cells), widening
+     * by `gullyWiden` cells either side for each doubling of the water.
      */
-    gully: number;
     gullyArea: number;
     gullyFlat: number;
+    gullyBlur: number;
+    gullyWiden: number;
     /** Meadow and forest over these shares of their masks. */
     meadow: number;
     forest: number;
@@ -1387,12 +1389,106 @@ function window(x: number, from: number, to: number, fade: number): number {
   return 1;
 }
 
+/** How many times a line of running water is eased, how far apart (in cells) its samples are taken, and the most a line widens by, in cells either side. */
+const LINE_EASE = 3;
+const LINE_STEP = 0.35;
+const LINE_WIDEST = 2;
+
+/**
+ * Marks the triangles the lines of running water lie along. Water that has gathered from `from` cells or more runs
+ * down the grid from vertex to vertex, in steps of a cell that zigzag, so the path is first eased into a smooth line
+ * (each point drawn a little toward the ones it runs between), and then every triangle the line passes through is
+ * marked: a chain of triangles one beside the next, in an unbroken line that joins the others as the water does. A
+ * line widens as the water gathers, by `widen` cells either side for every doubling of the water past `from`.
+ */
+function lineTriangles(
+  g: Grid,
+  down: Int32Array,
+  area: Float32Array,
+  from: number,
+  widen: number,
+  out: Uint8Array,
+): void {
+  const { n, cols } = g;
+  const total = cols * cols;
+  // The vertices the water runs from, listed once, and their positions in cells.
+  const wet = new Int32Array(total);
+  let count = 0;
+  for (let v = 0; v < total; v++) if (area[v] >= from && down[v] >= 0) wet[count++] = v;
+  const x = new Float32Array(total),
+    y = new Float32Array(total);
+  for (let v = 0; v < total; v++) {
+    y[v] = Math.floor(v / cols);
+    x[v] = v - y[v] * cols;
+  }
+  // Each point is eased toward the vertex it runs to and the mean of those that run to it.
+  const nx = new Float32Array(count),
+    ny = new Float32Array(count);
+  const upX = new Float32Array(total),
+    upY = new Float32Array(total),
+    ups = new Uint8Array(total);
+  for (let pass = 0; pass < LINE_EASE; pass++) {
+    for (let k = 0; k < count; k++) {
+      const v = wet[k];
+      upX[v] = 0;
+      upY[v] = 0;
+      ups[v] = 0;
+    }
+    for (let k = 0; k < count; k++) {
+      const v = wet[k],
+        w = down[v];
+      upX[w] += x[v];
+      upY[w] += y[v];
+      ups[w]++;
+    }
+    for (let k = 0; k < count; k++) {
+      const v = wet[k],
+        w = down[v];
+      const mx = ups[v] > 0 ? upX[v] / ups[v] : x[v],
+        my = ups[v] > 0 ? upY[v] / ups[v] : y[v];
+      nx[k] = 0.5 * x[v] + 0.25 * x[w] + 0.25 * mx;
+      ny[k] = 0.5 * y[v] + 0.25 * y[w] + 0.25 * my;
+    }
+    for (let k = 0; k < count; k++) {
+      x[wet[k]] = nx[k];
+      y[wet[k]] = ny[k];
+    }
+  }
+  const mark = (px: number, py: number) => {
+    const i = Math.min(n - 1, Math.max(0, Math.floor(px))),
+      j = Math.min(n - 1, Math.max(0, Math.floor(py)));
+    // A square is split along its diagonal from [00] to [11]: below it is the first triangle, above it the second.
+    out[2 * (j * n + i) + (px - i >= py - j ? 0 : 1)] = 1;
+  };
+  for (let k = 0; k < count; k++) {
+    const v = wet[k],
+      w = down[v];
+    const dx = x[w] - x[v],
+      dy = y[w] - y[v];
+    const len = Math.hypot(dx, dy) || 1;
+    const half = Math.min(LINE_WIDEST, widen * Math.log2(area[v] / from));
+    const steps = Math.max(1, Math.ceil(len / LINE_STEP));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const px = x[v] + dx * t,
+        py = y[v] + dy * t;
+      mark(px, py);
+      // Either side of the line, across it.
+      for (let o = 0.5 * half; o <= half + 1e-6 && half > 0.05; o += 0.5 * half) {
+        mark(px - (dy / len) * o, py + (dx / len) * o);
+        mark(px + (dy / len) * o, py - (dx / len) * o);
+      }
+    }
+  }
+}
+
 /** Tells each triangle what it is made of. */
 function paint(
   g: Grid,
   r: IslandRecipe,
   H: Float32Array,
   area: Float32Array,
+  down: Int32Array,
   meadowMask: Float32Array,
   riverDist: Float32Array,
   squareLake: Int8Array,
@@ -1404,18 +1500,25 @@ function paint(
   const sc = r.surface;
   // The noise that moves every threshold, and the forest, are read at the vertices and averaged on the triangle.
   const jit = new Float32Array(cols * cols),
-    forest = new Float32Array(cols * cols),
-    hollow = new Float32Array(cols * cols);
+    forest = new Float32Array(cols * cols);
+  const gullies = new Uint8Array(2 * n * n);
+  lineTriangles(g, down, area, sc.gullyArea, sc.gullyWiden, gullies);
+  // How steep the land is round each vertex, not under it, so a line of water is a gully or is not for as far as the
+  // hillside goes, and is not broken wherever the slope crosses the line between them.
+  const lean = new Float32Array(cols * cols);
+  for (let j = 0; j < cols; j++) {
+    for (let i = 0; i < cols; i++) {
+      const k = j * cols + i;
+      const dx = (H[k + (i < n ? 1 : 0)] - H[k - (i > 0 ? 1 : 0)]) / ((i > 0 && i < n ? 2 : 1) * cell),
+        dy = (H[k + (j < n ? cols : 0)] - H[k - (j > 0 ? cols : 0)]) / ((j > 0 && j < n ? 2 : 1) * cell);
+      lean[k] = Math.hypot(dx, dy);
+    }
+  }
+  boxBlur(lean, new Float32Array(cols * cols), cols, cols, sc.gullyBlur, 1);
   for (let j = 0; j < cols; j++) {
     for (let i = 0; i < cols; i++) {
       const k = j * cols + i;
       if (H[k] < r.seaLevel - sc.none) continue;
-      // How far the land is below the mean of its neighbours two cells off: positive in a channel, negative on a crest.
-      const i0 = Math.max(0, i - 2),
-        i1 = Math.min(cols - 1, i + 2),
-        j0 = Math.max(0, j - 2),
-        j1 = Math.min(cols - 1, j + 2);
-      hollow[k] = (H[j * cols + i0] + H[j * cols + i1] + H[j0 * cols + i] + H[j1 * cols + i]) / 4 - H[k];
       const x = origin + i * cell,
         y = origin + j * cell;
       jit[k] = noise2(x / sc.wavelength, y / sc.wavelength, r.seed + 13 * SALT);
@@ -1423,6 +1526,8 @@ function paint(
     }
   }
   const floorLevel = r.seaLevel - sc.none;
+  // The slope a normal's upward part of `gullyFlat` is, as a rise over a run.
+  const gullySteep = Math.sqrt(1 / (sc.gullyFlat * sc.gullyFlat) - 1);
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const k = j * cols + i;
@@ -1462,12 +1567,7 @@ function paint(
         else if (hm < lake) s = SURFACE.sand;
         else if (high < sc.sand) s = SURFACE.sand;
         else if ((riverDist[a] + riverDist[b] + riverDist[c]) / 3 < sc.bank) s = SURFACE.sand;
-        else if (
-          nz < sc.gullyFlat &&
-          (hollow[a] + hollow[b] + hollow[c]) / 3 >= sc.gully &&
-          Math.max(area[a], area[b], area[c]) >= sc.gullyArea
-        )
-          s = SURFACE.gully;
+        else if (gullies[2 * sq + tri] && (lean[a] + lean[b] + lean[c]) / 3 > gullySteep) s = SURFACE.gully;
         else if ((meadowMask[a] + meadowMask[b] + meadowMask[c]) / 3 + t * sc.maskJitter > sc.meadow)
           s = SURFACE.meadow;
         else if ((forest[a] + forest[b] + forest[c]) / 3 + t * sc.maskJitter > sc.forest) s = SURFACE.forest;
@@ -1769,7 +1869,7 @@ export function buildIsland(recipe: IslandRecipe, random: Random, onStage?: (sta
 
   // 11. Surface. 12. Sea.
   const surface = new Uint8Array(2 * n * n);
-  paint(g, r, H, area, meadowMask, riverDist, squareLake, lakes, pads, surface);
+  paint(g, r, H, area, flood.down, meadowMask, riverDist, squareLake, lakes, pads, surface);
   stage('surface');
   const sea = new Uint8Array(n * n);
   for (let j = 0; j < n; j++) {

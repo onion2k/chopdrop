@@ -160,7 +160,8 @@ export const ISLAND: IslandRecipe = {
       pick: 3,
     },
   },
-  // What the ground is made of, by height, slope and what is near: the colours are the page's business.
+  // What the ground is made of, by height, slope and what is near: the colours are the page's business. The gullies run
+  // along the water that gathers from 30 cells, on slopes steeper than about 16 degrees.
   surface: {
     none: 6,
     wavelength: 28,
@@ -173,14 +174,15 @@ export const ISLAND: IslandRecipe = {
     rockLine: 165,
     sand: 2.2,
     bank: 4,
-    gully: 0.25,
-    gullyArea: 12,
+    gullyArea: 30,
     gullyFlat: 0.96,
+    gullyBlur: 3,
+    gullyWiden: 0.06,
     meadow: 0.5,
     forest: 0.5,
     dirt: 6,
   },
-  sea: { shallow: 4 },
+  sea: { shallow: 6 },
   // About 7,500 trees by habitat. The order of `habitats` is the order of `TREE_KINDS`.
   trees: {
     spacing: 5.5,

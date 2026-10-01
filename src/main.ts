@@ -29,7 +29,8 @@ const LIGHT_CAPACITY = 16,
 /**
  * How far the camera sees, in world units. The island is 1,500 across and the sea runs on to the horizon past it,
  * so this is far: the haze below has taken the sea and the sky to one colour well before it, and the end of the
- * world, where the sea plane is cut by the far plane, is never seen as an edge.
+ * world, where the sea plane is cut by the far plane, is never seen as an edge. Raising it to 30,000 with a sea
+ * plane to match was tried, and the shallows, a quarter of a unit over that plane, were lost in the distance, so it stays.
  */
 const FAR = 8000;
 
@@ -76,7 +77,8 @@ const POST: Partial<Post> = { tone: 'soft', bloom: 0.15, vignette: 0.12, grain: 
 /**
  * The haze: a mist that lies low and thickens toward the horizon, in the colour of the sky there, so the far coast
  * and the sea fade into it, the sky pales from the blue overhead to the horizon, and the sea's cut edge at `FAR`
- * is gone. It is lit by the sun as air is, so its `colour` is the horizon's colour divided by the sun and sky that
+ * is gone (which also wants the open sea matte, as `scene.ts` has it: a glossy one reflects the horizon at a graze
+ * and stays paler than the sky above it). It is lit by the sun as air is, so its `colour` is the horizon's colour divided by the sun and sky that
  * light it (about 1.95, 1.8 and 1.6 over the three channels). Its density is per world unit and falls off with
  * height over `height`, so near the sea a view is half gone in about 900 and at the helicopter's cruising
  * heights, a hundred up, in about 1,600; the land a few hundred away is only a little paler, and the mountains
