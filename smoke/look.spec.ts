@@ -50,6 +50,30 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('the chase camera, a second after the start', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate(() => window.game!.step(60));
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('chase.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('turning in the air', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate(() => {
+      const g = window.game!;
+      g.teleport(0, -10, 8, Math.PI / 2);
+      g.fly(1, 1, 1);
+      g.step(45);
+      g.release();
+    });
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('turning.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('a small thing added to the arena is a change', async ({ page }, info) => {
     // while the pictures are being written this would write its own, button and all, over the arena's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');

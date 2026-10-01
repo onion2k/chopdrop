@@ -1,20 +1,22 @@
 /**
  * The page: the game drawn, and what the player does to it. Everything that
- * happens in the arena happens in `game.ts`; this draws the frame, on the
- * game path of artshape-render, and will turn what the game says has
- * happened into words on the screen once it has something to say. There is
- * no game logic here.
+ * happens in the arena happens in `game.ts`; this reads the keyboard, steps
+ * the game and the chase camera on the fixed step, and draws the frame on the
+ * game path of artshape-render. Every movement, the camera's too, is made in
+ * `simulate`, so the same flight gives the same picture, and `draw` only
+ * shows where things have got to. There is no game logic here.
  */
 import { createContext } from 'artshape-render/gpu/context';
-import { Orbit } from 'artshape-render/gpu/camera';
 import { bakeEnvironment } from 'artshape-render/render/env';
 import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer } from 'artshape-render/game/renderer';
+import { ChaseCamera, fovFor } from './chase';
 import { createApi } from './debug';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
+import { Input } from './input';
 import { seeded } from './random';
-import { ARENA_BOX, staticGroups } from './scene';
+import { ARENA_BOX, Scene } from './scene';
 
 /** How many millimetres a world unit is: the renderer fixes a few real sizes by it. */
 const MM_PER_UNIT = 100;
@@ -63,25 +65,20 @@ async function main() {
 
   // ---- the scene ----
 
-  renderer.setStatic(staticGroups(game.solid));
+  const scene = new Scene();
+  renderer.setStatic(scene.static(game.solid));
+  renderer.setDynamic(scene.dynamic());
   const lights = new LightPool(LIGHT_CAPACITY);
   lights.add({ position: [0, 0, 14], radius: 40, colour: [1, 0.85, 0.6], intensity: 30 });
   renderer.setLights(lights);
 
+  // the rig's two points are the camera's own, written in place, so nothing is copied each frame
+  const input = new Input();
+  const rig = new ChaseCamera();
+  rig.snap(game.helicopter);
   const cam = renderer.camera;
-  cam.target = [0, 0, 0];
-  cam.position = [0, -70, 60];
-  const orbit = new Orbit(cam, {
-    element: canvas,
-    minPolar: 0.2,
-    maxPolar: 1.3,
-    minDistance: 20,
-    maxDistance: 160,
-    rotateSpeed: 0.4,
-    zoomSpeed: 0.8,
-    panSpeed: 0,
-    inertia: 0.5,
-  });
+  cam.position = rig.position;
+  cam.target = rig.target;
 
   let width = 1,
     height = 1;
@@ -92,10 +89,17 @@ async function main() {
     canvas.width = width;
     canvas.height = height;
     cam.aspect = width / height;
+    cam.fov = fovFor(cam.aspect);
     renderer.resize(width, height);
   };
   addEventListener('resize', resize);
   resize();
+
+  /** Where the helicopter is now, written into the groups the renderer draws. */
+  function upload() {
+    scene.write(game.helicopter);
+    scene.pools.forEach((pool, k) => renderer.move(k, pool, 1));
+  }
 
   /** Whether a frame is being measured: the frame loop stands still while one is. */
   let measuring = false;
@@ -116,7 +120,10 @@ async function main() {
     measuring = true;
     try {
       return await frameCost(
-        () => renderer.frame(view, 'redraw', 1 / 60),
+        () => {
+          upload();
+          return renderer.frame(view, 'redraw', 1 / 60);
+        },
         () => ctx.device.queue.onSubmittedWorkDone(),
         warm,
       );
@@ -137,10 +144,11 @@ async function main() {
   let smoothed = 0;
   function simulate(dt: number) {
     frames++;
-    game.step(dt);
+    game.step(dt, input.read());
+    rig.step(dt, game.helicopter);
   }
   function draw(dt: number) {
-    orbit.update();
+    upload();
     cam.update();
     const t = performance.now();
     renderer.frame(ctx.context.getCurrentTexture().createView(), 'redraw', dt);
@@ -167,10 +175,9 @@ async function main() {
     simulate,
     draw,
     frame: () => frames,
-    look(x, y, view) {
-      cam.target = [x, y, 0];
-      orbit.setSpherical(view);
-      for (let i = 0; i < 400; i++) orbit.update();
+    rig,
+    setControls: (c) => {
+      input.override = c;
     },
     measureFrame,
   });

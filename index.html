@@ -65,6 +65,12 @@
     color: var(--dim);
     font-size: 13px;
   }
+  #help span {
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    padding: 0 6px;
+  }
   #boot {
     position: fixed;
     inset: 0;
@@ -89,7 +95,9 @@
 </style>
 <div id="stage"><canvas id="view"></canvas></div>
 <div class="panel" id="stats" hidden></div>
-<div class="panel" id="help" hidden>drag to orbit, wheel to zoom</div>
+<div class="panel" id="help" hidden>
+  <span>W S</span> fly · <span>A D</span> turn · <span>Space Shift</span> up, down
+</div>
 <div id="boot">
   <p id="bootMsg">starting WebGPU…</p>
 </div>

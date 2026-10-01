@@ -55,6 +55,16 @@ test('boots, draws and downloads within budget, and as it did before', async ({ 
     // the first measuring on a page just booted: it keeps the GPU drawing for a quarter of a second before it times
     return g.measureFrame();
   });
+  // the view a player has: told, not held, since it moves with the flight and has no baseline to be held to
+  const chaseFrame = await page.evaluate(async () => {
+    const g = window.game!;
+    g.chase();
+    g.step(1);
+    return g.measureFrame(50);
+  });
+  const chaseMs = Math.round(chaseFrame * 1000) / 1000;
+  info.annotations.push({ type: 'perf-chase', description: `${chaseMs} ms, not held to the baseline or the budget` });
+  console.log(`perf: chase view frame ${chaseMs} ms (not held)`);
   const now: Figures = { bootMs: Math.round(boot), frameMs: Math.round(frame * 1000) / 1000, bundleBytes: bundle };
   info.annotations.push({ type: 'perf', description: JSON.stringify(now) });
   console.log(

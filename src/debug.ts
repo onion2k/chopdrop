@@ -6,14 +6,20 @@
  *
  * Time is the test's to keep: `pause` stops the game where it is, and
  * `step` plays it on a frame at a time, exactly, drawing the last. `seed`
- * makes chance repeat. While the floor is empty that is all there is to
- * it; each thing put on it gains here what a test needs to place it and
- * read it back.
+ * makes chance repeat. The helicopter is flown by `fly`, which holds the
+ * controls as a person would until `release`, put somewhere by `teleport`
+ * and read back by `state`. The camera chases it unless `look` parks it for
+ * a fixed view, the one every picture and the perf gate are taken from;
+ * `chase` sends it back. The page keeps no game logic: this only hands what
+ * a test asks for to the game and the camera rig.
  *
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
+import { FLOOR } from './arena';
+import type { ChaseCamera, Point, View } from './chase';
 import type { Game } from './game';
+import { HELICOPTER, type Bounds, type Controls } from './helicopter';
 import { seeded } from './random';
 
 declare global {
@@ -27,6 +33,21 @@ export interface GameState {
   t: number;
   frame: number;
   paused: boolean;
+  /** Where the helicopter is and how it is going; `vz` is its climb, and `landed` is on the floor. */
+  helicopter: {
+    x: number;
+    y: number;
+    z: number;
+    yaw: number;
+    pitch: number;
+    roll: number;
+    speed: number;
+    vz: number;
+    landed: boolean;
+    rotorSpeed: number;
+  };
+  /** The camera's mode and its two points, copied: the rig's own arrays move every frame. */
+  camera: { mode: 'chase' | 'parked'; position: Point; target: Point };
 }
 
 export interface GameApi {
@@ -44,9 +65,19 @@ export interface GameApi {
   seed(n: number): void;
 
   state(): GameState;
+  /** What the helicopter is kept inside, so a test does not say it twice: the floor, where its middle may go, and the ceiling. */
+  content(): { floor: Bounds; bounds: Bounds; ceiling: number };
 
-  /** The camera looking at a point, from `azimuth` round and `polar` down, `radius` away, at once. */
-  look(x: number, y: number, view?: { azimuth?: number; polar?: number; radius?: number }): void;
+  /** The controls held, as if a person held them, until `release`. */
+  fly(forward: number, turn: number, lift: number): void;
+  /** The controls let go of, and the keyboard read again. */
+  release(): void;
+  /** The helicopter put somewhere, stopped and level, facing `yaw` or as it was; the camera goes behind it if it is chasing. */
+  teleport(x: number, y: number, z: number, yaw?: number): void;
+  /** The camera parked looking at a point, from `azimuth` round and `polar` down, `radius` away, at once: the tests' standard view. */
+  look(x: number, y: number, view?: View): void;
+  /** The camera behind the helicopter again, and following it. */
+  chase(): void;
   /**
    * What drawing a frame of the scene as it stands costs, in milliseconds, once the GPU has been kept drawing for
    * `warm` of them: a quarter of a second unless told otherwise, which is what one that sat idle while the page
@@ -55,23 +86,26 @@ export interface GameApi {
   measureFrame(warm?: number): Promise<number>;
 }
 
-/** What the page gives the API that is not the game's: time, the camera and the renderer. */
+/** What the page gives the API that is not the game's: time, the controls, the camera rig and the renderer. */
 export interface DebugHost {
   game: Game;
+  rig: ChaseCamera;
   ready(): boolean;
   bootMs(): number;
   paused(): boolean;
   setPaused(paused: boolean): void;
+  /** Hold these controls in place of the keyboard, or give the keyboard back with null. */
+  setControls(controls: Controls | null): void;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
   draw(dt: number): void;
   frame(): number;
-  look(x: number, y: number, view: { azimuth?: number; polar?: number; radius?: number }): void;
   measureFrame(warm?: number): Promise<number>;
 }
 
 export function createApi(host: DebugHost): GameApi {
-  const { game } = host;
+  const { game, rig } = host;
+  const helicopter = game.helicopter;
   return {
     version: 1,
     get ready() {
@@ -91,10 +125,39 @@ export function createApi(host: DebugHost): GameApi {
     },
 
     state() {
-      return { t: game.t, frame: host.frame(), paused: host.paused() };
+      return {
+        t: game.t,
+        frame: host.frame(),
+        paused: host.paused(),
+        helicopter: {
+          x: helicopter.x,
+          y: helicopter.y,
+          z: helicopter.z,
+          yaw: helicopter.yaw,
+          pitch: helicopter.pitch,
+          roll: helicopter.roll,
+          speed: helicopter.speed,
+          vz: helicopter.vz,
+          landed: helicopter.landed,
+          rotorSpeed: helicopter.rotorSpeed,
+        },
+        camera: { mode: rig.mode, position: [...rig.position], target: [...rig.target] },
+      };
     },
+    content: () => ({
+      floor: { ...FLOOR },
+      bounds: { ...helicopter.bounds },
+      ceiling: HELICOPTER.ceiling,
+    }),
 
-    look: (x, y, view = {}) => host.look(x, y, view),
+    fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),
+    release: () => host.setControls(null),
+    teleport(x, y, z, yaw = helicopter.yaw) {
+      helicopter.place(x, y, z, yaw);
+      if (rig.mode === 'chase') rig.snap(helicopter);
+    },
+    look: (x, y, view) => rig.park(x, y, view),
+    chase: () => rig.snap(helicopter),
     measureFrame: (warm) => host.measureFrame(warm),
   };
 }

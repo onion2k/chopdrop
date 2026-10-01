@@ -1,12 +1,16 @@
 /**
- * The few shapes the arena is made of, built flat-shaded on purpose: a box
- * and a square. Cartoon geometry wants hard edges, so faces do not share
- * vertices and every normal is a face's. The ball and the disc the stub
- * was made of went with it, and are in the first commit to copy from.
+ * The few shapes the game is made of, built flat-shaded on purpose: boxes, a
+ * square, and the helicopter put together from boxes. Cartoon geometry
+ * wants hard edges, so faces do not share vertices and every normal is a
+ * face's. The ball and the disc the stub was made of went with it, and are
+ * in the first commit to copy from. The helicopter's sizes are read from
+ * `HELICOPTER` where it holds them, so what is drawn and what the flight
+ * keeps to cannot part.
  *
  * Everything is in world units and Z is up, as the renderer has it.
  */
 import { MeshBuilder, type Mesh } from 'artshape-render/mesh/types';
+import { HELICOPTER } from './helicopter';
 
 type V3 = [number, number, number];
 
@@ -52,6 +56,54 @@ export function boxAt(b: MeshBuilder, cx: number, cy: number, cz: number, w: num
 export function box(w: number, d: number, h: number, centred = false): Mesh {
   const b = new MeshBuilder();
   boxAt(b, 0, 0, centred ? 0 : h / 2, w, d, h);
+  return b.build();
+}
+
+/** A box from its extents on each axis, which is how the helicopter's parts were drawn on the approved mock. */
+function span(b: MeshBuilder, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) {
+  boxAt(b, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, x1 - x0, y1 - y0, z1 - z0);
+}
+
+/** The cabin, tail boom, fin and stabiliser: the painted shell, in the helicopter's own frame. */
+export function helicopterBody(): Mesh {
+  const b = new MeshBuilder();
+  span(b, -2.0, 2.4, -1.1, 1.1, 0.6, 2.6);
+  span(b, -6.4, -2.0, -0.3, 0.3, 1.7, 2.3);
+  span(b, -6.6, -5.8, -0.08, 0.08, 2.0, 3.6);
+  span(b, -5.7, -4.9, -1.0, 1.0, 1.85, 2.05);
+  return b.build();
+}
+
+/** The canopy, standing a little proud of the cabin's front so it reads as glass and not paint. */
+export function helicopterGlass(): Mesh {
+  const b = new MeshBuilder();
+  span(b, 1.2, 2.7, -1.0, 1.0, 1.2, 2.4);
+  return b.build();
+}
+
+/** The skids, their struts and the mast: the dark metal under and over the shell. */
+export function helicopterDark(): Mesh {
+  const b = new MeshBuilder();
+  for (const side of [-1, 1]) {
+    span(b, -1.8, 2.0, side - 0.075, side + 0.075, 0, 0.15);
+    for (const x of [-1.0, 1.2]) span(b, x - 0.06, x + 0.06, side - 0.06, side + 0.06, 0.15, 0.6);
+  }
+  span(b, -0.15, 0.15, -0.15, 0.15, 2.6, HELICOPTER.size.mastTop);
+  return b.build();
+}
+
+/** The main rotor, centred on its hub, which is where it is placed and spun about Z. */
+export function mainRotor(): Mesh {
+  const b = new MeshBuilder();
+  boxAt(b, 0, 0, 0, 2 * HELICOPTER.size.rotorRadius, 0.35, 0.08);
+  boxAt(b, 0, 0, 0.1, 0.4, 0.4, 0.2);
+  return b.build();
+}
+
+/** The tail rotor, centred on its hub, which is where it is placed and spun about Y. */
+export function tailRotor(): Mesh {
+  const b = new MeshBuilder();
+  boxAt(b, 0, 0, 0, 2 * HELICOPTER.size.tailRotorRadius, 0.06, 0.22);
   return b.build();
 }
 

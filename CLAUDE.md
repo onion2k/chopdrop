@@ -7,11 +7,12 @@ physics from [artshape-physics](https://github.com/onion2k/artshape-physics).
 The README says what the game is; this file says how it is made. The house
 rules in `~/.claude/CLAUDE.md` apply too.
 
-Nothing of the game is built yet. The template's stub, a sled shoving balls
-into a hole, was taken out in the second commit, and the floor is empty
-until the first features put the helicopter and the deliveries on it. The
-first commit, `eda26d8`, has the stub and every gate that held it: it is
-the model to copy from, and `git show eda26d8:<path>` reads any of it.
+The helicopter is built: flown from the keyboard over the walled floor,
+with a chase camera. Nothing else is: no deliveries, nowhere to take them,
+no save and no touch controls. The template's stub, a sled shoving balls
+into a hole, was taken out in the second commit. The first commit,
+`eda26d8`, has the stub and every gate that held it: it is the model to
+copy from, and `git show eda26d8:<path>` reads any of it.
 
 ## The factory
 
@@ -26,12 +27,10 @@ by moving its baseline.
 
 The three properties, and what holds each:
 
-- **Bug free.** For now, the unit and smoke tests alone. The rules that must
-  always hold go in `src/invariants.ts`, and the fuzzer hunts for them; both
-  come back with the first thing on the floor (see below). Every bug found
-  becomes a test that would have caught it and, where it is a rule, an
-  invariant. The same seed gives the same game, so every failure can be
-  played again.
+- **Bug free.** Every rule that must always hold is in `src/invariants.ts`,
+  and the fuzzer hunts for it. Every bug found becomes a test that would
+  have caught it and, where it is a rule, an invariant. The same seed gives
+  the same game, so every failure can be played again.
 - **Loads fast.** Boot time and the gzipped download are measured by
   `npm run perf` in headless Chromium and held to a budget and a baseline.
 - **Draws fast.** A frame's cost at the standard view is measured by the
@@ -65,8 +64,9 @@ row here with the first thing it can hold.
 
     npm run dev            the game at http://localhost:5202
     npm run check:quick    formatting, types, lint, unit tests (the pre-commit hook)
-    npm run check          all of it: check:quick, then smoke with perf and look
+    npm run check          all of it: check:quick, fuzz, then smoke with perf and look (~20 s)
     npm test               unit tests (Vitest, test/)
+    npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again
     npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget
     npm run smoke          the game in headless Chromium on the real GPU (Playwright, smoke/)
     npm run look           the scenes held to the pictures in smoke/screens, to the pixel
@@ -80,21 +80,31 @@ says why. Look at every picture.
 
 ## How the code is laid out
 
-- `src/game.ts` is the game without the picture: for now the walled floor
-  and the clock, a step at a time. It knows nothing of the renderer or the
-  page. What happens in it will be told through a `GameEvents` handed in, as
-  the first commit's does.
+- `src/game.ts` is the game without the picture: the walled floor, the
+  helicopter and the clock, a step at a time. It knows nothing of the
+  renderer or the page. What happens in it will be told through a
+  `GameEvents` handed in, as the first commit's does.
+- `src/helicopter.ts` is the player's machine: the flight, and the numbers
+  and size in `HELICOPTER`, said once. It is handed the floor's edge, not
+  the arena.
 - `src/main.ts` is the page. It draws the frame, and will turn the game's
   events into words on the screen. There is no game logic here.
-- `src/debug.ts` is `window.game`, the test API: time, the seed, the camera
-  and measuring. Each thing put on the floor gains here what a test needs to
-  place it and read it back.
+  `src/input.ts` turns keys into `Controls`; `src/chase.ts` is the camera
+  rig, stepped with the game so the pictures repeat.
+- `src/debug.ts` is `window.game`, the test API: time, the seed, the
+  helicopter (`fly`, `release`, `teleport`), the camera (`look` parks it,
+  `chase` sends it back) and measuring. Each thing put on the floor gains
+  here what a test needs to place it and read it back.
+- `src/invariants.ts` lists the rules that must always hold;
+  `scripts/fuzzer.ts` plays the game at random and checks them.
 - Content (the floor and the rock round it) lives in `arena.ts`. Chance
-  comes from `random.ts`, handed in. `scene.ts` is the arena as drawn.
-- There is no physics, save or controls yet. `artshape-physics` stays pinned
-  in `package.json`, and `src/physics.ts` comes back as the one door to it
-  with the first body; nothing else imports the package. A change it needs
-  goes in that repo, with a version bump here.
+  comes from `random.ts`, handed in. `scene.ts` is the arena and the
+  helicopter as drawn; `matrix.ts` places, tilts and spins; `meshes.ts`
+  builds the shapes.
+- There is no physics or save yet. `artshape-physics` stays pinned in
+  `package.json`, and `src/physics.ts` comes back as the one door to it with
+  the first body; nothing else imports the package. A change it needs goes
+  in that repo, with a version bump here.
 
 ## Skills
 
@@ -111,9 +121,6 @@ none, because it looks like it does. Each comes back from `eda26d8` with
 the first feature that gives it something to hold, in the same change, with
 its `package.json` script, its place in `npm run check` and its unit tests:
 
-- **The invariants and the fuzzer** (`src/invariants.ts`,
-  `scripts/fuzzer.ts`, `scripts/fuzz.ts`), with the first thing a player can
-  do: an action for each thing, and a rule for what must hold of it.
 - **The save** (`src/progress.ts`, `test/saves/`, the save in
   `smoke/game.ts`'s `start`), with the first thing kept between visits. Its
   key is `chopdrop-save-v1`.
@@ -127,14 +134,26 @@ its `package.json` script, its place in `npm run check` and its unit tests:
 - **The play-through** (`smoke/progress.spec.ts`), with the first thing a
   player can finish.
 
-What the stub was built of is the shape to copy: the ball was a body kind
-in `arena.ts`, drawn by `scene.ts`, banked by `game.ts`, counted by
-`invariants.ts`, read by `debug.ts`, and pictured in `smoke/look.spec.ts`.
-The gates that are here now are each a model for the next: the perf gate
-(`smoke/perf.spec.ts`, its judging in `smoke/judging.ts`), the look gate
-(`smoke/look.spec.ts`, seen to fail a small button), and the frame's
-measuring (`src/frame-cost.ts`). A gate is trusted once it has been seen to
-fail what it is for.
+The invariants and the fuzzer came back with the helicopter.
+
+## Model features
+
+- **The helicopter**, for anything a player flies or that moves: its flight
+  in `helicopter.ts`, handed the floor's edge by `game.ts`; drawn by
+  `scene.ts` as a group per colour and one per rotor, placed by
+  `placeFrame` and `placePart`; followed by `chase.ts`; flown by `input.ts`;
+  read and set by `debug.ts`; ruled by `invariants.ts`; played by the
+  fuzzer's actions; flown by key in `smoke/game.spec.ts`, and pictured in
+  `smoke/look.spec.ts` (`chase.png`, `turning.png`).
+- **The stub's ball**, for a body: a body kind in `arena.ts`, drawn by
+  `scene.ts`, banked by `game.ts`, counted by `invariants.ts`, read by
+  `debug.ts`, and pictured, all in `eda26d8`.
+- **The gates** that are here now are each a model for the next: the perf gate
+  (`smoke/perf.spec.ts`, its judging in `smoke/judging.ts`), the look gate
+  (`smoke/look.spec.ts`, seen to fail a small button), the fuzzer (seen to
+  fail a helicopter let past its ceiling, and one let past its top speed), and
+  the frame's measuring (`src/frame-cost.ts`). A gate is trusted once it has
+  been seen to fail what it is for.
 
 ## Rules for the code
 
@@ -165,11 +184,12 @@ fail what it is for.
 The house's nine points, in `~/.claude/CLAUDE.md`. Here, they mean: unit
 tests in `test/`, a test in `smoke/` through the test API, the perf figures
 before and after in the report and within budget, `measureFrame` in any
-other scene touched, and a picture in `smoke/look.spec.ts`. Every gate the
-change gives something to hold is brought back and handed it, as above:
-an action in the fuzzer and a rule in the invariants for anything a player
-can do, a size in `scripts/leaks.ts` for anything kept, a stage in the
-play-through for anything a player can finish. `npm run check` green.
+other scene touched, and a picture in `smoke/look.spec.ts`. An action in
+the fuzzer and a rule in the invariants for anything a player can do.
+Every gate still to come back that the change gives something to hold is
+brought back and handed it, as above: a size in `scripts/leaks.ts` for
+anything kept, a stage in the play-through for anything a player can
+finish. `npm run check` green, and `npm run fuzz -- --seeds 1-24` clean.
 
 ## Edge-case checklist
 
@@ -195,7 +215,8 @@ For anything new in the arena, check what it does:
 
 Use headless Playwright (`start()` in `smoke/game.ts`) for anything seen or
 measured; the in-app browser pane pauses when hidden. Control time through
-the API: `pause()`, `seed(n)`, then `step(frames)`, never a timeout. Never
+the API: `pause()`, `seed(n)`, then `step(frames)`, never a timeout; fly
+with `fly()` or real keys, and take a fixed view with `look()`. Never
 write over the player's save; once there is one, a test save goes in
 through `start(page, { save })`, as in the first commit.
 
