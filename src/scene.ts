@@ -1,13 +1,15 @@
 /**
  * The world as it is drawn: the island, which does not move, and the
- * helicopter, which does. The island is the land in a mesh for each thing
- * it is made of, the sea, the lakes and the rivers as flat water, the trees
- * in a pair of instanced groups a kind, and the landing pads. The helicopter
- * is a group for each of its colours and one for each rotor. The island is
- * built once, at boot, from the typed arrays the generator made; the
- * helicopter's groups are fixed once, and each frame only where everything is
- * written into them. It is handed what it draws from, and never the renderer.
- * Without it the page has nothing to hand the renderer, and nothing is seen.
+ * helicopter and the trees, which do. The island is the land in a mesh for
+ * each thing it is made of, the sea, the lakes and the rivers as flat water,
+ * and the landing pads. The helicopter is a group for each of its colours and
+ * one for each rotor, and the trees a pair of instanced groups a kind, which
+ * move with it since a group set as still cannot be written again. The island
+ * is built once, at boot, from the typed arrays the generator made; the moving
+ * groups are fixed once, and each frame only where everything is written into
+ * them, and `changed` says which. It is handed what it draws from, and never
+ * the renderer. Without it the page has nothing to hand the renderer, and
+ * nothing is seen.
  */
 import { MATERIAL_STRIDE, type GameGroup } from 'artshape-render/game/renderer';
 import type { Box } from 'artshape-render/game/shadows';
@@ -138,6 +140,9 @@ const SHADOW_SNAP = 8;
 /** The box reaches this far under the sea to catch shadows on the shore, and a little over the helicopter's highest point. */
 const SHADOW_FLOOR = -5;
 const SHADOW_ROOF = 2;
+
+/** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
+const HELICOPTER_GROUPS = 6;
 
 /** A placement that leaves a mesh where it is. */
 function stay(): Float32Array {
@@ -414,11 +419,23 @@ function shaded(out: Float32Array, o: number, paint: Paint, shade: number): void
 }
 
 export class Scene {
-  /** The moving placements, one pool a group, one placement each, in the order `dynamic` gives the groups. */
+  /**
+   * The moving placements, a pool a group in the order `dynamic` gives the groups: one placement each for the
+   * helicopter's, and a placement a tree for the trees', where a kind's trunks and crowns share the one pool.
+   */
   readonly pools: Float32Array[] = [];
 
-  /** What each of `static`'s groups is, in its order: the land by surface, the water, the pads and the trees by kind. */
+  /**
+   * Which of `pools` `write` changed, one a pool, so the page writes those to the renderer and leaves the rest: a
+   * kind of tree is thousands of placements, and is only written again when one of its trees has moved.
+   */
+  changed = new Uint8Array(0);
+
+  /** What each of `static`'s groups is, in its order: the land by surface, the water and the pads. */
   readonly names: string[] = [];
+
+  /** What each of `dynamic`'s groups is, in its order: the helicopter's parts, then the trees' trunks and crowns by kind. */
+  readonly movers: string[] = [];
 
   /**
    * The box the sun's shadow is fitted to, which the renderer holds and `write` moves: a stretch of the island
@@ -430,7 +447,7 @@ export class Scene {
     max: [SHADOW_REACH, SHADOW_REACH, HELICOPTER.ceiling + HELICOPTER.size.height + SHADOW_ROOF],
   };
 
-  /** What does not move: the land, the water, the pads and the trees. It is slow, and is the page's to do once, at boot. */
+  /** What does not move: the land, the water and the pads. It is slow, and is the page's to do once, at boot. */
   static(island: Island): GameGroup[] {
     this.names.length = 0;
     const groups: GameGroup[] = [];
@@ -462,7 +479,6 @@ export class Scene {
     if (island.rivers.length > 0) add('rivers', riverMesh(island.rivers), RIVER_PAINT);
 
     this.pads(island, add);
-    this.trees(island, add);
     return groups;
   }
 
@@ -483,7 +499,31 @@ export class Scene {
     add('pad markings', padMarking(radius), MARKING_PAINT, marks, pads.length);
   }
 
-  /** The trees: a trunk group and a crown group a kind, the crowns each their own shade of green. */
+  /**
+   * What moves: the helicopter's groups, then, given the island, its trees, each pool sized once. The trees move
+   * only a little and only now and then, but a group that is set as still cannot be written again but whole.
+   */
+  dynamic(island?: Island): GameGroup[] {
+    this.pools.length = 0;
+    this.movers.length = 0;
+    const groups: GameGroup[] = [];
+    const add: Add = (name, mesh, paint, matrices = new Float32Array(16), count = 1, materials) => {
+      this.pools.push(matrices);
+      this.movers.push(name);
+      groups.push({ mesh, matrices, count, materials, albedo: paint.albedo, roughness: paint.roughness });
+    };
+    add('body', helicopterBody(), BODY_PAINT);
+    add('trim', helicopterTrim(), TRIM_PAINT);
+    add('glass', helicopterGlass(), GLASS_PAINT);
+    add('dark', helicopterDark(), DARK_PAINT);
+    add('main rotor', mainRotor(), DARK_PAINT);
+    add('tail rotor', tailRotor(), DARK_PAINT);
+    if (island) this.trees(island, add);
+    this.changed = new Uint8Array(this.pools.length);
+    return groups;
+  }
+
+  /** The trees: a trunk group and a crown group a kind, sharing a pool, the crowns each their own shade of green. */
   private trees(island: Island, add: Add) {
     const { trees, treeCount } = island;
     const perKind = new Uint32Array(TREE_KINDS.length);
@@ -508,27 +548,10 @@ export class Scene {
     });
   }
 
-  /** What moves: the helicopter's groups, their pools sized once. */
-  dynamic(): GameGroup[] {
-    this.pools.length = 0;
-    const group = (mesh: GameGroup['mesh'], paint: Paint): GameGroup => {
-      const matrices = new Float32Array(16);
-      this.pools.push(matrices);
-      return { mesh, matrices, count: 1, albedo: paint.albedo, roughness: paint.roughness };
-    };
-    return [
-      group(helicopterBody(), BODY_PAINT),
-      group(helicopterTrim(), TRIM_PAINT),
-      group(helicopterGlass(), GLASS_PAINT),
-      group(helicopterDark(), DARK_PAINT),
-      group(mainRotor(), DARK_PAINT),
-      group(tailRotor(), DARK_PAINT),
-    ];
-  }
-
-  /** Everything where it is this frame, and the shadow's box round the helicopter. */
+  /** Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved. */
   write(pose: HelicopterPose): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
+    this.changed.fill(1, 0, HELICOPTER_GROUPS);
     const { mastTop, tailRotorAt } = HELICOPTER.size;
     placeFrame(body, 0, pose.x, pose.y, pose.z, pose.yaw, pose.pitch, pose.roll);
     trim.set(body);

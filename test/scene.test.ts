@@ -197,10 +197,13 @@ describe('shadowBox', () => {
 const island = theIsland();
 const scene = new Scene();
 const groups = scene.static(island);
+const movers = scene.dynamic(island);
 const group = (name: string) => {
   const k = scene.names.indexOf(name);
-  expect(k, `a group called ${name}`).toBeGreaterThanOrEqual(0);
-  return groups[k];
+  if (k >= 0) return groups[k];
+  const m = scene.movers.indexOf(name);
+  expect(m, `a group called ${name}`).toBeGreaterThanOrEqual(0);
+  return movers[m];
 };
 const triangles = (name: string) => group(name).mesh.indices.length / 3;
 const count = (name: string) => group(name).count ?? group(name).matrices.length / 16;
@@ -418,6 +421,19 @@ describe('the trees', () => {
     let total = 0;
     for (let t = 0; t < island.treeCount; t++) if (island.trees[t * TREE_STRIDE] === index) total++;
     return { kind, index, total };
+  });
+
+  it('move, after the helicopter, and are not among what stands still', () => {
+    expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
+    expect(scene.movers.slice(6)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
+    expect(scene.pools).toHaveLength(movers.length);
+    movers.forEach((g, k) => expect(g.matrices).toBe(scene.pools[k]));
+  });
+
+  it('are not written again while the helicopter alone moves', () => {
+    scene.write(pose());
+    expect(Array.from(scene.changed)).toEqual(movers.map((_, k) => (k < 6 ? 1 : 0)));
   });
 
   it('are a trunk group and a crown group for every kind there is, with a placement for each tree', () => {

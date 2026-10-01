@@ -146,7 +146,7 @@ async function main() {
   await nextFrame();
   const scene = new Scene();
   renderer.setStatic(scene.static(game.island));
-  renderer.setDynamic(scene.dynamic());
+  renderer.setDynamic(scene.dynamic(game.island));
   renderer.setSunShadow(scene.shadowBox);
   // there is no lamp on the island: the sun is all the light there is
   renderer.setLights(new LightPool(LIGHT_CAPACITY));
@@ -174,10 +174,12 @@ async function main() {
   addEventListener('resize', resize);
   resize();
 
-  /** Where the helicopter is now, written into the groups the renderer draws. */
+  /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
     scene.write(game.helicopter);
-    scene.pools.forEach((pool, k) => renderer.move(k, pool, 1));
+    scene.pools.forEach((pool, k) => {
+      if (scene.changed[k]) renderer.move(k, pool);
+    });
   }
 
   /** Whether a frame is being measured: the frame loop stands still while one is. */
