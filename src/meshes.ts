@@ -32,19 +32,26 @@ function face(b: MeshBuilder, p0: V3, p1: V3, p2: V3, p3: V3) {
   b.quad(a, a + 1, a + 2, a + 3);
 }
 
+/** A box centred at (cx, cy, cz), `w` along X, `d` along Y and `h` along Z, added to `b`. */
+export function boxAt(b: MeshBuilder, cx: number, cy: number, cz: number, w: number, d: number, h: number) {
+  const x0 = cx - w / 2,
+    x1 = cx + w / 2,
+    y0 = cy - d / 2,
+    y1 = cy + d / 2,
+    z0 = cz - h / 2,
+    z1 = cz + h / 2;
+  face(b, [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]);
+  face(b, [x0, y1, z0], [x1, y1, z0], [x1, y0, z0], [x0, y0, z0]);
+  face(b, [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]);
+  face(b, [x1, y1, z0], [x0, y1, z0], [x0, y1, z1], [x1, y1, z1]);
+  face(b, [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]);
+  face(b, [x0, y1, z0], [x0, y0, z0], [x0, y0, z1], [x0, y1, z1]);
+}
+
 /** A box `w` along X, `d` along Y and `h` up Z, centred in X and Y and standing on z = 0, or centred in Z too. */
 export function box(w: number, d: number, h: number, centred = false): Mesh {
   const b = new MeshBuilder();
-  const x = w / 2,
-    y = d / 2,
-    z0 = centred ? -h / 2 : 0,
-    z1 = z0 + h;
-  face(b, [-x, -y, z1], [x, -y, z1], [x, y, z1], [-x, y, z1]);
-  face(b, [-x, y, z0], [x, y, z0], [x, -y, z0], [-x, -y, z0]);
-  face(b, [-x, -y, z0], [x, -y, z0], [x, -y, z1], [-x, -y, z1]);
-  face(b, [x, y, z0], [-x, y, z0], [-x, y, z1], [x, y, z1]);
-  face(b, [x, -y, z0], [x, y, z0], [x, y, z1], [x, -y, z1]);
-  face(b, [-x, y, z0], [-x, -y, z0], [-x, -y, z1], [-x, y, z1]);
+  boxAt(b, 0, 0, centred ? 0 : h / 2, w, d, h);
   return b.build();
 }
 
