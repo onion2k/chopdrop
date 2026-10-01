@@ -30,6 +30,7 @@ import type { ChaseCamera, Point, View } from './chase';
 import type { Game } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
 import { TREE_STRIDE } from './island';
+import { treeSize } from './meshes';
 import { seeded } from './random';
 
 declare global {
@@ -75,7 +76,10 @@ export interface PadInfo {
   yaw: number;
 }
 
-/** A tree on the island: which it is, its kind, where its foot is, and its size against its kind's. */
+/**
+ * A tree on the island: which it is, its kind, where its foot is, its size against its kind's, and how tall it stands
+ * over its foot and how far its crown spreads from its trunk, as drawn.
+ */
 export interface TreeInfo {
   index: number;
   kind: TreeKind;
@@ -83,6 +87,8 @@ export interface TreeInfo {
   y: number;
   z: number;
   scale: number;
+  height: number;
+  spread: number;
 }
 
 /**
@@ -233,6 +239,8 @@ export function createApi(host: DebugHost): GameApi {
           y: trees[o + 2],
           z: trees[o + 3],
           scale: trees[o + 5],
+          height: treeSize(TREE_KINDS[trees[o]]).top * trees[o + 5],
+          spread: treeSize(TREE_KINDS[trees[o]]).radius * trees[o + 5],
           d,
         });
       }

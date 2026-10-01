@@ -205,6 +205,18 @@ export class Sway {
   }
 }
 
+/**
+ * The most a tree of `give` leans in play, as a share of its height: what the wash asks of it at its strongest,
+ * beaten up by the flutter, and carried past that once by the spring's swing, 1.44 times at a damping of a quarter.
+ * What keeps clear of a crown keeps this clear of it; a test holds the leans seen to it.
+ */
+export function reachedLean(give: number): number {
+  return SWAY.lean * give * (1 + SIDE * SWAY.flutter + SWAY.flutter) * SWING;
+}
+
+/** How far a spring held at `SWAY.damping` carries past what it is asked, once: e^(−πζ / √(1 − ζ²)) over one. */
+const SWING = 1 + Math.exp((-Math.PI * SWAY.damping) / Math.sqrt(1 - SWAY.damping * SWAY.damping));
+
 /** How fast a tree springs, in radians a second. */
 const OMEGA = 2 * Math.PI * SWAY.hz;
 /** How hard the flutter shakes a tree across the wash, against how hard it beats along it, and how much faster. */

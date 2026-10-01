@@ -153,7 +153,7 @@ async function main() {
 
   // the rig's two points are the camera's own, written in place, so nothing is copied each frame
   const input = new Input();
-  const rig = new ChaseCamera(game.island.ground);
+  const rig = new ChaseCamera(game.island.ground, game.canopy);
   rig.snap(game.helicopter);
   const cam = renderer.camera;
   cam.position = rig.position;

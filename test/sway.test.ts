@@ -11,7 +11,8 @@ import { DOWNWASH, washAt, type Wash, type WashSource } from '../src/downwash';
 import { HELICOPTER, IDLE } from '../src/helicopter';
 import { checkSway } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
-import { SWAY, type Sway } from '../src/sway';
+import { TREE_GIVE, TREE_KINDS } from '../src/arena';
+import { SWAY, reachedLean, type Sway } from '../src/sway';
 import { DT, islandSway, newGame, thickestWood } from './helpers';
 
 const island = theIsland();
@@ -237,6 +238,8 @@ describe('the trees in the downwash', () => {
     const sway = islandSway();
     let peak = 0;
     let t = 0;
+    /** The most any tree leaned, as a share of the most its kind leans in play. */
+    let leanedMost = 0;
     // back and forth through the wood, and round it, skids a metre and a half over the land
     for (const [dx, dy] of [
       [1, 0],
@@ -251,10 +254,17 @@ describe('the trees in the downwash', () => {
         s.y += dy * HELICOPTER.maxSpeed * DT;
         s.z = ground.heightAt(s.x, s.y) + 1.5;
         peak = Math.max(peak, sway.count);
+        for (let k = 0; k < sway.count; k++) {
+          const give = TREE_GIVE[TREE_KINDS[trees[sway.tree[k] * TREE_STRIDE]]];
+          leanedMost = Math.max(leanedMost, Math.hypot(sway.leanX[k], sway.leanY[k]) / reachedLean(give));
+        }
       });
     }
     expect(sway.missed).toBe(0);
     expect(peak).toBeGreaterThan(wood.trees);
+    // and no tree leaned past what keeps clear of a crown allows for, its kind's most in play
+    expect(leanedMost).toBeGreaterThan(0.5);
+    expect(leanedMost).toBeLessThanOrEqual(1);
     // a third to spare, at the least: the capacity says what it is, and this holds it to that
     expect(peak).toBeLessThan(SWAY.capacity * (2 / 3));
   });

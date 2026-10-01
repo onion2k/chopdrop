@@ -1,7 +1,13 @@
-/** The chase camera, stepped headless: where it settles, how fast it gets there, that it never goes under the ground, and the fixed view the pictures are taken from. */
+/**
+ * The chase camera, stepped headless: where it settles, how fast it gets there, that it never goes under the ground
+ * nor into a tree, and the fixed view the pictures are taken from.
+ */
 import { describe, expect, it } from 'vitest';
-import { CHASE, ChaseCamera, fovFor, type Point } from '../src/chase';
-import { DT } from './helpers';
+import { CHASE, ChaseCamera, fovFor, type Heights, type Point } from '../src/chase';
+import { HOVER_LIFT, IDLE } from '../src/helicopter';
+import { TREE_STRIDE } from '../src/island';
+import type { Game } from '../src/game';
+import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
 
 function near(a: Point, b: Point, tolerance = 1e-9) {
   for (let k = 0; k < 3; k++) expect(Math.abs(a[k] - b[k])).toBeLessThanOrEqual(tolerance);
@@ -174,6 +180,154 @@ describe('park', () => {
     const before = [...cam.position];
     cam.step(DT, { x: 60, y: 50, z: 5, yaw: 1 });
     expect([...cam.position]).not.toEqual(before);
+  });
+});
+
+/** A stand of trees whose tops are 20 high over x from 10 to 40, falling away at a slope of one either side, and nothing beyond. */
+const STAND: Heights = {
+  heightAt: (x: number) => (x < -10 || x > 60 ? -Infinity : 20 - Math.max(0, 10 - x, x - 40)),
+};
+
+describe('over the trees', () => {
+  it('settles over the treetops behind a helicopter flying under them', () => {
+    const cam = new ChaseCamera(undefined, STAND);
+    // flying toward -x, the camera 15 behind it at +x, over the stand
+    const f = { x: 10, y: 0, z: 2, yaw: Math.PI };
+    cam.snap(f);
+    for (let n = 0; n < 180; n++) cam.step(DT, f);
+    expect(cam.position[0]).toBeCloseTo(25, 6);
+    expect(cam.position[2]).toBeCloseTo(20 + CHASE.overTrees, 6);
+    // and looks at the helicopter, not over it
+    expect(cam.target[2]).toBeCloseTo(2 + CHASE.lookUp, 6);
+  });
+
+  it('is held over the treetops however fast it comes at them, and eases up to them rather than jumping', () => {
+    const cam = new ChaseCamera(undefined, STAND);
+    const f = { x: -60, y: 0, z: 2, yaw: 0 };
+    cam.snap(f);
+    let most = 0;
+    let was = cam.position[2];
+    for (let n = 0; n < 360; n++) {
+      f.x += 26 * DT;
+      cam.step(DT, f);
+      expect(cam.position[2]).toBeGreaterThanOrEqual(STAND.heightAt(cam.position[0], 0) + CHASE.overTrees - 1e-9);
+      most = Math.max(most, Math.abs(cam.position[2] - was));
+      was = cam.position[2];
+    }
+    // the stand rises one a unit, and the camera crosses it at most at top speed: no faster up than that
+    expect(most).toBeLessThanOrEqual(26 * DT + 1e-9);
+  });
+
+  it('chases exactly as before where no tree is near', () => {
+    const bare = new ChaseCamera();
+    const none = new ChaseCamera(undefined, { heightAt: () => -Infinity });
+    const f = { x: 0, y: 0, z: 4, yaw: 0.3 };
+    bare.snap(f);
+    none.snap(f);
+    for (let n = 0; n < 240; n++) {
+      f.x += 0.3;
+      f.z += 0.05;
+      f.yaw += 0.01;
+      bare.step(DT, f);
+      none.step(DT, f);
+      expect([...none.position, ...none.target]).toEqual([...bare.position, ...bare.target]);
+    }
+  });
+
+  it('parks looking at the ground, under the trees, as before', () => {
+    const cam = new ChaseCamera(undefined, STAND);
+    cam.park(20, 0, { azimuth: 0, polar: 0, radius: 5 });
+    expect(cam.target[2]).toBe(0);
+    expect(cam.position[2]).toBe(5);
+  });
+});
+
+/** The tree whose crown, leaned as the sway has it, holds the camera's point, worked out from the trees and not the canopy; −1 if none. */
+function crownHolding(game: Game, p: Point): number {
+  const { trees, treeCount } = game.island;
+  const kinds = canopyKinds();
+  const { sway } = game;
+  for (let t = 0; t < treeCount; t++) {
+    const o = t * TREE_STRIDE;
+    const { top, radius } = kinds[trees[o]];
+    const s = trees[o + 5];
+    const k = sway.slot(t);
+    const lean = k >= 0 ? Math.hypot(sway.leanX[k], sway.leanY[k]) : 0;
+    if (
+      Math.hypot(p[0] - trees[o + 1], p[1] - trees[o + 2]) < (radius + lean * top) * s &&
+      p[2] < trees[o + 3] + top * s
+    )
+      return t;
+  }
+  return -1;
+}
+
+describe('over the island', () => {
+  /** The game and the camera stepped together, a frame of `controls` at a time, the camera checked each frame. */
+  function chase(game: Game, cam: ChaseCamera, frames: number, controls = IDLE, each?: () => void) {
+    for (let n = 0; n < frames; n++) {
+      game.step(DT, controls);
+      cam.step(DT, game.helicopter);
+      each?.();
+    }
+  }
+  /**
+   * The most the camera moved up or down in a frame, over everything flown in this block, and the most it rose in a
+   * frame that ended with it held up on the lowest it may be, which is the only move it makes without easing.
+   */
+  let most = 0,
+    heldRise = 0;
+  const watch = (game: Game, cam: ChaseCamera) => {
+    let was = cam.position[2];
+    const canopy = islandCanopy();
+    return () => {
+      const p = cam.position;
+      const t = crownHolding(game, p);
+      expect(t, `in the crown of tree ${t}`).toBe(-1);
+      most = Math.max(most, Math.abs(p[2] - was));
+      const lowest = Math.max(
+        game.island.ground.heightAt(p[0], p[1]) + CHASE.minHeight,
+        canopy.heightAt(p[0], p[1]) + CHASE.overTrees,
+      );
+      if (Math.abs(p[2] - lowest) < 1e-9) heldRise = Math.max(heldRise, p[2] - was);
+      was = p[2];
+    };
+  };
+
+  it('is never in a crown, flown low at full speed through the thickest wood every way', () => {
+    const { game } = newGame();
+    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    const wood = thickestWood();
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      game.helicopter.placeAbove(wood.x - 90 * Math.cos(a), wood.y - 90 * Math.sin(a), 3, a);
+      cam.snap(game.helicopter);
+      chase(game, cam, 420, { forward: 1, turn: 0, lift: HOVER_LIFT }, watch(game, cam));
+    }
+  });
+
+  it('is never in a crown, let down into the clearing in the wood and lifted out again', () => {
+    const { game } = newGame();
+    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    for (const yaw of [0, 1.6, 3.1, 4.7]) {
+      game.helicopter.placeAbove(116, -280, 14, yaw);
+      cam.snap(game.helicopter);
+      const check = watch(game, cam);
+      chase(game, cam, 480, IDLE, check);
+      expect(game.helicopter.landed).toBe(true);
+      // landed in the clearing, it is over the crowns round it and looking down at the helicopter
+      expect(cam.position[2]).toBeGreaterThan(game.helicopter.z + CHASE.up);
+      chase(game, cam, 180, { forward: 0, turn: 0, lift: 1 }, check);
+    }
+  });
+
+  it('eases over the trees without a jump', () => {
+    // measured over everything flown above. Held up against a crown it rose at most 0.08 in a frame, looking ahead as
+    // it does; with a canopy falling away at a slope and no looking ahead it was held in half the frames and rose 0.43
+    expect(heldRise).toBeGreaterThan(0);
+    expect(heldRise).toBeLessThan(0.15);
+    // and every other move is its easing toward where it settles, which crossed 0.42 in a frame at the most
+    expect(most).toBeLessThan(0.5);
   });
 });
 

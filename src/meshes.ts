@@ -789,6 +789,34 @@ function bush(): TreeShape {
   };
 }
 
+/** How tall a kind of tree stands and how far its crown spreads from its trunk, at scale one. */
+export interface TreeSize {
+  top: number;
+  radius: number;
+}
+
+const sizes = new Map<TreeKind, TreeSize>();
+
+/**
+ * A kind of tree's height and spread, measured from its shape, so what the camera keeps over is what is drawn and is
+ * said nowhere else. Measured once a kind: a map of five that is never added to past them.
+ */
+export function treeSize(kind: TreeKind): TreeSize {
+  let size = sizes.get(kind);
+  if (!size) {
+    const { trunk, crown } = treeShape(kind);
+    size = { top: 0, radius: 0 };
+    for (const m of [trunk, crown]) {
+      for (let i = 0; i < m.positions.length; i += 3) {
+        size.top = Math.max(size.top, m.positions[i + 2]);
+        size.radius = Math.max(size.radius, Math.hypot(m.positions[i], m.positions[i + 1]));
+      }
+    }
+    sizes.set(kind, size);
+  }
+  return size;
+}
+
 /** The shape of a kind of tree, its foot at the origin and its size that of a tree of scale one. */
 export function treeShape(kind: TreeKind): TreeShape {
   switch (kind) {

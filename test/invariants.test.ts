@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
-import { checkInvariants } from '../src/invariants';
-import { DT, newGame, thickestWood } from './helpers';
+import { ChaseCamera } from '../src/chase';
+import { checkCamera, checkInvariants } from '../src/invariants';
+import { TREE_STRIDE } from '../src/island';
+import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
 
 function flown() {
   const { game } = newGame();
@@ -124,6 +126,36 @@ describe('what must always hold', () => {
     sway.leanX[k] = sway.leanY[k] = sway.squash[k] = 0;
     sway.leanXRate[k] = sway.leanYRate[k] = sway.squashRate[k] = 0;
     expect(checkInvariants(game).join('\n')).toMatch(kept);
+  });
+
+  it('holds of the camera chasing a helicopter hovering low in a wood', () => {
+    const game = hovered();
+    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    cam.snap(game.helicopter);
+    for (let f = 0; f < 120; f++) {
+      game.step(DT, { forward: 1, turn: 0.2, lift: HOVER_LIFT });
+      cam.step(DT, game.helicopter);
+      expect(checkCamera(cam, game, canopyKinds())).toEqual([]);
+    }
+  });
+
+  it('reports a camera inside a crown, and one under the ground, and holds a parked one to neither', () => {
+    const game = hovered();
+    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    cam.snap(game.helicopter);
+    const { trees, ground } = game.island;
+    const [x, y, z, s] = [1, 2, 3, 5].map((k) => trees[k]);
+    const top = canopyKinds()[trees[0]].top;
+    cam.position[0] = x + 0.5;
+    cam.position[1] = y;
+    cam.position[2] = z + top * s * 0.6;
+    expect(checkCamera(cam, game, canopyKinds()).join('\n')).toMatch(/in a crown: the camera .* is inside tree 0/);
+    cam.position[2] = ground.heightAt(x + 0.5, y) - 1;
+    expect(checkCamera(cam, game, canopyKinds()).join('\n')).toMatch(/under the ground: the camera/);
+    cam.park(x, y);
+    cam.position[2] = -50;
+    expect(checkCamera(cam, game, canopyKinds())).toEqual([]);
+    expect(TREE_STRIDE).toBe(7);
   });
 });
 

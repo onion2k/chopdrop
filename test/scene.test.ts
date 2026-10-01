@@ -7,7 +7,16 @@ import { describe, expect, it } from 'vitest';
 import { ISLAND, TREE_KINDS, theIsland } from '../src/arena';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
-import { helicopterBody, helicopterDark, helicopterGlass, helicopterTrim, mainRotor, tailRotor } from '../src/meshes';
+import {
+  helicopterBody,
+  helicopterDark,
+  helicopterGlass,
+  helicopterTrim,
+  mainRotor,
+  tailRotor,
+  treeShape,
+  treeSize,
+} from '../src/meshes';
 import { Scene, type HelicopterPose } from '../src/scene';
 import { DT, islandSway, thickestWood } from './helpers';
 
@@ -132,6 +141,22 @@ describe('meshes', () => {
     expect(mesh.indices.length).toBeGreaterThan(0);
     expect(mesh.indices.length % 3).toBe(0);
     expect(mesh.positions.length).toBe(mesh.normals.length);
+  });
+
+  it('measures each kind of tree as tall and as wide as its shape is', () => {
+    for (const kind of TREE_KINDS) {
+      const { top, radius } = treeSize(kind);
+      const { trunk, crown } = treeShape(kind);
+      for (const m of [trunk, crown])
+        for (let i = 0; i < m.positions.length; i += 3) {
+          expect(m.positions[i + 2]).toBeLessThanOrEqual(top);
+          expect(Math.hypot(m.positions[i], m.positions[i + 1])).toBeLessThanOrEqual(radius + 1e-6);
+        }
+      expect(top).toBeGreaterThan(1.5);
+      expect(treeSize(kind)).toBe(treeSize(kind));
+    }
+    expect(treeSize('pine').top).toBeCloseTo(13.2, 6);
+    expect(treeSize('poplar').top).toBeCloseTo(12.2, 6);
   });
 
   it('keeps the rotor as long as its radius says, and the dark reaching the hub', () => {

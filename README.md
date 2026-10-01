@@ -58,9 +58,11 @@ is fixed, and no baseline is moved to make it green.
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
     src/input.ts       the keyboard, as the helicopter's controls
-    src/chase.ts       the camera that follows it, above the ground
+    src/chase.ts       the camera that follows it, above the ground and the treetops
+    src/canopy.ts      the top of the crowns over a point: what the camera keeps over
     src/downwash.ts    the air under the rotor, and how it blows at a point
     src/sway.ts        the trees in the downwash: which are moving, and how each leans
+    src/tree-grid.ts   the trees sorted into squares, to find those near a point
     src/debug.ts       window.game, the test API
     src/invariants.ts  what must always hold
     src/arena.ts       content: the island's recipe, and the one island built from it

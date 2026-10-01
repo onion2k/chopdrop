@@ -197,6 +197,15 @@ test('the trees bow as it comes down into a wood, stand once it lands, and bow a
     h = await heli();
   }
   expect(h.landed, 'set down in the clearing with no key held').toBe(true);
+  // the camera behind it is over the crowns round it, and what it shows is the wood, not the inside of a tree
+  await step(60);
+  const cam = await page.evaluate(() => window.game!.state().camera.position);
+  for (const t of await page.evaluate(([x, y]) => window.game!.treesNear(x, y, 12), [cam[0], cam[1]] as const)) {
+    if (Math.hypot(cam[0] - t.x, cam[1] - t.y) < t.spread)
+      expect(cam[2], `over the crown of tree ${t.index}`).toBeGreaterThan(t.z + t.height);
+  }
+  const seen = content(await page.locator('#view').screenshot());
+  expect(seen.spread, 'variety in the picture, not a screen of one green').toBeGreaterThan(20);
   let left = (await sway()).count;
   for (let frames = 0; left > 0 && frames < 900; frames += 60) {
     await step(60);

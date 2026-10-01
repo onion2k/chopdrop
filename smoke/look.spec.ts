@@ -93,6 +93,21 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('the chase camera over the crowns, the helicopter let down into a clearing in a wood', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    const landed = await page.evaluate((w) => {
+      const g = window.game!;
+      g.teleport(w.x, w.y, 14, 0);
+      g.step(420);
+      return g.state().helicopter.landed;
+    }, WOOD);
+    expect(landed, 'set down in the clearing').toBe(true);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('clearing.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('a small thing added to the island is a change', async ({ page }, info) => {
     // while the pictures are being written this would write its own, button and all, over the island's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');

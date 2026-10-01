@@ -11,9 +11,12 @@
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
  */
+import { CHASE, type ChaseCamera } from './chase';
 import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
 import { HELICOPTER } from './helicopter';
+import { TREE_STRIDE } from './island';
+import type { TreeSize } from './meshes';
 import type { Sway } from './sway';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
@@ -116,6 +119,39 @@ export function checkSway(sway: Sway): string[] {
     washAt(source, trees[o + 1], trees[o + 2], trees[o + 3], wash);
     if (wash.x === 0 && wash.y === 0 && wash.down === 0 && sway.still(k))
       out.push(`kept: tree ${t} is still and out of the wash, and is held in the pool`);
+  }
+  return out;
+}
+
+/**
+ * What must hold of the chase camera over the island: chasing, it is never under the ground nor inside a tree's
+ * crown, leaned as the sway has it. A crown is worked out here from the trees themselves (how tall each kind stands
+ * and how far it spreads, in `sizes` by kind), not from the canopy the camera keeps over, so a canopy that runs
+ * under a crown is caught. A parked camera is the tests' own, and is not held to it.
+ */
+export function checkCamera(camera: ChaseCamera, game: Game, sizes: readonly TreeSize[]): string[] {
+  if (camera.mode !== 'chase') return [];
+  const p = camera.position;
+  if (!p.every(Number.isFinite)) return [`not a number: the camera is at ${p.join(', ')}`];
+  const where = `at ${p.map((v) => v.toFixed(2)).join(',')}`;
+  const out: string[] = [];
+  const lowest = game.island.ground.heightAt(p[0], p[1]) + CHASE.minHeight;
+  if (p[2] < lowest - TOLERANCE) out.push(`under the ground: the camera ${where} is under ${lowest.toFixed(2)}`);
+  const { trees, treeCount } = game.island;
+  const { sway } = game;
+  for (let t = 0; t < treeCount; t++) {
+    const o = t * TREE_STRIDE;
+    const { top, radius } = sizes[trees[o]];
+    const s = trees[o + 5];
+    const k = sway.slot(t);
+    const lean = k >= 0 ? Math.hypot(sway.leanX[k], sway.leanY[k]) : 0;
+    const d = Math.hypot(p[0] - trees[o + 1], p[1] - trees[o + 2]);
+    if (d < (radius + lean * top) * s && p[2] < trees[o + 3] + top * s) {
+      out.push(
+        `in a crown: the camera ${where} is inside tree ${t}, whose top is at ${(trees[o + 3] + top * s).toFixed(2)}`,
+      );
+      break;
+    }
   }
   return out;
 }

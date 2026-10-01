@@ -3,6 +3,7 @@
  * island; and a sway over the island's trees, with the thickest wood on it to try it in.
  */
 import { TREE_GIVE, TREE_KINDS, theIsland } from '../src/arena';
+import type { Canopy, CanopyKind } from '../src/canopy';
 import { DOWNWASH } from '../src/downwash';
 import { Game } from '../src/game';
 import type { Ground } from '../src/helicopter';
@@ -64,4 +65,14 @@ export function thickestWood(): { x: number; y: number; trees: number } {
     if (n > best.trees) best = { x: ax, y: ay, trees: n };
   }
   return (densest = best);
+}
+
+/** Each kind's height, spread and the most it leans in play, in the order of `TREE_KINDS`, as the game hands the canopy them. */
+export function canopyKinds(): readonly CanopyKind[] {
+  return islandCanopy().kinds;
+}
+
+/** What the camera keeps over on the island, as the game builds it. */
+export function islandCanopy(): Canopy {
+  return new Game({ random: seeded(1) }).canopy;
 }

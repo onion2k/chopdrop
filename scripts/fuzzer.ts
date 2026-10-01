@@ -4,7 +4,8 @@
  * flying about, letting go and sinking, hovering by tapping the lift,
  * climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
- * hill, down onto a pad and low over a wood, bowing its trees — and checked after every few frames for anything that must always
+ * hill, down onto a pad and low over a wood, bowing its trees — with the
+ * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
  * The island is big and tall, so the monkey is put where the action is
@@ -19,8 +20,11 @@
  */
 import { Game } from '../src/game';
 import { HELICOPTER, IDLE, type Controls } from '../src/helicopter';
-import { checkInvariants } from '../src/invariants';
+import { ChaseCamera } from '../src/chase';
+import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
+import { TREE_KINDS } from '../src/arena';
+import { treeSize } from '../src/meshes';
 import { seeded } from '../src/random';
 
 const DT = 1 / 60;
@@ -66,6 +70,10 @@ export function fuzz(seed: number, frames: number): FuzzResult {
   try {
     const game = new Game({ random: seeded(seed) });
     const heli = game.helicopter;
+    // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
+    const rig = new ChaseCamera(game.island.ground, game.canopy);
+    rig.snap(heli);
+    const sizes = TREE_KINDS.map(treeSize);
     const { bounds } = heli;
     const { ground, pads, trees, treeCount } = game.island;
     let controls: Controls = { ...IDLE };
@@ -96,7 +104,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       return [x, y];
     };
     /** Everything a player can make happen, each as often as it is weighted. */
-    const actions: { name: string; weight: number; go: () => void }[] = [
+    const actions: { name: string; weight: number; places?: boolean; go: () => void }[] = [
       {
         name: 'fly',
         weight: 8,
@@ -153,6 +161,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       },
       {
         name: 'teleport',
+        places: true,
         weight: 2,
         go() {
           // a player can fly anywhere, at any height, so the monkey may simply be there
@@ -162,6 +171,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       },
       {
         name: 'take off',
+        places: true,
         weight: 2,
         go() {
           // from a pad, as a player does: set down on one, and the stick pushed up, and sometimes forward
@@ -173,6 +183,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       },
       {
         name: 'edge run',
+        places: true,
         weight: 2,
         go() {
           // flown at the edge of the world from near it, as a player gone too far does: out at sea, at any height
@@ -193,6 +204,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       },
       {
         name: 'hill run',
+        places: true,
         weight: 3,
         go() {
           // flown low at land that rises ahead: a hill, a ridge, a mountain side, which sets it on the slope or has it climb
@@ -226,6 +238,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       },
       {
         name: 'forest run',
+        places: true,
         weight: 2,
         go() {
           // low over a tree, as a player comes down to a wood: hovered there, the trees bowed round it, or flown on
@@ -238,6 +251,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       },
       {
         name: 'pad landing',
+        places: true,
         weight: 2,
         go() {
           // above a pad, coming down onto it, sometimes pushing on as it comes
@@ -272,6 +286,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         }
       }
       chosen.go();
+      if (chosen.places) rig.snap(heli);
       did(chosen.name);
     };
 
@@ -291,6 +306,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       const wasAtEdge = touchingEdge();
       const wasSwaying = game.sway.count;
       game.step(DT, controls);
+      rig.step(DT, heli);
       if (wasSwaying === 0 && game.sway.count > 0) count(happened, 'trees swayed');
       if (wasSwaying > 0 && game.sway.count === 0) count(happened, 'trees settled');
       if (wasLanded && !landed()) count(happened, 'took off');
@@ -305,7 +321,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       if (!wasAtEdge && touchingEdge()) count(happened, 'touched the edge');
       if (hold.landing && landed()) hold.busy = 0;
       if (frame % CHECK_EVERY === 0) {
-        const problems = checkInvariants(game);
+        const problems = [...checkInvariants(game), ...checkCamera(rig, game, sizes)];
         if (problems.length) return fail(problems);
       }
     }

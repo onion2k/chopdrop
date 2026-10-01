@@ -4,7 +4,8 @@
  * easing after it so a turn is felt, or it is parked for a fixed view of
  * the island, which is what the tests' pictures and the perf gate's
  * standard view are taken from. It is handed the height of the ground, so
- * it keeps above the land it flies over and a parked view sits on it.
+ * it keeps above the land it flies over and a parked view sits on it, and
+ * the canopy, so it rides over a wood and never sits inside a tree.
  *
  * It is stepped with the game's fixed step and nothing else, so the same
  * flight gives the same pictures every run. Its two points are written in
@@ -21,6 +22,9 @@ export interface Heights {
 
 /** Ground that is level with the sea, for a camera that is not handed any. */
 const LEVEL: Heights = { heightAt: () => 0 };
+
+/** No trees, for a camera that is not handed any. */
+const BARE: Heights = { heightAt: () => -Infinity };
 
 /** What it follows. */
 export interface Followed {
@@ -50,6 +54,15 @@ export const CHASE = {
   aimEase: 8,
   /** The lowest it goes above the ground under it, so it never looks up from under the land. */
   minHeight: 1.5,
+  /** How far over the treetops it keeps: more than its near plane of 2, so a crown under it is never cut open. */
+  overTrees: 2.5,
+  /**
+   * How far past the helicopter it looks along its way for crowns to keep over as it settles, and at how many points:
+   * from where it settles to there is what it crosses in the next eight tenths of a second at top speed, so it rises
+   * before a crown and not at it, and is held up against one only by the last few hundredths.
+   */
+  lookAhead: 5,
+  lookPoints: 10,
   /** The view taken when parked, for whatever a caller leaves out. */
   park: { azimuth: -Math.PI / 2, polar: 0.95, radius: 90 },
   /** The vertical field of view at a screen as wide as it is tall or wider, and the most it widens to on a narrow one, in degrees. */
@@ -63,8 +76,11 @@ export class ChaseCamera {
   /** Following the helicopter, or held at a fixed view until told to chase again. */
   mode: 'chase' | 'parked' = 'chase';
 
-  /** Following over `ground`, which is flat at sea level unless it is told. */
-  constructor(private readonly ground: Heights = LEVEL) {}
+  /** Following over `ground`, which is flat at sea level unless it is told, and over the trees in `canopy`, if any. */
+  constructor(
+    private readonly ground: Heights = LEVEL,
+    private readonly canopy: Heights = BARE,
+  ) {}
 
   /** One step of `dt` seconds after `f`, when chasing; nothing, when parked. */
   step(dt: number, f: Followed): void {
@@ -77,11 +93,11 @@ export class ChaseCamera {
       t = this.target;
     p[0] += (f.x - c * CHASE.back - p[0]) * k;
     p[1] += (f.y - s * CHASE.back - p[1]) * k;
-    p[2] += (this.settleHeight(f.x - c * CHASE.back, f.y - s * CHASE.back, f.z) - p[2]) * k;
+    p[2] += (this.settleHeight(f, f.x - c * CHASE.back, f.y - s * CHASE.back) - p[2]) * k;
     t[0] += (f.x + c * CHASE.ahead - t[0]) * a;
     t[1] += (f.y + s * CHASE.ahead - t[1]) * a;
     t[2] += (f.z + CHASE.lookUp - t[2]) * a;
-    p[2] = Math.max(this.ground.heightAt(p[0], p[1]) + CHASE.minHeight, p[2]);
+    p[2] = Math.max(this.lowestAt(p[0], p[1]), p[2]);
   }
 
   /** Straight to where it would settle behind `f`, and chasing it from now on. */
@@ -93,7 +109,7 @@ export class ChaseCamera {
       t = this.target;
     p[0] = f.x - c * CHASE.back;
     p[1] = f.y - s * CHASE.back;
-    p[2] = this.settleHeight(p[0], p[1], f.z);
+    p[2] = this.settleHeight(f, p[0], p[1]);
     t[0] = f.x + c * CHASE.ahead;
     t[1] = f.y + s * CHASE.ahead;
     t[2] = f.z + CHASE.lookUp;
@@ -115,9 +131,24 @@ export class ChaseCamera {
     p[2] = t[2] + r * Math.cos(polar);
   }
 
-  /** Where it would settle in height at (x, y) behind something at height `z`: above it, and never lower than the land there allows. */
-  private settleHeight(x: number, y: number, z: number): number {
-    return Math.max(this.ground.heightAt(x, y) + CHASE.minHeight, z + CHASE.up);
+  /**
+   * Where it would settle in height at (x, y) behind `f`: above it, never lower than the land and the trees there
+   * allow, and over the crowns along its way from there to `lookAhead` past it, which it will cross before long.
+   */
+  private settleHeight(f: Followed, x: number, y: number): number {
+    let h = Math.max(this.lowestAt(x, y), f.z + CHASE.up);
+    const ax = f.x + Math.cos(f.yaw) * CHASE.lookAhead,
+      ay = f.y + Math.sin(f.yaw) * CHASE.lookAhead;
+    for (let k = 1; k <= CHASE.lookPoints; k++) {
+      const t = k / CHASE.lookPoints;
+      h = Math.max(h, this.canopy.heightAt(x + (ax - x) * t, y + (ay - y) * t) + CHASE.overTrees);
+    }
+    return h;
+  }
+
+  /** The lowest it may be at (x, y): over the ground there, and over the treetops, so it is never in the land nor in a tree. */
+  private lowestAt(x: number, y: number): number {
+    return Math.max(this.ground.heightAt(x, y) + CHASE.minHeight, this.canopy.heightAt(x, y) + CHASE.overTrees);
   }
 }
 
