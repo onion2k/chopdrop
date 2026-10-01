@@ -3,8 +3,9 @@
  * c) lives at c * 4 + r, so the translation is the last four floats. The
  * helicopter's tilt and its spinning rotors are placed here, into plain
  * arrays and without allocating, so the scene can write them every frame.
- * A transposed matrix would draw the machine nose-up or mirrored, and
- * nothing else would say so.
+ * A tree bowed by the downwash is leaned here too, from its foot. A
+ * transposed matrix would draw the machine nose-up or mirrored, and nothing
+ * else would say so.
  */
 
 /** A turn about Z, a scale each way, and somewhere to put it. */
@@ -143,4 +144,16 @@ export function placePart(
     out[o + 9] = s * a1 + c * c1;
     out[o + 10] = s * a2 + c * c2;
   }
+}
+
+/**
+ * A placement from `place`, of a thing of `scale`, leaned from its foot: its up axis tipped across the ground by
+ * (ax, ay) for each unit of its height and shortened by `squash`, so its foot stays where it was and its top moves
+ * the most. Only the up axis is written; with no lean and no squash it is the placement `place` wrote, exactly.
+ */
+export function lean(out: Float32Array, i: number, ax: number, ay: number, squash: number, scale: number): void {
+  const o = i * 16;
+  out[o + 8] = ax * scale;
+  out[o + 9] = ay * scale;
+  out[o + 10] = scale * (1 - squash);
 }

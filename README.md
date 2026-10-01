@@ -14,8 +14,9 @@ The island is 1,536 units square, land and sea, made once at boot from a
 recipe of numbers and the same every time: a coast of bays and beaches,
 hills and meadows, a snowy range in the north-west, gullies and valleys
 cut where the rain would cut them, lakes, rivers from the hills to the sea,
-some seven thousand trees of five kinds, and nine landing pads with home on
-the south coast. There is nothing to deliver yet: the deliveries and where
+some seven thousand trees of five kinds, which bow away from the rotor's
+downwash when the helicopter comes down low over them and spring back when
+it has gone, and nine landing pads with home on the south coast. There is nothing to deliver yet: the deliveries and where
 they go come one feature at a time, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
@@ -57,6 +58,8 @@ is fixed, and no baseline is moved to make it green.
     src/main.ts        the page: the frame drawn
     src/input.ts       the keyboard, as the helicopter's controls
     src/chase.ts       the camera that follows it, above the ground
+    src/downwash.ts    the air under the rotor, and how it blows at a point
+    src/sway.ts        the trees in the downwash: which are moving, and how each leans
     src/debug.ts       window.game, the test API
     src/invariants.ts  what must always hold
     src/arena.ts       content: the island's recipe, and the one island built from it

@@ -8,8 +8,8 @@ The README says what the game is; this file says how it is made. The house
 rules in `~/.claude/CLAUDE.md` apply too.
 
 The helicopter is built, and the island it flies over: flown from the
-keyboard, with a chase camera, over land and sea made at boot from a recipe.
-Nothing else is: no deliveries, nothing wanted at the nine pads, no save and
+keyboard, with a chase camera, over land and sea made at boot from a recipe,
+its trees bowing in the rotor's downwash. Nothing else is: no deliveries, nothing wanted at the nine pads, no save and
 no touch controls. The template's stub, a sled shoving balls into a hole,
 was taken out in the second commit. The first commit, `eda26d8`, has the
 stub and every gate that held it: it is the model to copy from, and
@@ -68,7 +68,8 @@ row here with the first thing it can hold.
     npm run check          all of it: check:quick, fuzz, then smoke with perf and look (~20 s)
     npm test               unit tests (Vitest, test/)
     npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again
-    npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget
+    npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget;
+                           the chase and downwash views' frames told, not held
     npm run smoke          the game in headless Chromium on the real GPU (Playwright, smoke/)
     npm run look           the scenes held to the pictures in smoke/screens, to the pixel
 
@@ -82,7 +83,7 @@ says why. Look at every picture.
 ## How the code is laid out
 
 - `src/game.ts` is the game without the picture: the island, the
-  helicopter and the clock, a step at a time. It knows nothing of the
+  helicopter, the trees it has set swaying and the clock, a step at a time. It knows nothing of the
   renderer or the page. What happens in it will be told through a
   `GameEvents` handed in, as the first commit's does.
 - `src/helicopter.ts` is the player's machine: the flight, and the numbers
@@ -93,10 +94,16 @@ says why. Look at every picture.
   `src/input.ts` turns keys into `Controls`; `src/chase.ts` is the camera
   rig, stepped with the game so the pictures repeat, and handed the ground
   so that it stays above it.
+- `src/downwash.ts` is the air under the rotor: `washAt` says how it blows
+  at a point, from where the helicopter is and how fast its rotor turns.
+  `src/sway.ts` is the trees in it, a pool of those moving, sized once, each
+  sprung back upright and let go when it is still; `scene.ts` leans them
+  from their feet by what it says.
 - `src/debug.ts` is `window.game`, the test API: time, the seed, the
   helicopter (`fly`, `release`, `teleport`, which takes a height above the
   ground and not a height above the sea), the ground (`groundAt`), what is
   on the island (`content`: the pads, home, the bounds and the ceiling), the
+  trees (`treesNear`, and `sway`: which are moving and how each leans), the
   camera (`look` parks it, `chase` sends it back) and measuring. Each thing
   put on the island gains here what a test needs to place it and read it
   back.
@@ -139,7 +146,9 @@ its `package.json` script, its place in `npm run check` and its unit tests:
 - **The autopilot, determinism, leaks and pace** (`src/autopilot.ts`,
   `scripts/determinism*.ts`, `scripts/leak*.ts`, `scripts/pace*.ts`), with
   the first thing the game can be played to: a delivery made. Pace becomes
-  minutes to make a number of deliveries.
+  minutes to make a number of deliveries. The leak watch gains a line for
+  the trees moving in the downwash (`sway.count`, its ceiling
+  `SWAY.capacity`), held until then by the invariants.
 - **The play-through** (`smoke/progress.spec.ts`), with the first thing a
   player can finish.
 
@@ -166,7 +175,16 @@ The invariants and the fuzzer came back with the helicopter.
 - **The trees**, for scenery there are thousands of: placed by habitat in
   `island.ts`, shaped to about a hundred and fifty triangles a crown in
   `meshes.ts`, and drawn by `scene.ts` instanced, a trunk group and a crown
-  group a kind, each tree's colour moved a little by its own shade.
+  group a kind, each tree's colour moved a little by its own shade. They
+  are moving groups, since a still one cannot be written again, and a kind
+  is written only on a frame one of its trees moves.
+- **The downwash**, for anything the rotor's air moves: `washAt` in
+  `downwash.ts`, taken by `sway.ts` for the trees, which `game.ts` steps
+  after the helicopter; leaned by `scene.ts` with `lean`; read by `debug.ts`
+  (`sway`); ruled by `checkSway` in `invariants.ts`, against the wash it
+  was last stepped in; played by the fuzzer's forest run; brought down into
+  a wood by key in `smoke/game.spec.ts`; pictured in `downwash.png`; its
+  frame told by the perf gate in the wood at `WOOD` (`smoke/game.ts`).
 - **The stub's ball**, for a body: a body kind in `arena.ts`, drawn by
   `scene.ts`, banked by `game.ts`, counted by `invariants.ts`, read by
   `debug.ts`, and pictured, all in `eda26d8`.

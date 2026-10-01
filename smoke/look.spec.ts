@@ -17,7 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { standardView, start, watch } from './game';
+import { WOOD, standardView, start, watch } from './game';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -67,6 +67,22 @@ test.describe('what it looks like', () => {
     });
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('turning.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the trees bowed by the downwash, the helicopter hovering low in a wood', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    const bowed = await page.evaluate((w) => {
+      const g = window.game!;
+      g.teleport(w.x, w.y, 4, 0);
+      g.look(w.x, w.y, { azimuth: -Math.PI / 2, polar: 0.9, radius: 44 });
+      g.step(150);
+      return g.sway().count;
+    }, WOOD);
+    expect(bowed, 'trees bowed in the picture').toBeGreaterThan(20);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('downwash.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 

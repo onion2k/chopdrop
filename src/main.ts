@@ -176,7 +176,7 @@ async function main() {
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter);
+    scene.write(game.helicopter, game.sway);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });

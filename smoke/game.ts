@@ -18,6 +18,13 @@ declare global {
   }
 }
 
+/**
+ * A wood to hover low in, for the trees in the downwash: a clearing six across among broadleaf, pine, poplar and
+ * bush, on flat ground well away from any pad. It was found by looking for one, and each test that uses it checks
+ * that the trees are still there, so an island made again otherwise says so and does not pass with nothing to bow.
+ */
+export const WOOD = { x: 116, y: -280 };
+
 /** Errors on the page, and requests that failed, collected as they happen. */
 export function watch(page: Page): string[] {
   const problems: string[] = [];

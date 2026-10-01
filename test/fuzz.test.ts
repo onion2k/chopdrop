@@ -16,9 +16,18 @@ describe('the fuzzer', () => {
       'edge run',
       'hill run',
       'pad landing',
+      'forest run',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
-    for (const happening of ['took off', 'landed', 'met rising land', 'reached the ceiling', 'touched the edge'])
+    for (const happening of [
+      'took off',
+      'landed',
+      'met rising land',
+      'reached the ceiling',
+      'touched the edge',
+      'trees swayed',
+      'trees settled',
+    ])
       expect(r.happened[happening], happening).toBeGreaterThan(0);
   });
 

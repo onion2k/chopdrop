@@ -17,7 +17,8 @@ import type { Mesh } from 'artshape-render/mesh/types';
 import { ISLAND, TREE_KINDS } from './arena';
 import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type River } from './island';
-import { place, placeFrame, placePart } from './matrix';
+import type { Sway } from './sway';
+import { lean, place, placeFrame, placePart } from './matrix';
 import {
   helicopterBody,
   helicopterDark,
@@ -438,6 +439,18 @@ export class Scene {
   readonly movers: string[] = [];
 
   /**
+   * Where each tree is drawn: the pool its kind's trunks are in (its crowns are the next, over the same pool), its
+   * place in it and its size; and the trees leaned at the last `write`, with a mark a tree, so each one the sway has
+   * let go since is stood up again once. Sized once, by the island's trees.
+   */
+  private treePool = new Uint16Array(0);
+  private treeSlot = new Uint32Array(0);
+  private treeScale = new Float32Array(0);
+  private leaning = new Int32Array(0);
+  private leaned = 0;
+  private moving = new Uint8Array(0);
+
+  /**
    * The box the sun's shadow is fitted to, which the renderer holds and `write` moves: a stretch of the island
    * round the helicopter, from under the sea to over its highest point, so the shadow map's texels are spent
    * where the camera looks and not on a world 1,500 across.
@@ -526,6 +539,12 @@ export class Scene {
   /** The trees: a trunk group and a crown group a kind, sharing a pool, the crowns each their own shade of green. */
   private trees(island: Island, add: Add) {
     const { trees, treeCount } = island;
+    this.treePool = new Uint16Array(treeCount);
+    this.treeSlot = new Uint32Array(treeCount);
+    this.treeScale = new Float32Array(treeCount);
+    this.leaning = new Int32Array(treeCount);
+    this.leaned = 0;
+    this.moving = new Uint8Array(treeCount);
     const perKind = new Uint32Array(TREE_KINDS.length);
     for (let t = 0; t < treeCount; t++) perKind[trees[t * TREE_STRIDE]]++;
     TREE_KINDS.forEach((kind, index) => {
@@ -541,6 +560,9 @@ export class Scene {
         if (trees[o] !== index) continue;
         place(matrices, k, trees[o + 1], trees[o + 2], trees[o + 3], trees[o + 4], trees[o + 5]);
         shaded(colours, k * MATERIAL_STRIDE, paint.crown, trees[o + 6]);
+        this.treePool[t] = this.pools.length;
+        this.treeSlot[t] = k;
+        this.treeScale[t] = trees[o + 5];
         k++;
       }
       add(`${kind} trunks`, shape.trunk, paint.trunk, matrices, count);
@@ -548,10 +570,15 @@ export class Scene {
     });
   }
 
-  /** Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved. */
-  write(pose: HelicopterPose): void {
+  /**
+   * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
+   * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again.
+   */
+  write(pose: HelicopterPose, sway?: Sway): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
+    this.changed.fill(0, HELICOPTER_GROUPS);
+    if (sway && this.treePool.length > 0) this.bow(sway);
     const { mastTop, tailRotorAt } = HELICOPTER.size;
     placeFrame(body, 0, pose.x, pose.y, pose.z, pose.yaw, pose.pitch, pose.roll);
     trim.set(body);
@@ -566,5 +593,25 @@ export class Scene {
     max[0] = cx + SHADOW_REACH;
     min[1] = cy - SHADOW_REACH;
     max[1] = cy + SHADOW_REACH;
+  }
+
+  /** Each tree the sway is moving leaned as it says, and each it has let go since the last write stood up again. */
+  private bow(sway: Sway): void {
+    const { treePool, treeSlot, treeScale, leaning, moving, pools, changed } = this;
+    for (let k = 0; k < sway.count; k++) moving[sway.tree[k]] = 1;
+    for (let n = 0; n < this.leaned; n++) {
+      const t = leaning[n];
+      if (moving[t]) continue;
+      lean(pools[treePool[t]], treeSlot[t], 0, 0, 0, treeScale[t]);
+      changed[treePool[t]] = changed[treePool[t] + 1] = 1;
+    }
+    this.leaned = 0;
+    for (let k = 0; k < sway.count; k++) {
+      const t = sway.tree[k];
+      moving[t] = 0;
+      lean(pools[treePool[t]], treeSlot[t], sway.leanX[k], sway.leanY[k], sway.squash[k], treeScale[t]);
+      changed[treePool[t]] = changed[treePool[t] + 1] = 1;
+      leaning[this.leaned++] = t;
+    }
   }
 }

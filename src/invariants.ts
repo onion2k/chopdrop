@@ -11,8 +11,10 @@
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
  */
+import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
 import { HELICOPTER } from './helicopter';
+import type { Sway } from './sway';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
 const TOLERANCE = 1e-9;
@@ -70,5 +72,50 @@ export function checkInvariants(game: Game): string[] {
   }
 
   if (!Number.isFinite(game.t) || game.t < 0) out.push(`the clock reads ${game.t}`);
+  out.push(...checkSway(game.sway));
+  return out;
+}
+
+/** The wash at a tree, worked out afresh for each check, which may make one: it is not run each frame. */
+const wash: Wash = { x: 0, y: 0, down: 0 };
+
+/**
+ * What must hold of the trees in the downwash: no more moving than there is room for, each where the pool says it
+ * is, each lean a number and within the most a tree can lean or be pressed, and none kept that has stopped and that
+ * the wash it was last stepped in did not reach, which is the rule that the pool empties. The wash is the one the
+ * sway was stepped in and not where the helicopter is now, which a test or a teleport may have moved since.
+ */
+export function checkSway(sway: Sway): string[] {
+  const source = sway.source;
+  const out: string[] = [];
+  if (sway.count > sway.capacity) {
+    out.push(`more trees moving than there is room for: ${sway.count} in a pool of ${sway.capacity}`);
+    return out;
+  }
+  const { trees, stride } = sway.trees;
+  for (let k = 0; k < sway.count; k++) {
+    const t = sway.tree[k];
+    if (sway.slot(t) !== k) {
+      out.push(`lost its place: tree ${t} is moving in place ${k}, and the pool has it at ${sway.slot(t)}`);
+      continue;
+    }
+    const lx = sway.leanX[k],
+      ly = sway.leanY[k],
+      q = sway.squash[k];
+    if (![lx, ly, q, sway.leanXRate[k], sway.leanYRate[k], sway.squashRate[k]].every(Number.isFinite)) {
+      out.push(`not a number: tree ${t} leans ${lx}, ${ly}, pressed ${q}`);
+      continue;
+    }
+    if (Math.hypot(lx, ly) > sway.maxLean + TOLERANCE)
+      out.push(
+        `leans too far: tree ${t} leans ${Math.hypot(lx, ly).toFixed(3)}, and the most is ${sway.maxLean.toFixed(3)}`,
+      );
+    if (Math.abs(q) > sway.maxSquash + TOLERANCE)
+      out.push(`pressed too far: tree ${t} is pressed ${q.toFixed(3)}, and the most is ${sway.maxSquash.toFixed(3)}`);
+    const o = t * stride;
+    washAt(source, trees[o + 1], trees[o + 2], trees[o + 3], wash);
+    if (wash.x === 0 && wash.y === 0 && wash.down === 0 && sway.still(k))
+      out.push(`kept: tree ${t} is still and out of the wash, and is held in the pool`);
+  }
   return out;
 }

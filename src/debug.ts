@@ -13,6 +13,10 @@
  * `chase` sends it back. The page keeps no game logic: this only hands what
  * a test asks for to the game and the camera rig.
  *
+ * The trees are read by `treesNear`, which says where they stand so a test
+ * can put the helicopter over them, and `sway`, which says which the
+ * downwash has set moving and how each leans.
+ *
  * The world is an island, and heights are metres above the sea unless the
  * name says otherwise: `z` is absolute, `height` is above the ground the
  * helicopter stands on, and `teleport` takes a `height`, so a test says how
@@ -21,9 +25,11 @@
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
+import { TREE_KINDS, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
 import type { Game } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
+import { TREE_STRIDE } from './island';
 import { seeded } from './random';
 
 declare global {
@@ -69,6 +75,27 @@ export interface PadInfo {
   yaw: number;
 }
 
+/** A tree on the island: which it is, its kind, where its foot is, and its size against its kind's. */
+export interface TreeInfo {
+  index: number;
+  kind: TreeKind;
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+}
+
+/**
+ * The trees the downwash has set moving: how many, the most there may be, and each one's index, where it stands, its
+ * lean (how far its top has moved each way across the ground, as a share of its height) and how far it is pressed
+ * down, as a share of its height.
+ */
+export interface SwayState {
+  count: number;
+  capacity: number;
+  trees: { index: number; x: number; y: number; lean: [number, number]; squash: number }[];
+}
+
 export interface GameApi {
   readonly version: 1;
   /** Booted, and the frame loop running. */
@@ -92,6 +119,11 @@ export interface GameApi {
   content(): { bounds: Bounds; world: Bounds; ceiling: number; seaLevel: number; pads: PadInfo[]; home: PadInfo };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
+
+  /** Every tree whose foot is within `radius` of a point across the ground, nearest first. */
+  treesNear(x: number, y: number, radius: number): TreeInfo[];
+  /** The trees moving in the downwash, and how. */
+  sway(): SwayState;
 
   /** The controls held, as if a person held them, until `release`. */
   fly(forward: number, turn: number, lift: number): void;
@@ -187,6 +219,41 @@ export function createApi(host: DebugHost): GameApi {
       home: padInfo(game.island.pads[0]),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
+    treesNear(x, y, radius) {
+      const { trees, treeCount } = game.island;
+      const found: (TreeInfo & { d: number })[] = [];
+      for (let t = 0; t < treeCount; t++) {
+        const o = t * TREE_STRIDE;
+        const d = Math.hypot(trees[o + 1] - x, trees[o + 2] - y);
+        if (d > radius) continue;
+        found.push({
+          index: t,
+          kind: TREE_KINDS[trees[o]],
+          x: trees[o + 1],
+          y: trees[o + 2],
+          z: trees[o + 3],
+          scale: trees[o + 5],
+          d,
+        });
+      }
+      return found.sort((a, b) => a.d - b.d).map(({ d: _d, ...tree }) => tree);
+    },
+    sway() {
+      const { sway } = game;
+      const { trees } = game.island;
+      const moving: SwayState['trees'] = [];
+      for (let k = 0; k < sway.count; k++) {
+        const t = sway.tree[k];
+        moving.push({
+          index: t,
+          x: trees[t * TREE_STRIDE + 1],
+          y: trees[t * TREE_STRIDE + 2],
+          lean: [sway.leanX[k], sway.leanY[k]],
+          squash: sway.squash[k],
+        });
+      }
+      return { count: sway.count, capacity: sway.capacity, trees: moving };
+    },
 
     fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),
     release: () => host.setControls(null),

@@ -9,7 +9,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { CHASE } from '../src/chase';
-import { start, watch } from './game';
+import { DOWNWASH } from '../src/downwash';
+import { WOOD, start, watch } from './game';
 
 /** How many frames the page draws in a second. */
 function framesInASecond(page: Page) {
@@ -121,6 +122,51 @@ test('flies by the keyboard', async ({ page }) => {
   }
   await page.keyboard.up('Shift');
   expect(landed, 'Shift brings it down to the ground').toBe(true);
+  expect(problems).toEqual([]);
+});
+
+test('the trees bow under the rotor, and stand again when it climbs away', async ({ page }) => {
+  // brought down into a wood by Shift, hovered, and taken up and away by Space, as a player would
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
+  const sway = () => page.evaluate(() => window.game!.sway());
+  const near = await page.evaluate(([w, r]) => window.game!.treesNear(w.x, w.y, r), [WOOD, DOWNWASH.reach] as const);
+  expect(near.length, 'trees round the clearing').toBeGreaterThan(20);
+
+  /** How far the trees moving lean, all told. */
+  const bowing = (s: { trees: { lean: [number, number] }[] }) =>
+    s.trees.reduce((sum, t) => sum + Math.hypot(t.lean[0], t.lean[1]), 0);
+  await page.evaluate((w) => window.game!.teleport(w.x, w.y, 12, 0), WOOD);
+  await step(120);
+  const high = bowing(await sway());
+  await page.keyboard.down('Shift');
+  await step(40);
+  await page.keyboard.up('Shift');
+  await step(120);
+  const heli = await page.evaluate(() => window.game!.state().helicopter);
+  expect(heli.height, 'hovering low among the trees').toBeLessThan(6);
+  expect(heli.landed).toBe(false);
+  const bowed = await sway();
+  expect(bowed.count, 'the trees round it moving').toBeGreaterThan(20);
+  expect(bowing(bowed), 'bowed further low down than twelve up').toBeGreaterThan(high);
+  for (const t of bowed.trees) {
+    const [lx, ly] = t.lean;
+    if (Math.hypot(lx, ly) < 0.01) continue;
+    // every tree that has bowed visibly has bowed away from under the helicopter
+    expect(lx * (t.x - heli.x) + ly * (t.y - heli.y), `tree ${t.index}`).toBeGreaterThan(0);
+  }
+
+  await page.keyboard.down('Space');
+  await step(240);
+  await page.keyboard.up('Space');
+  expect((await page.evaluate(() => window.game!.state().helicopter)).height).toBeGreaterThan(DOWNWASH.depth);
+  let left = (await sway()).count;
+  for (let frames = 0; left > 0 && frames < 900; frames += 60) {
+    await step(60);
+    left = (await sway()).count;
+  }
+  expect(left, 'every tree stood up again and let go').toBe(0);
   expect(problems).toEqual([]);
 });
 

@@ -1,6 +1,6 @@
 /** Placements, checked by putting points through the matrices they write: a flipped sign or a transposed matrix tilts the helicopter the wrong way and nothing else would notice. */
 import { describe, expect, it } from 'vitest';
-import { place, placeFrame, placePart } from '../src/matrix';
+import { lean, place, placeFrame, placePart } from '../src/matrix';
 
 type V3 = [number, number, number];
 
@@ -122,5 +122,29 @@ describe('place', () => {
     near(apply(m, 0, [1, 0, 0]), [1, 4, 3]);
     near(apply(m, 0, [0, 1, 0]), [-2, 2, 3]);
     near(apply(m, 0, [0, 0, 1]), [1, 2, 7]);
+  });
+});
+
+describe('lean', () => {
+  it('keeps the foot where it was and moves the top by the lean, pressed down by the squash', () => {
+    const m = new Float32Array(32);
+    place(m, 1, 10, -4, 2, 0.7, 1.3);
+    lean(m, 1, 0.2, -0.1, 0.05, 1.3);
+    near(apply(m, 1, [0, 0, 0]), [10, -4, 2]);
+    // a point a unit up the tree, which a scale of 1.3 makes 1.3 high
+    near(apply(m, 1, [0, 0, 1]), [10 + 0.2 * 1.3, -4 - 0.1 * 1.3, 2 + 1.3 * 0.95]);
+    // a point out to the side at the foot is turned and sized as before, and not tipped
+    const side = apply(m, 1, [1, 0, 0]);
+    near(side, [10 + Math.cos(0.7) * 1.3, -4 + Math.sin(0.7) * 1.3, 2]);
+    expect(Array.from(m.subarray(0, 16)).every((v) => v === 0)).toBe(true);
+  });
+
+  it('with no lean and no squash, is the placement exactly', () => {
+    const was = new Float32Array(16);
+    place(was, 0, 3, 4, 5, 1.1, 0.85);
+    const m = was.slice();
+    lean(m, 0, 0.3, 0.2, 0.1, 0.85);
+    lean(m, 0, 0, 0, 0, 0.85);
+    expect(Array.from(m)).toEqual(Array.from(was));
   });
 });

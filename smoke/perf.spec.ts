@@ -20,7 +20,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
-import { standardView, start, watch } from './game';
+import { WOOD, standardView, start, watch } from './game';
 import { moved as hasMoved, type Figures } from './judging';
 
 const BASELINE = 'smoke/perf-baseline.json';
@@ -60,6 +60,16 @@ test('boots, draws and downloads within budget, and as it did before', async ({ 
   const chaseMs = Math.round(chaseFrame * 1000) / 1000;
   info.annotations.push({ type: 'perf-chase', description: `${chaseMs} ms, not held to the baseline or the budget` });
   console.log(`perf: chase view frame ${chaseMs} ms (not held)`);
+  // hovering low in a wood, the trees round it bowed: the frame that writes the trees as well as drawing them
+  const washFrame = await page.evaluate(async (w) => {
+    const g = window.game!;
+    g.teleport(w.x, w.y, 4, 0);
+    g.step(150);
+    return g.measureFrame(50);
+  }, WOOD);
+  const washMs = Math.round(washFrame * 1000) / 1000;
+  info.annotations.push({ type: 'perf-downwash', description: `${washMs} ms, not held to the baseline or the budget` });
+  console.log(`perf: downwash view frame ${washMs} ms (not held)`);
   const now: Figures = { bootMs: Math.round(boot), frameMs: Math.round(frame * 1000) / 1000, bundleBytes: bundle };
   info.annotations.push({ type: 'perf', description: JSON.stringify(now) });
   console.log(

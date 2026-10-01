@@ -3,7 +3,7 @@
  * at random and made to do at random everything a player can make happen —
  * flying about, hovering, climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
- * hill and down onto a pad — and checked after every few frames for anything that must always
+ * hill, down onto a pad and low over a wood, bowing its trees — and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
  * The island is big and tall, so the monkey is put where the action is
@@ -19,6 +19,7 @@
 import { Game } from '../src/game';
 import { HELICOPTER, IDLE, type Controls } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
+import { TREE_STRIDE } from '../src/island';
 import { seeded } from '../src/random';
 
 const DT = 1 / 60;
@@ -65,7 +66,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
     const game = new Game({ random: seeded(seed) });
     const heli = game.helicopter;
     const { bounds } = heli;
-    const { ground, pads } = game.island;
+    const { ground, pads, trees, treeCount } = game.island;
     let controls: Controls = { ...IDLE };
     // how many frames the current thing is still held for, and whether it is a landing, which ends when the skids touch
     const hold = { busy: 0, landing: false };
@@ -205,6 +206,18 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         },
       },
       {
+        name: 'forest run',
+        weight: 2,
+        go() {
+          // low over a tree, as a player comes down to a wood: hovered there, the trees bowed round it, or flown on
+          // through the wood at full tilt, leaving them to spring back behind it
+          const t = Math.floor(random() * treeCount) * TREE_STRIDE;
+          heli.placeAbove(trees[t + 1], trees[t + 2], between(0.5, 12), between(-Math.PI, Math.PI));
+          controls = random() < 0.5 ? { ...IDLE } : { forward: 1, turn: between(-0.3, 0.3), lift: 0 };
+          hold.busy = Math.floor(between(120, 360));
+        },
+      },
+      {
         name: 'pad landing',
         weight: 2,
         go() {
@@ -254,7 +267,10 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       const wasClimb = heli.vz;
       const wasAtCeiling = heli.z === HELICOPTER.ceiling;
       const wasAtEdge = touchingEdge();
+      const wasSwaying = game.sway.count;
       game.step(DT, controls);
+      if (wasSwaying === 0 && game.sway.count > 0) count(happened, 'trees swayed');
+      if (wasSwaying > 0 && game.sway.count === 0) count(happened, 'trees settled');
       if (wasLanded && !landed()) count(happened, 'took off');
       if (!wasLanded && landed()) {
         count(happened, 'landed');

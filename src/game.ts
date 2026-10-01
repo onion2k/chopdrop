@@ -7,10 +7,11 @@
  * before anything uses it, so that the first thing that does is seeded from
  * its first line.
  */
-import { theIsland } from './arena';
+import { TREE_GIVE, TREE_KINDS, theIsland } from './arena';
 import { Helicopter, IDLE, type Controls } from './helicopter';
-import type { Island } from './island';
+import { TREE_STRIDE, type Island } from './island';
 import type { Random } from './random';
+import { Sway } from './sway';
 
 export interface GameOptions {
   /** Chance; Math.random unless told otherwise, and the tests always tell. */
@@ -24,6 +25,8 @@ export class Game {
   readonly island: Island;
   /** The player's machine, kept inside the world's edge, and starting landed on the home pad. */
   readonly helicopter: Helicopter;
+  /** The trees the helicopter's downwash has set moving, and how each leans. */
+  readonly sway: Sway;
   /** Game time, in seconds. */
   t = 0;
   /** Where chance comes from: replaced by the test API's `seed`. */
@@ -36,11 +39,21 @@ export class Game {
     const home = pads[0];
     // the grid reads itself through `this`, so it is bound once here and not each time the helicopter asks the height
     this.helicopter = new Helicopter({ bounds, heightAt: ground.heightAt.bind(ground) }, home);
+    const { trees, treeCount } = this.island;
+    this.sway = new Sway({
+      trees,
+      stride: TREE_STRIDE,
+      count: treeCount,
+      bounds,
+      give: TREE_KINDS.map((kind) => TREE_GIVE[kind]),
+    });
   }
 
   /** One frame of `dt` seconds, flown so. */
   step(dt: number, controls: Readonly<Controls> = IDLE) {
     this.t += dt;
     this.helicopter.step(dt, controls);
+    // the trees after the helicopter, so they take the wash from where it is now
+    this.sway.step(dt, this.helicopter, this.t);
   }
 }

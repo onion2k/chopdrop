@@ -9,6 +9,7 @@ import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
 import { helicopterBody, helicopterDark, helicopterGlass, helicopterTrim, mainRotor, tailRotor } from '../src/meshes';
 import { Scene, type HelicopterPose } from '../src/scene';
+import { DT, islandSway, thickestWood } from './helpers';
 
 const pose = (over: Partial<HelicopterPose> = {}): HelicopterPose => ({
   x: 10,
@@ -527,5 +528,89 @@ describe('the pads', () => {
     }
     expect(lo).toBeCloseTo(0, 5);
     expect(hi).toBeCloseTo(ISLAND.pads.thickness, 5);
+  });
+});
+
+describe('the trees in the downwash', () => {
+  /** Each tree's pool and its place in it, worked out from the island as the scene is meant to have laid them out. */
+  const placeOf = new Map<number, { pool: Float32Array; slot: number; scale: number }>();
+  const fresh = new Scene();
+  const freshMovers = fresh.dynamic(island);
+  for (const { kind, index } of TREE_KINDS.map((kind, index) => ({ kind, index }))) {
+    const pool = movers[scene.movers.indexOf(`${kind} crowns`)].matrices;
+    let slot = 0;
+    for (let t = 0; t < island.treeCount; t++)
+      if (island.trees[t * TREE_STRIDE] === index)
+        placeOf.set(t, { pool, slot: slot++, scale: island.trees[t * TREE_STRIDE + 5] });
+  }
+  const wood = thickestWood();
+  const source = {
+    x: wood.x,
+    y: wood.y,
+    z: island.ground.heightAt(wood.x, wood.y) + 4,
+    rotorSpeed: HELICOPTER.rotorFull,
+  };
+  const treePools = () => freshMovers.map((_, k) => k).filter((k) => k >= 6);
+  /** Whether every tree but those in `except` stands exactly as the scene first placed it. */
+  const standing = (except: Set<number>) => {
+    for (const k of treePools()) {
+      const now = scene.pools[k],
+        was = fresh.pools[k];
+      for (let o = 0; o < now.length; o++)
+        if (now[o] !== was[o]) {
+          const slot = Math.floor(o / 16);
+          const kind = scene.movers[k].split(' ')[0];
+          const tree = [...placeOf].find(
+            ([t, p]) => p.slot === slot && TREE_KINDS[island.trees[t * TREE_STRIDE]] === kind,
+          )![0];
+          if (!except.has(tree)) return `tree ${tree} moved`;
+        }
+    }
+    return 'all standing';
+  };
+
+  it('leans each moving tree from its foot, as the sway says, and leaves every other where it stood', () => {
+    const sway = islandSway();
+    for (let f = 1; f <= 120; f++) sway.step(DT, source, f * DT);
+    expect(sway.count).toBeGreaterThan(20);
+    scene.write(pose(), sway);
+    const moving = new Set<number>();
+    for (let k = 0; k < sway.count; k++) {
+      const tree = sway.tree[k];
+      moving.add(tree);
+      const { pool, slot, scale } = placeOf.get(tree)!;
+      const m = Array.from(pool.subarray(slot * 16, slot * 16 + 16));
+      const rest = Array.from(fresh.pools[scene.pools.indexOf(pool)].subarray(slot * 16, slot * 16 + 16));
+      // the foot, and the axes across the ground, are where they were
+      for (const o of [0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15]) expect(m[o], `tree ${tree}, ${o}`).toBe(rest[o]);
+      // the up axis tipped by the lean and shortened by the press, so the top moves and the foot does not
+      expect(m[8]).toBeCloseTo(sway.leanX[k] * scale, 6);
+      expect(m[9]).toBeCloseTo(sway.leanY[k] * scale, 6);
+      expect(m[10]).toBeCloseTo(scale * (1 - sway.squash[k]), 6);
+    }
+    expect(standing(moving)).toBe('all standing');
+  });
+
+  it('stands each tree let go exactly as it was, and writes only the kinds that moved', () => {
+    const sway = islandSway();
+    let t = 0;
+    for (let f = 0; f < 120; f++) sway.step(DT, source, (t += DT));
+    expect(sway.count).toBeGreaterThan(20);
+    scene.write(pose(), sway);
+    const kindsMoving = new Set<string>();
+    for (let k = 0; k < sway.count; k++) kindsMoving.add(TREE_KINDS[island.trees[sway.tree[k] * TREE_STRIDE]]);
+    for (const k of treePools())
+      expect(scene.changed[k], scene.movers[k]).toBe(kindsMoving.has(scene.movers[k].split(' ')[0]) ? 1 : 0);
+    // flown away and out of reach, until the last of them is still and let go
+    const away = { ...source, z: HELICOPTER.ceiling };
+    for (let f = 0; f < 600 && sway.count > 0; f++) sway.step(DT, away, (t += DT));
+    expect(sway.count).toBe(0);
+    scene.write(pose(), sway);
+    expect(standing(new Set())).toBe('all standing');
+    // the kinds stood up again were written this once, and nothing is written after
+    for (const k of treePools())
+      expect(scene.changed[k], scene.movers[k]).toBe(kindsMoving.has(scene.movers[k].split(' ')[0]) ? 1 : 0);
+    scene.write(pose(), sway);
+    for (const k of treePools()) expect(scene.changed[k], scene.movers[k]).toBe(0);
   });
 });

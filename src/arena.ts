@@ -13,6 +13,12 @@ export const TREE_KINDS = ['broadleaf', 'pine', 'poplar', 'palm', 'bush'] as con
 export type TreeKind = (typeof TREE_KINDS)[number];
 
 /**
+ * How much each kind of tree gives to the helicopter's downwash, against a broadleaf's one: a palm and a poplar,
+ * tall and slender, bend the most, and a pine and a bush, stiff and low, the least.
+ */
+export const TREE_GIVE: Record<TreeKind, number> = { broadleaf: 1, pine: 0.7, poplar: 1.2, palm: 1.4, bush: 0.6 };
+
+/**
  * Every number the island is made from. Units are world units, near enough
  * metres (the helicopter is 13 long), with z up and the sea at 0. What each
  * one does is said where its type is, in `island.ts`; what they add up to is
