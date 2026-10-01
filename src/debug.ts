@@ -30,6 +30,7 @@ import type { ChaseCamera, Point, View } from './chase';
 import type { Stage } from './delivery';
 import type { Game } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
+import { checkInvariants } from './invariants';
 import { TREE_STRIDE } from './island';
 import { treeSize } from './meshes';
 import { seeded } from './random';
@@ -158,6 +159,10 @@ export interface GameApi {
   events(): string[];
   /** The level from the start again, as "Fly again" does. */
   restart(): void;
+  /** The autopilot flying in place of the player, or not: what the play-through flies the level by. */
+  autopilot(on: boolean): void;
+  /** Every rule that must always hold and does not, as `invariants.ts` says: none, if all is well. */
+  invariants(): string[];
 
   /** The controls held, as if a person held them, until `release`. */
   fly(forward: number, turn: number, lift: number): void;
@@ -196,6 +201,8 @@ export interface DebugHost {
   events(): string[];
   /** The level from the start again, as the page's "Fly again" does. */
   restart(): void;
+  /** The autopilot flying in place of the keys and touch, or not. */
+  setAutopilot(on: boolean): void;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
   draw(dt: number): void;
@@ -309,6 +316,8 @@ export function createApi(host: DebugHost): GameApi {
 
     events: () => host.events(),
     restart: () => host.restart(),
+    autopilot: (on) => host.setAutopilot(on),
+    invariants: () => checkInvariants(game),
     fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),
     release: () => host.setControls(null),
     teleport(x, y, height, yaw = helicopter.yaw) {

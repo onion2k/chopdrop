@@ -53,11 +53,14 @@ The gates that still have something to hold:
     npm run perf           boot time, a frame's cost and the download, held to a budget and a baseline
     npm run smoke          the real thing in headless Chromium on the GPU
     npm run look           what it looks like, held to a picture
-    npm run check          all of it
+    npm run determinism    the same seed, flown twice by the autopilot, the same game
+    npm run leaks          an hour flown, and nothing kept that keeps growing
+    npm run pace           how long the autopilot takes to deliver the first level, held to a baseline
+    npm run check          all of it, and the first level played to the end in the page
 
-The determinism check, the leak watch, the pace gate, the bench, the save
-corpus and the play-through held the stub, and went with it. Each comes back from the first commit with the first feature that
-gives it something to hold; `CLAUDE.md` says which brings back which.
+The bench and the save corpus held the stub, and went with it. Each comes
+back from the first commit with the first feature that gives it something
+to hold; `CLAUDE.md` says which brings back which.
 
 The line every change goes down is in `CLAUDE.md` too: a spec agreed,
 tests seen failing, the change built, every gate run, the result looked at,
@@ -69,6 +72,7 @@ is fixed, and no baseline is moved to make it green.
     src/game.ts        the game without the picture: the island, the helicopter, the delivery, the clock
     src/delivery.ts    the level: a parcel picked up on one pad and delivered to another
     src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
+    src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
     src/input.ts       the keyboard or touch, whichever was used last, as the helicopter's controls
@@ -88,6 +92,6 @@ is fixed, and no baseline is moved to make it green.
     src/scene.ts       the island and the helicopter as they are drawn
     src/meshes.ts      the shapes: the helicopter, five trees, a landing pad
     src/random.ts      chance, from one seed
-    scripts/           the fuzzer
+    scripts/           the fuzzer, and the determinism, leak and pace gates
     test/              unit tests
     smoke/             Playwright: boots, flies, looks right, within budget

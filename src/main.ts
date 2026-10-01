@@ -13,6 +13,7 @@ import { noFog } from 'artshape-render/game/fog';
 import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer, type Look, type Post } from 'artshape-render/game/renderer';
 import { ChaseCamera, fovFor } from './chase';
+import { Autopilot } from './autopilot';
 import { createApi } from './debug';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
@@ -187,6 +188,8 @@ async function main() {
     input.touch.reset();
     hud.again();
   }
+  /** The autopilot, when the test API has it flying in place of the player; never otherwise. */
+  let pilot: Autopilot | null = null;
   /** What the helicopter was flown with at the last step, copied, for the test API. */
   const flown = { forward: 0, turn: 0, lift: 0 };
   const rig = new ChaseCamera(game.island.ground, game.canopy);
@@ -263,7 +266,7 @@ async function main() {
   let smoothed = 0;
   function simulate(dt: number) {
     frames++;
-    const controls = input.read();
+    const controls = pilot ? pilot.drive() : input.read();
     flown.forward = controls.forward;
     flown.turn = controls.turn;
     flown.lift = controls.lift;
@@ -307,6 +310,9 @@ async function main() {
     input: () => ({ by: input.by, controls: { ...flown }, lever: input.touch.lever }),
     events: () => told.splice(0),
     restart: again,
+    setAutopilot: (on) => {
+      pilot = on ? new Autopilot(game) : null;
+    },
     measureFrame,
   });
 

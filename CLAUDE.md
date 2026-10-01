@@ -57,27 +57,40 @@ download does not wobble, so it is held to the byte: a change that adds to
 it writes the perf baseline again and says by how much, and one that
 should not have is looked into.
 
-The first commit also held the physics' frame against reference arithmetic
-(`bench`, baseline ± 15%), the pace of play (`pace:check`, baseline ± 20%)
-and everything kept (ceilings in `scripts/leaks.ts`). Each comes back as a
-row here with the first thing it can hold.
+The game itself is held too, played by the autopilot:
+
+| Property                                                     | Held to                                      | Held by       |
+| ------------------------------------------------------------ | -------------------------------------------- | ------------- |
+| The first level delivered, in game minutes, median seeds 1-4 | `scripts/pace-baseline.json` ± 2%, both ways | `pace:check`  |
+| The same seed played twice is the same game                  | seeds 1-6, 3600 frames, hashed every 300     | `determinism` |
+| What is kept stays bounded over ten game minutes             | ceilings in `scripts/leaks.ts`               | `leaks:check` |
+
+The autopilot flies the same way every run and, with nothing in the game
+drawing on chance yet, on every seed, so the pace does not wobble and is
+held close; `pace.ts` says why. The first commit also held the physics'
+frame against reference arithmetic (`bench`, baseline ± 15%), which comes
+back with the first body.
 
 ## Commands
 
     npm run dev            the game at http://localhost:5202
     npm run check:quick    formatting, types, lint, unit tests (the pre-commit hook)
-    npm run check          all of it: check:quick, fuzz, then smoke with perf and look (~20 s)
+    npm run check          all of it: check:quick, fuzz, determinism, leaks, pace, then smoke with perf and look (~65 s)
     npm test               unit tests (Vitest, test/)
     npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again
     npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget;
                            the chase and downwash views' frames told, not held
     npm run smoke          the game in headless Chromium on the real GPU (Playwright, smoke/)
     npm run look           the scenes held to the pictures in smoke/screens, to the pixel
+    npm run determinism    seeds flown twice by the autopilot, the same each time
+    npm run leaks          an hour flown, watching what is kept (leaks:check, in the check, is ten minutes)
+    npm run pace           game minutes to deliver the first level (pace:check holds it; -- --update writes it)
 
 A unit test is allowed thirty seconds, and `vitest.config.ts` says why: the
 limit is there to catch a test that never ends.
 
-`npm run perf:update` and `npm run look:update` write a baseline again. Only
+`npm run perf:update`, `npm run look:update` and `npm run pace:check --
+--update` write a baseline again. Only
 through `/gate-moved`, only for a change meant to move it, and the commit
 says why. Look at every picture.
 
@@ -163,16 +176,12 @@ its `package.json` script, its place in `npm run check` and its unit tests:
 - **The physics, the bench and the body invariants** (`src/physics.ts`,
   `scripts/bench.ts`, `scripts/benching.ts`), with the first body on the
   island, a delivery most likely.
-- **The autopilot, determinism, leaks and pace** (`src/autopilot.ts`,
-  `scripts/determinism*.ts`, `scripts/leak*.ts`, `scripts/pace*.ts`), with
-  the first thing the game can be played to: a delivery made. Pace becomes
-  minutes to make a number of deliveries. The leak watch gains a line for
-  the trees moving in the downwash (`sway.count`, its ceiling
-  `SWAY.capacity`), held until then by the invariants.
-- **The play-through** (`smoke/progress.spec.ts`), with the first thing a
-  player can finish.
-
-The invariants and the fuzzer came back with the helicopter.
+  The invariants and the fuzzer came back with the helicopter; the
+  autopilot, determinism, leaks, pace and the play-through
+  (`smoke/progress.spec.ts`) with the first level. The leak watch reads the
+  heap and the memory behind typed arrays, which Node keeps apart: a pool
+  kept for ever is in the second, and reading the heap alone let 345 MB of
+  them by.
 
 ## Model features
 
@@ -219,6 +228,12 @@ The invariants and the fuzzer came back with the helicopter.
 - **The stub's ball**, for a body: a body kind in `arena.ts`, drawn by
   `scene.ts`, banked by `game.ts`, counted by `invariants.ts`, read by
   `debug.ts`, and pictured, all in `eda26d8`.
+- **The autopilot** (`src/autopilot.ts`), for anything a gate plays the
+  game by: it flies the level as a careful player would, through the same
+  `Controls`, drawing on no chance; `drive()` is read by the page when the
+  test API turns it on. Each thing a player is asked to do must be flown
+  by it, or the pace, determinism, leak and play-through gates stop
+  reaching the game.
 - **The gates** that are here now are each a model for the next: the perf gate
   (`smoke/perf.spec.ts`, its judging in `smoke/judging.ts`), the look gate
   (`smoke/look.spec.ts`, seen to fail a small button), the fuzzer (seen to
