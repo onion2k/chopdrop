@@ -18,7 +18,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { HOVER_LIFT } from '../src/helicopter';
-import { WOOD, standardView, start, watch } from './game';
+import { WOOD, fingers, leverTravel, standardView, start, watch } from './game';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -131,3 +131,36 @@ test.describe('what it looks like', () => {
     expect(seen, 'the picture with a button on it matched the picture without').toMatch(/pixels \(ratio/);
   });
 });
+
+for (const [name, viewport] of [
+  ['upright', { width: 390, height: 844 }],
+  ['sideways', { width: 844, height: 390 }],
+] as const) {
+  test.describe(`on a phone, ${name}`, () => {
+    test.use({ viewport, hasTouch: true, isMobile: true });
+
+    test('the touch controls in use, the lever at its stop and the stick pushed', async ({ page }) => {
+      const problems = watch(page);
+      await start(page, { seed: 11, paused: true });
+      await page.evaluate((w) => window.game!.teleport(w.x - 30, w.y, 7, 0), WOOD);
+      await page.evaluate(() => window.game!.step(1));
+      const travel = await leverTravel(page);
+      const hand = await fingers(page);
+      const { width: W, height: H } = viewport;
+      // the right thumb sets the lever at its stop and stays; the left pushes the stick forward and a little right
+      await hand.down(2, W - 60, H - 160);
+      await hand.move(2, W - 60, H - 160 - (HOVER_LIFT * travel) / 2);
+      await hand.down(1, 120, H - 150);
+      await hand.move(1, 140, H - 190);
+      const lever = await page.evaluate(() => {
+        window.game!.step(120);
+        return window.game!.state().input.lever;
+      });
+      expect(lever, 'the lever at its stop').toBe(HOVER_LIFT);
+      await hideStats(page);
+      await expect(page.locator('#view')).toBeVisible();
+      await expect(page).toHaveScreenshot(`touch-${name}.png`, TOLERANCE);
+      expect(problems).toEqual([]);
+    });
+  });
+}

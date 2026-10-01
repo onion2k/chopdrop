@@ -8,9 +8,9 @@ The README says what the game is; this file says how it is made. The house
 rules in `~/.claude/CLAUDE.md` apply too.
 
 The helicopter is built, and the island it flies over: flown from the
-keyboard, with a chase camera, over land and sea made at boot from a recipe,
-its trees bowing in the rotor's downwash. Nothing else is: no deliveries, nothing wanted at the nine pads, no save and
-no touch controls. The template's stub, a sled shoving balls into a hole,
+keyboard or by touch, with a chase camera, over land and sea made at boot
+from a recipe, its trees bowing in the rotor's downwash. Nothing else is: no
+deliveries, nothing wanted at the nine pads and no save. The template's stub, a sled shoving balls into a hole,
 was taken out in the second commit. The first commit, `eda26d8`, has the
 stub and every gate that held it: it is the model to copy from, and
 `git show eda26d8:<path>` reads any of it.
@@ -91,7 +91,10 @@ says why. Look at every picture.
   the height of what it can stand on at every point, not the island.
 - `src/main.ts` is the page. It draws the frame, and will turn the game's
   events into words on the screen. There is no game logic here.
-  `src/input.ts` turns keys into `Controls`; `src/chase.ts` is the camera
+  `src/input.ts` turns keys or touch into `Controls`, whichever was used
+  last: the stick and the lever are worked out in `src/touch.ts`, fed
+  fingers as numbers and tested headless, and drawn and fed by the page in
+  `src/touch-view.ts`; `src/chase.ts` is the camera
   rig, stepped with the game so the pictures repeat, and handed the ground
   so that it stays above it and the canopy (`src/canopy.ts`, the top of the
   crowns over a point, built by `game.ts`) so that it is never in a tree,
@@ -109,7 +112,10 @@ says why. Look at every picture.
   on the island (`content`: the pads, home, the bounds and the ceiling), the
   trees (`treesNear`, each with its height and spread as drawn, and `sway`:
   which are moving and how each leans), the
-  camera (`look` parks it, `chase` sends it back) and measuring. Each thing
+  camera (`look` parks it, `chase` sends it back), how it is being flown
+  (`state().input`: keys or touch, the controls read and the lever) and
+  measuring. Real fingers come from `fingers` in `smoke/game.ts`, through
+  Chromium's touch protocol, several at once. Each thing
   put on the island gains here what a test needs to place it and read it
   back.
 - `src/invariants.ts` lists the rules that must always hold;

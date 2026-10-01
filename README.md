@@ -29,8 +29,13 @@ Space and it settles into a gentle sink, a third of the climb, until it
 lands, so a height is held by tapping Space. It starts landed on the home
 pad, climbs to a ceiling of 220, above every peak, and sets down on
 whatever is under it: a pad, a field, a lake, or a hillside that rises to
-meet it, which it has to lift over. On a phone it can be watched but not flown yet: touch controls
-are a feature still to come.
+meet it, which it has to lift over.
+
+On a phone it is flown by touch: a stick under the left thumb, which comes
+up wherever the thumb lands, flies forward and back and turns; a lever under
+the right, slid anywhere on that side, climbs at the top, holds the height
+at its stop, sinks in the middle and comes down fast at the bottom, and
+stays where it is left. A key pressed goes back to the keys.
 
 ## What is here
 
@@ -57,7 +62,9 @@ is fixed, and no baseline is moved to make it green.
     src/game.ts        the game without the picture: the island, the helicopter, the clock
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
-    src/input.ts       the keyboard, as the helicopter's controls
+    src/input.ts       the keyboard or touch, whichever was used last, as the helicopter's controls
+    src/touch.ts       the touch stick and lever: fingers in, controls out
+    src/touch-view.ts  the touch controls as the page draws and feeds them
     src/chase.ts       the camera that follows it, above the ground and the treetops
     src/canopy.ts      the top of the crowns over a point: what the camera keeps over
     src/downwash.ts    the air under the rotor, and how it blows at a point

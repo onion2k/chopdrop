@@ -18,6 +18,7 @@ describe('the fuzzer', () => {
       'hill run',
       'pad landing',
       'forest run',
+      'touch fly',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     for (const happening of [

@@ -37,6 +37,8 @@
   #stage {
     position: fixed;
     inset: 0;
+    /* fingers on the stage fly the helicopter, and do not scroll, zoom or swipe the page */
+    touch-action: none;
   }
   canvas {
     display: block;
@@ -85,6 +87,139 @@
   }
   #boot p {
     color: var(--dim);
+  }
+  /* the touch controls: a stick for the left thumb and a lever for the right, orange over the island, shown while flown by touch */
+  #touch {
+    position: fixed;
+    inset: 0;
+    display: none;
+    pointer-events: none;
+    font:
+      600 11px/1 ui-rounded,
+      'SF Pro Rounded',
+      system-ui,
+      sans-serif;
+    letter-spacing: 0.04em;
+    color: #fff3e6;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  body.touching #touch {
+    display: block;
+  }
+  body.touching #help {
+    display: none;
+  }
+  #touch .base,
+  #touch .knob {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border-radius: 50%;
+  }
+  #touch .base {
+    background: rgba(20, 18, 28, 0.45);
+    border: 3px solid rgba(232, 134, 58, 0.9);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
+    opacity: 0.6;
+  }
+  #touch .base.held {
+    opacity: 1;
+  }
+  #touch .knob {
+    background: radial-gradient(circle at 35% 30%, #ffb070, #e8863a 60%, #b85a1c);
+    border: 2px solid #fff3e6;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  }
+  #touch .chev {
+    position: absolute;
+    font-size: 14px;
+    opacity: 0.9;
+  }
+  #touch .chev.up {
+    top: 6px;
+    left: 50%;
+    translate: -50% 0;
+  }
+  #touch .chev.down {
+    bottom: 6px;
+    left: 50%;
+    translate: -50% 0;
+  }
+  #touch .chev.left {
+    left: 8px;
+    top: 50%;
+    translate: 0 -50%;
+  }
+  #touch .chev.right {
+    right: 8px;
+    top: 50%;
+    translate: 0 -50%;
+  }
+  #touch .base .label {
+    position: absolute;
+    top: 100%;
+    left: -40px;
+    right: -40px;
+    margin-top: 6px;
+    text-align: center;
+  }
+  #touch .track {
+    position: absolute;
+    right: calc(28px + env(safe-area-inset-right));
+    bottom: calc(40px + env(safe-area-inset-bottom));
+    width: 58px;
+    height: min(250px, calc(100% - 100px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+    border-radius: 12px;
+    background: rgba(20, 18, 28, 0.45);
+    border: 3px solid rgba(232, 134, 58, 0.9);
+  }
+  #touch .track .top,
+  #touch .track .bottom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+  }
+  #touch .track .top {
+    top: 6px;
+  }
+  #touch .track .bottom {
+    bottom: 6px;
+  }
+  #touch .stop {
+    position: absolute;
+    left: -10px;
+    right: -10px;
+    top: 0;
+    height: 3px;
+    margin-top: -1.5px;
+    background: #fff3e6;
+    border-radius: 2px;
+  }
+  #touch .stop .label,
+  #touch .track .sink {
+    position: absolute;
+    right: calc(100% + 6px);
+    white-space: nowrap;
+  }
+  #touch .stop .label {
+    top: -4px;
+  }
+  #touch .track .sink {
+    top: calc(50% + 8px);
+    right: calc(100% + 16px);
+    opacity: 0.7;
+  }
+  #touch .handle {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    top: 0;
+    height: 34px;
+    border-radius: 10px;
+    background: linear-gradient(#ffb070, #e8863a 55%, #b85a1c);
+    border: 2px solid #fff3e6;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   }
   @media (max-width: 600px) {
     #help,

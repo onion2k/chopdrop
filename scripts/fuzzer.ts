@@ -19,7 +19,7 @@
  * --seed N` does, and prints what was done before it went wrong.
  */
 import { Game } from '../src/game';
-import { HELICOPTER, IDLE, type Controls } from '../src/helicopter';
+import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
@@ -79,7 +79,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
     let controls: Controls = { ...IDLE };
     // how many frames the current thing is still held for, whether it is a landing, which ends when the skids touch,
     // and the rhythm the lift is tapped at, frames on and frames in all, if it is a hover
-    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 } };
+    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 }, wander: false };
     const between = (a: number, b: number) => a + random() * (b - a);
     const timesDone = (what: string) => done[what] ?? 0;
     const did = (what: string) => {
@@ -237,6 +237,21 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         },
       },
       {
+        name: 'touch fly',
+        weight: 3,
+        go() {
+          // a thumb on the stick, anywhere in its ring, and the lever anywhere on its travel or at its stop, as a phone
+          // flies it: held where it is put, or wandering as a thumb does
+          controls = {
+            forward: between(-1, 1),
+            turn: between(-1, 1),
+            lift: random() < 0.4 ? HOVER_LIFT : between(-1, 1),
+          };
+          hold.wander = random() < 0.5;
+          hold.busy = Math.floor(between(60, 300));
+        },
+      },
+      {
         name: 'forest run',
         places: true,
         weight: 2,
@@ -295,7 +310,14 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       else {
         hold.landing = false;
         hold.tap.every = 0;
+        hold.wander = false;
         act();
+      }
+      if (hold.wander) {
+        const drift = (v: number) => Math.max(-1, Math.min(1, v + between(-0.08, 0.08)));
+        controls.forward = drift(controls.forward);
+        controls.turn = drift(controls.turn);
+        controls.lift = drift(controls.lift);
       }
       if (hold.tap.every > 0) controls.lift = frame % hold.tap.every < hold.tap.on ? 1 : 0;
       const wasLanded = landed();

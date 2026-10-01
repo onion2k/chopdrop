@@ -10,8 +10,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { CHASE } from '../src/chase';
 import { DOWNWASH } from '../src/downwash';
-import { HELICOPTER } from '../src/helicopter';
-import { WOOD, start, watch } from './game';
+import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import { WOOD, fingers, leverTravel, start, watch } from './game';
 
 /** How many frames the page draws in a second. */
 function framesInASecond(page: Page) {
@@ -229,6 +229,19 @@ test('the trees bow as it comes down into a wood, stand once it lands, and bow a
   expect(problems).toEqual([]);
 });
 
+test('a mouse on a desk is not a finger: a click leaves it flown by keys, with no touch controls', async ({ page }) => {
+  const problems = watch(page);
+  await start(page, { paused: true });
+  await page.mouse.click(200, 600);
+  await page.mouse.down();
+  await page.mouse.move(200, 400);
+  await page.mouse.up();
+  await page.evaluate(() => window.game!.step(1));
+  expect((await page.evaluate(() => window.game!.state())).input.by).toBe('keys');
+  await expect(page.locator('#touch')).toBeHidden();
+  expect(problems).toEqual([]);
+});
+
 test('the chase camera follows, and can be parked and sent back', async ({ page }) => {
   const problems = watch(page);
   await start(page, { paused: true });
@@ -319,3 +332,153 @@ test.describe('on a phone', () => {
     expect(problems).toEqual([]);
   });
 });
+
+/** Every part of the touch controls, as boxes on the page, and the screen's size. */
+function controlBoxes(page: Page) {
+  return page.evaluate(() => ({
+    width: innerWidth,
+    height: innerHeight,
+    boxes: Array.from(
+      document.querySelectorAll<HTMLElement>('#touch .base, #touch .knob, #touch .track, #touch .handle'),
+    ).map((e) => e.getBoundingClientRect().toJSON() as { left: number; top: number; right: number; bottom: number }),
+  }));
+}
+
+for (const [name, viewport] of [
+  ['upright', { width: 390, height: 844 }],
+  ['sideways', { width: 844, height: 390 }],
+] as const) {
+  test.describe(`flown by touch, ${name}`, () => {
+    test.use({ viewport, hasTouch: true, isMobile: true });
+
+    test('two thumbs fly it: the lever climbs, holds at its stop and stays, and the stick flies and turns', async ({
+      page,
+    }) => {
+      const problems = watch(page);
+      await start(page, { seed: 11, paused: true });
+      const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
+      const state = () => page.evaluate(() => window.game!.state());
+      const W = viewport.width,
+        H = viewport.height;
+      // a phone shows its controls from the start, all on the screen, and nothing wider than it
+      await step(1);
+      expect((await state()).input.by, 'flown by touch on a phone').toBe('touch');
+      await expect(page.locator('#touch')).toBeVisible();
+      const { boxes } = await controlBoxes(page);
+      for (const b of boxes) {
+        expect(b.left).toBeGreaterThanOrEqual(0);
+        expect(b.top).toBeGreaterThanOrEqual(0);
+        expect(b.right).toBeLessThanOrEqual(W);
+        expect(b.bottom).toBeLessThanOrEqual(H);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(W);
+      const travel = await leverTravel(page);
+      const hand = await fingers(page);
+
+      // the right thumb slides the lever up: it climbs
+      const rx = W - 60,
+        ry = H - 160;
+      await hand.down(2, rx, ry);
+      await hand.move(2, rx, ry - travel / 2);
+      expect((await state()).input.lever, 'the lever at the top').toBe(1);
+      await step(60);
+      let s = await state();
+      expect(s.helicopter.height, 'climbing').toBeGreaterThan(4);
+      // and down to the stop, where it clicks in and the helicopter holds its height, the thumb kept on it
+      await hand.move(2, rx, ry - (HOVER_LIFT * travel) / 2 + 3);
+      expect((await state()).input.lever, 'clicked into the stop').toBe(HOVER_LIFT);
+      await step(90);
+      const held = (await state()).helicopter.z;
+      await step(60);
+      s = await state();
+      expect(s.helicopter.z, 'holding its height at the stop').toBeCloseTo(held, 6);
+
+      // the left thumb comes down anywhere on its side and pushes: forward, then left
+      const lx = 120,
+        ly = H - 150;
+      await hand.down(1, lx, ly);
+      await step(1);
+      expect((await state()).input.controls, 'landing a thumb asks for nothing').toEqual({
+        forward: 0,
+        turn: 0,
+        lift: HOVER_LIFT,
+      });
+      await hand.move(1, lx, ly - 70);
+      await step(30);
+      s = await state();
+      expect(s.input.controls.forward, 'pushed up flies forward').toBe(1);
+      expect(s.helicopter.speed).toBeGreaterThan(5);
+      // with both thumbs down, a third finger, and a second on the lever's side, change nothing
+      await hand.down(3, lx + 20, 60);
+      await hand.down(4, W - 30, 60);
+      await hand.move(3, lx + 80, 200);
+      await hand.move(4, W - 30, 260);
+      await step(1);
+      expect((await state()).input.controls).toEqual({ forward: 1, turn: 0, lift: HOVER_LIFT });
+      await hand.up(3);
+      await hand.up(4);
+      // the right thumb lifted, the lever stays where it was left
+      await hand.up(2);
+      expect((await state()).input.lever, 'the lever stays where it was left').toBe(HOVER_LIFT);
+      const yaw = s.helicopter.yaw;
+      await hand.move(1, lx - 70, ly);
+      await step(30);
+      s = await state();
+      expect(s.input.controls.turn, 'pushed left turns left').toBe(1);
+      expect(s.helicopter.yaw).toBeGreaterThan(yaw + 0.3);
+      // lifted, the stick lets go and the lever stays
+      await hand.up(1);
+      await step(1);
+      expect((await state()).input.controls).toEqual({ forward: 0, turn: 0, lift: HOVER_LIFT });
+      expect(problems).toEqual([]);
+    });
+
+    test('a finger taken away by the browser lets go, and so does the page losing its focus', async ({ page }) => {
+      const problems = watch(page);
+      await start(page, { seed: 11, paused: true });
+      const controls = () =>
+        page.evaluate(() => {
+          window.game!.step(1);
+          return window.game!.state().input.controls;
+        });
+      const hand = await fingers(page);
+      const H = viewport.height;
+      await hand.down(1, 120, H - 150);
+      await hand.move(1, 120, H - 230);
+      expect((await controls()).forward).toBe(1);
+      // the browser takes the touch for itself, as it does for a system gesture
+      await hand.cancel();
+      expect((await controls()).forward, 'let go when the touch is taken away').toBe(0);
+      // pushed again, and the page loses its focus
+      await hand.down(5, 120, H - 150);
+      await hand.move(5, 120, H - 230);
+      expect((await controls()).forward).toBe(1);
+      await page.evaluate(() => dispatchEvent(new Event('blur')));
+      expect((await controls()).forward, 'let go when the page loses its focus').toBe(0);
+      expect(problems).toEqual([]);
+    });
+
+    test('a key flies it by keys and hides the controls, and a touch brings them back', async ({ page }) => {
+      const problems = watch(page);
+      await start(page, { seed: 11, paused: true });
+      const state = () => page.evaluate(() => window.game!.state());
+      await page.evaluate(() => window.game!.step(1));
+      await expect(page.locator('#touch')).toBeVisible();
+      await page.keyboard.down('Space');
+      await page.evaluate(() => window.game!.step(30));
+      await page.keyboard.up('Space');
+      let s = await state();
+      expect(s.input.by).toBe('keys');
+      expect(s.helicopter.landed, 'Space climbs').toBe(false);
+      await expect(page.locator('#touch')).toBeHidden();
+      const hand = await fingers(page);
+      await hand.down(1, 120, viewport.height - 150);
+      await hand.up(1);
+      await page.evaluate(() => window.game!.step(1));
+      s = await state();
+      expect(s.input.by).toBe('touch');
+      await expect(page.locator('#touch')).toBeVisible();
+      expect(problems).toEqual([]);
+    });
+  });
+}

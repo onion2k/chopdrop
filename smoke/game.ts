@@ -74,3 +74,57 @@ export async function standardView(page: Page) {
     g.step(1);
   });
 }
+
+/**
+ * Fingers on the glass, as a phone has them: real touches through Chromium's touch protocol, several at once, which
+ * the page sees as pointer events from fingers. Each call sends every finger still down, as a touch screen does, and
+ * waits for the page's next frame: Chromium hands a moving finger to the page on its next animation frame and not
+ * when it moves, so a read straight after a move saw the lever one move behind.
+ */
+export async function fingers(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  const down = new Map<number, { x: number; y: number }>();
+  const send = async (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel') => {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: [...down].map(([id, { x, y }]) => ({ id, x, y })),
+    });
+    await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
+  };
+  return {
+    async down(id: number, x: number, y: number) {
+      down.set(id, { x, y });
+      await send('touchStart');
+    },
+    /** Moved to (x, y) in `steps` even steps, as a thumb slides. */
+    async move(id: number, x: number, y: number, steps = 4) {
+      const from = down.get(id)!;
+      for (let k = 1; k <= steps; k++) {
+        down.set(id, { x: from.x + ((x - from.x) * k) / steps, y: from.y + ((y - from.y) * k) / steps });
+        await send('touchMove');
+      }
+    },
+    /**
+     * Lifted. Chromium lifts every finger on a touch end, so one lifted while others stay down is sent as the fingers
+     * still down, and it lifts whichever is missing; the last is a touch end.
+     */
+    async up(id: number) {
+      down.delete(id);
+      await send(down.size > 0 ? 'touchMove' : 'touchEnd');
+    },
+    /** Every finger taken away by the browser, as it does for a gesture of its own. */
+    async cancel() {
+      down.clear();
+      await send('touchCancel');
+    },
+  };
+}
+
+/** The touch lever's travel on the page, from its top to its bottom, in CSS pixels: half of it is a lift of one. */
+export function leverTravel(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const track = document.querySelector<HTMLElement>('#touch .track')!;
+    const handle = document.querySelector<HTMLElement>('#touch .handle')!;
+    return track.clientHeight - handle.offsetHeight;
+  });
+}

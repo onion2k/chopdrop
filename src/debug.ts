@@ -65,6 +65,8 @@ export interface GameState {
   };
   /** The camera's mode and its two points, copied: the rig's own arrays move every frame. */
   camera: { mode: 'chase' | 'parked'; position: Point; target: Point };
+  /** How it is being flown (by the keys or by touch), the controls it was flown with at the last step, and the touch lever's lift. */
+  input: InputState;
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -100,6 +102,13 @@ export interface SwayState {
   count: number;
   capacity: number;
   trees: { index: number; x: number; y: number; lean: [number, number]; squash: number }[];
+}
+
+/** How the helicopter is being flown: by the keys or by touch, the controls read at the last step, and the touch lever's lift. */
+export interface InputState {
+  by: 'keys' | 'touch';
+  controls: Controls;
+  lever: number;
 }
 
 export interface GameApi {
@@ -162,6 +171,8 @@ export interface DebugHost {
   setPaused(paused: boolean): void;
   /** Hold these controls in place of the keyboard, or give the keyboard back with null. */
   setControls(controls: Controls | null): void;
+  /** How it is being flown, as `state().input` says. */
+  input(): InputState;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
   draw(dt: number): void;
@@ -214,6 +225,7 @@ export function createApi(host: DebugHost): GameApi {
           rotorSpeed: helicopter.rotorSpeed,
         },
         camera: { mode: rig.mode, position: [...rig.position], target: [...rig.target] },
+        input: host.input(),
       };
     },
     content: () => ({

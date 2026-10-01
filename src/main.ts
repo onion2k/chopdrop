@@ -19,6 +19,7 @@ import { Game } from './game';
 import { Input } from './input';
 import { seeded } from './random';
 import { Scene } from './scene';
+import { TouchView } from './touch-view';
 
 /** How many millimetres a world unit is: the renderer fixes a few real sizes by it. */
 const MM_PER_UNIT = 100;
@@ -153,6 +154,11 @@ async function main() {
 
   // the rig's two points are the camera's own, written in place, so nothing is copied each frame
   const input = new Input();
+  // a phone shows its touch controls from the start; anything else, once a finger is put on it
+  if (matchMedia('(pointer: coarse)').matches) input.by = 'touch';
+  const touchView = new TouchView(input, document.getElementById('stage')!);
+  /** What the helicopter was flown with at the last step, copied, for the test API. */
+  const flown = { forward: 0, turn: 0, lift: 0 };
   const rig = new ChaseCamera(game.island.ground, game.canopy);
   rig.snap(game.helicopter);
   const cam = renderer.camera;
@@ -226,10 +232,15 @@ async function main() {
   let smoothed = 0;
   function simulate(dt: number) {
     frames++;
-    game.step(dt, input.read());
+    const controls = input.read();
+    flown.forward = controls.forward;
+    flown.turn = controls.turn;
+    flown.lift = controls.lift;
+    game.step(dt, controls);
     rig.step(dt, game.helicopter);
   }
   function draw(dt: number) {
+    touchView.draw();
     upload();
     cam.update();
     const t = performance.now();
@@ -261,6 +272,7 @@ async function main() {
     setControls: (c) => {
       input.override = c;
     },
+    input: () => ({ by: input.by, controls: { ...flown }, lever: input.touch.lever }),
     measureFrame,
   });
 
