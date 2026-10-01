@@ -19,6 +19,8 @@ describe('the fuzzer', () => {
       'pad landing',
       'forest run',
       'touch fly',
+      'wanted pad',
+      'fly again',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     for (const happening of [
@@ -29,6 +31,7 @@ describe('the fuzzer', () => {
       'touched the edge',
       'trees swayed',
       'trees settled',
+      'loaded',
     ])
       expect(r.happened[happening], happening).toBeGreaterThan(0);
   });

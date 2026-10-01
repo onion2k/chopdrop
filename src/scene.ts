@@ -16,10 +16,13 @@ import type { Box } from 'artshape-render/game/shadows';
 import type { Mesh } from 'artshape-render/mesh/types';
 import { ISLAND, TREE_KINDS } from './arena';
 import { HELICOPTER } from './helicopter';
-import { SEA, SURFACE, TREE_STRIDE, type Island, type River } from './island';
+import type { Job, Stage } from './delivery';
+import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
 import {
+  beacon,
+  crate,
   helicopterBody,
   helicopterDark,
   helicopterGlass,
@@ -141,6 +144,27 @@ const SHADOW_SNAP = 8;
 /** The box reaches this far under the sea to catch shadows on the shore, and a little over the helicopter's highest point. */
 const SHADOW_FLOOR = -5;
 const SHADOW_ROOF = 2;
+
+/** The parcel's paint: pale wood, and dark straps. */
+const CRATE_PAINT: Paint = { albedo: seen(0xc0884a), roughness: 0.9 };
+const STRAP_PAINT: Paint = { albedo: seen(0x3a2a1c), roughness: 0.9 };
+/** The beacon's: a warm gold, which stands out against the greens and the sea and is not the helicopter's orange. */
+const BEACON_PAINT: Paint = { albedo: seen(0xffc23a), roughness: 0.9 };
+
+/**
+ * The beacon: how wide and tall it stands, how far above the pad it starts so it never stands through the helicopter
+ * on the pad, and how near the helicopter must come for it to go out, its work done. A crate on a pad sits this far
+ * from the pad's middle, as a share of its radius, past the ends of the H and inside the painted ring.
+ */
+const BEACON = { width: 0.9, height: 140, above: 20, near: 40 };
+const CRATE_OUT = 0.65;
+
+/** Where the delivery has got to, as the scene draws it: the stage, the pad wanted now, and the job's two pads. */
+export interface DeliveryPose {
+  stage: Stage;
+  target: number;
+  job: Job;
+}
 
 /** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
 const HELICOPTER_GROUPS = 6;
@@ -449,6 +473,9 @@ export class Scene {
   private leaning = new Int32Array(0);
   private leaned = 0;
   private moving = new Uint8Array(0);
+  /** The pads, which the parcel and the beacon stand on, and where in `pools` the parcel's groups start. */
+  private islandPads: readonly Pad[] = [];
+  private parcelAt = 0;
 
   /**
    * The box the sun's shadow is fitted to, which the renderer holds and `write` moves: a stretch of the island
@@ -513,7 +540,8 @@ export class Scene {
   }
 
   /**
-   * What moves: the helicopter's groups, then, given the island, its trees, each pool sized once. The trees move
+   * What moves: the helicopter's groups, then, given the island, its trees and the parcel and its beacon, each pool
+   * sized once. The trees move
    * only a little and only now and then, but a group that is set as still cannot be written again but whole.
    */
   dynamic(island?: Island): GameGroup[] {
@@ -531,7 +559,17 @@ export class Scene {
     add('dark', helicopterDark(), DARK_PAINT);
     add('main rotor', mainRotor(), DARK_PAINT);
     add('tail rotor', tailRotor(), DARK_PAINT);
-    if (island) this.trees(island, add);
+    this.islandPads = [];
+    if (island) {
+      this.trees(island, add);
+      // the parcel and the beacon, last: one placement each, written every frame
+      this.parcelAt = this.pools.length;
+      const { wood, straps } = crate();
+      add('crate', wood, CRATE_PAINT);
+      add('crate straps', straps, STRAP_PAINT);
+      add('beacon', beacon(BEACON.width, BEACON.height), BEACON_PAINT);
+      this.islandPads = island.pads;
+    }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
   }
@@ -574,7 +612,7 @@ export class Scene {
    * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
    * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again.
    */
-  write(pose: HelicopterPose, sway?: Sway): void {
+  write(pose: HelicopterPose, sway?: Sway, delivery?: DeliveryPose): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
     this.changed.fill(0, HELICOPTER_GROUPS);
@@ -586,6 +624,7 @@ export class Scene {
     dark.set(body);
     placePart(main, 0, body, 0, 0, 0, mastTop, 'z', pose.rotor);
     placePart(tail, 0, body, 0, tailRotorAt[0], tailRotorAt[1], tailRotorAt[2], 'y', pose.tailRotor);
+    if (delivery && this.islandPads.length > 0) this.parcel(pose, delivery);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -593,6 +632,29 @@ export class Scene {
     max[0] = cx + SHADOW_REACH;
     min[1] = cy - SHADOW_REACH;
     max[1] = cy + SHADOW_REACH;
+  }
+
+  /**
+   * The parcel where the delivery has it (on the pad it waits on, under the helicopter, or on the pad it was wanted
+   * on), and the beacon over the pad wanted now, out once the helicopter is near it or the parcel is delivered.
+   */
+  private parcel(pose: HelicopterPose, delivery: DeliveryPose): void {
+    const at = this.parcelAt;
+    const [wood, straps, light] = [this.pools[at], this.pools[at + 1], this.pools[at + 2]];
+    if (delivery.stage === 'carry') {
+      // strapped under the belly, between the skids, turning and tilting with the helicopter
+      placePart(wood, 0, this.pools[0], 0, 0.25, 0, 0.02, 'z', 0);
+    } else {
+      const pad = this.islandPads[delivery.stage === 'pickup' ? delivery.job.pickup : delivery.job.drop];
+      onPadEdge(wood, pad);
+    }
+    straps.set(wood);
+    const target = delivery.target >= 0 ? this.islandPads[delivery.target] : undefined;
+    if (target && Math.hypot(pose.x - target.x, pose.y - target.y) > BEACON.near)
+      place(light, 0, target.x, target.y, target.z + BEACON.above, 0);
+    // out: drawn at no size at all, so nothing of it is seen
+    else place(light, 0, pose.x, pose.y, pose.z, 0, 0);
+    this.changed.fill(1, at, at + 3);
   }
 
   /** Each tree the sway is moving leaned as it says, and each it has let go since the last write stood up again. */
@@ -614,4 +676,10 @@ export class Scene {
       leaning[this.leaned++] = t;
     }
   }
+}
+
+/** A crate set down on a pad, out from its middle past the ends of the H, turned a little off the pad's square. */
+function onPadEdge(out: Float32Array, pad: Readonly<Pad>): void {
+  const r = pad.radius * CRATE_OUT;
+  place(out, 0, pad.x + Math.cos(pad.yaw) * r, pad.y + Math.sin(pad.yaw) * r, pad.z, pad.yaw + 0.4);
 }

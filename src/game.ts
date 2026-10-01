@@ -7,15 +7,21 @@
  * before anything uses it, so that the first thing that does is seeded from
  * its first line.
  */
-import { TREE_GIVE, TREE_KINDS, theIsland } from './arena';
+import { LEVELS, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
 import { Canopy } from './canopy';
+import { Delivery, type DeliveryEvents } from './delivery';
 import { Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
 import type { Random } from './random';
 import { Sway, reachedLean } from './sway';
 
+/** What the game tells the page as it happens, so the page can put it into words. */
+export type GameEvents = DeliveryEvents;
+
 export interface GameOptions {
+  /** What happens, told as it does; nothing is told unless something is listening. */
+  events?: GameEvents;
   /** Chance; Math.random unless told otherwise, and the tests always tell. */
   random?: Random;
   /** The land to fly over; the one island unless told otherwise. */
@@ -34,6 +40,8 @@ export class Game {
    * in the wash. Built once with the island; the game itself never reads it.
    */
   readonly canopy: Canopy;
+  /** The parcel to pick up and deliver: the first level. */
+  readonly delivery: Delivery;
   /** Game time, in seconds. */
   t = 0;
   /** Where chance comes from: replaced by the test API's `seed`. */
@@ -53,6 +61,14 @@ export class Game {
       { trees, stride: TREE_STRIDE, count: treeCount, bounds },
       TREE_KINDS.map((kind, k) => ({ ...treeSize(kind), lean: reachedLean(give[k]) })),
     );
+    this.delivery = new Delivery(pads, LEVELS[0], options.events);
+  }
+
+  /** The level from the start again: the helicopter landed on home, facing as it was built, and the parcel waiting. */
+  restart(): void {
+    const home = this.island.pads[0];
+    this.helicopter.place(home.x, home.y, 0, home.yaw);
+    this.delivery.reset();
   }
 
   /** One frame of `dt` seconds, flown so. */
@@ -61,5 +77,7 @@ export class Game {
     this.helicopter.step(dt, controls);
     // the trees after the helicopter, so they take the wash from where it is now
     this.sway.step(dt, this.helicopter, this.t);
+    // and the parcel, which goes by where the helicopter has landed
+    this.delivery.step(dt, this.helicopter);
   }
 }

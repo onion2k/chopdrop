@@ -16,6 +16,7 @@ import { ChaseCamera, fovFor } from './chase';
 import { createApi } from './debug';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
+import { Hud } from './hud';
 import { Input } from './input';
 import { seeded } from './random';
 import { Scene } from './scene';
@@ -23,6 +24,8 @@ import { TouchView } from './touch-view';
 
 /** How many millimetres a world unit is: the renderer fixes a few real sizes by it. */
 const MM_PER_UNIT = 100;
+/** The most of what the game has told that the page keeps for the test API to read. */
+const EVENTS_KEPT = 500;
 const LIGHT_CAPACITY = 16,
   EFFECT_CAPACITY = 16,
   PARTICLE_CAPACITY = 1024;
@@ -139,7 +142,27 @@ async function main() {
   const query = new URLSearchParams(location.search);
   // ?seed=N makes chance the same from before the game is built, for a test that wants the same game every run
   const seed = query.get('seed');
-  const game = new Game(seed !== null ? { random: seeded(+seed) } : {});
+  /**
+   * What the game has told, written down for the test API, which takes it away as it reads it; the oldest go once
+   * there are `EVENTS_KEPT`, so a page left open never keeps more.
+   */
+  const told: string[] = [];
+  const tell = (line: string) => {
+    told.push(line);
+    if (told.length > EVENTS_KEPT) told.shift();
+  };
+  // built before the game, which tells it the end; "Fly again" is `again`, below, which puts the game back
+  const hud = new Hud(again);
+  const game = new Game({
+    ...(seed !== null ? { random: seeded(+seed) } : {}),
+    events: {
+      loaded: (pad) => tell(`loaded ${pad}`),
+      delivered: (pad, seconds) => {
+        tell(`delivered ${pad} ${seconds.toFixed(2)}`);
+        hud.delivered(seconds);
+      },
+    },
+  });
 
   // ---- the scene ----
 
@@ -157,6 +180,13 @@ async function main() {
   // a phone shows its touch controls from the start; anything else, once a finger is put on it
   if (matchMedia('(pointer: coarse)').matches) input.by = 'touch';
   const touchView = new TouchView(input, document.getElementById('stage')!);
+  /** The level from the start again: the game, the camera behind the helicopter, the lever down and the card put away. */
+  function again() {
+    game.restart();
+    rig.snap(game.helicopter);
+    input.touch.reset();
+    hud.again();
+  }
   /** What the helicopter was flown with at the last step, copied, for the test API. */
   const flown = { forward: 0, turn: 0, lift: 0 };
   const rig = new ChaseCamera(game.island.ground, game.canopy);
@@ -182,7 +212,7 @@ async function main() {
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter, game.sway);
+    scene.write(game.helicopter, game.sway, game.delivery);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });
@@ -225,6 +255,7 @@ async function main() {
   boot.classList.add('gone');
   stats.hidden = false;
   help.hidden = false;
+  hud.show();
 
   // ---- each frame ----
 
@@ -241,6 +272,7 @@ async function main() {
   }
   function draw(dt: number) {
     touchView.draw();
+    hud.draw(game, rig);
     upload();
     cam.update();
     const t = performance.now();
@@ -273,6 +305,8 @@ async function main() {
       input.override = c;
     },
     input: () => ({ by: input.by, controls: { ...flown }, lever: input.touch.lever }),
+    events: () => told.splice(0),
+    restart: again,
     measureFrame,
   });
 

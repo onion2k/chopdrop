@@ -36,6 +36,42 @@ async function hideStats(page: Page) {
   await page.locator('#stats').evaluate((el: HTMLElement) => (el.hidden = true));
 }
 
+/** The parcel loaded on the meadow pad and carried half way to the hilltop pad, flying level at it. */
+async function carrying(page: Page) {
+  await page.evaluate((hover) => {
+    const g = window.game!;
+    const { pickup, drop } = g.state().delivery;
+    const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
+    g.teleport(a.x, a.y, 0, 0);
+    g.step(100);
+    const yaw = Math.atan2(b.y - a.y, b.x - a.x);
+    g.teleport(a.x + 0.45 * (b.x - a.x), a.y + 0.45 * (b.y - a.y), 30, yaw);
+    g.fly(1, 0, hover);
+    g.step(50);
+    g.release();
+  }, HOVER_LIFT);
+}
+
+/**
+ * The parcel taken from the meadow pad to the hilltop pad and delivered, the card up: lifted off first, as a player
+ * does, so the clock runs, and set down facing past the crate so it is in the picture.
+ */
+async function delivered(page: Page) {
+  await page.evaluate(() => {
+    const g = window.game!;
+    const { pickup, drop } = g.state().delivery;
+    const pads = g.content().pads;
+    g.fly(0, 0, 1);
+    g.step(30);
+    g.release();
+    g.teleport(pads[pickup].x, pads[pickup].y, 0, 0);
+    g.step(100);
+    g.teleport(pads[drop].x, pads[drop].y, 0, pads[drop].yaw + 0.5);
+    g.step(100);
+  });
+  await expect(page.locator('#hud .done')).toBeVisible();
+}
+
 test.describe('what it looks like', () => {
   test('the island, from above the home pad', async ({ page }) => {
     const problems = watch(page);
@@ -108,6 +144,38 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('the first level: loading on the meadow pad, the ring half full', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate(() => {
+      const g = window.game!;
+      const pad = g.content().pads[g.state().delivery.pickup];
+      g.teleport(pad.x, pad.y, 0, 2.3);
+      g.step(45);
+    });
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('level-loading.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the first level: the parcel carried toward the hilltop pad, its beacon ahead', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await carrying(page);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('level-carrying.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the first level: delivered, the card and the crate on the hilltop pad', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await delivered(page);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('level-delivered.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('a small thing added to the island is a change', async ({ page }, info) => {
     // while the pictures are being written this would write its own, button and all, over the island's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');
@@ -164,3 +232,19 @@ for (const [name, viewport] of [
     });
   });
 }
+
+test.describe('the first level on a phone, upright', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('carrying, and delivered', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await carrying(page);
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('level-phone-carrying.png', TOLERANCE);
+    await page.evaluate(() => window.game!.restart());
+    await delivered(page);
+    await expect(page).toHaveScreenshot('level-phone-delivered.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+});

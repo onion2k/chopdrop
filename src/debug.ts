@@ -27,6 +27,7 @@
  */
 import { TREE_KINDS, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
+import type { Stage } from './delivery';
 import type { Game } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
 import { TREE_STRIDE } from './island';
@@ -67,6 +68,19 @@ export interface GameState {
   camera: { mode: 'chase' | 'parked'; position: Point; target: Point };
   /** How it is being flown (by the keys or by touch), the controls it was flown with at the last step, and the touch lever's lift. */
   input: InputState;
+  /**
+   * Where the level has got to: the stage, the pad wanted now (−1 once delivered), the ring (seconds landed on that
+   * pad), the time since the first lift-off and whether that has come, and the level's two pads.
+   */
+  delivery: {
+    stage: Stage;
+    target: number;
+    ring: number;
+    time: number;
+    started: boolean;
+    pickup: number;
+    drop: number;
+  };
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -140,6 +154,11 @@ export interface GameApi {
   /** The trees moving in the downwash, and how. */
   sway(): SwayState;
 
+  /** What the game has told since this was last asked, oldest first, as lines: `loaded 4`, `delivered 1 47.25`. */
+  events(): string[];
+  /** The level from the start again, as "Fly again" does. */
+  restart(): void;
+
   /** The controls held, as if a person held them, until `release`. */
   fly(forward: number, turn: number, lift: number): void;
   /** The controls let go of, and the keyboard read again. */
@@ -173,6 +192,10 @@ export interface DebugHost {
   setControls(controls: Controls | null): void;
   /** How it is being flown, as `state().input` says. */
   input(): InputState;
+  /** What the game has told, taken away as it is read. */
+  events(): string[];
+  /** The level from the start again, as the page's "Fly again" does. */
+  restart(): void;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
   draw(dt: number): void;
@@ -226,6 +249,15 @@ export function createApi(host: DebugHost): GameApi {
         },
         camera: { mode: rig.mode, position: [...rig.position], target: [...rig.target] },
         input: host.input(),
+        delivery: {
+          stage: game.delivery.stage,
+          target: game.delivery.target,
+          ring: game.delivery.ring,
+          time: game.delivery.time,
+          started: game.delivery.started,
+          pickup: game.delivery.job.pickup,
+          drop: game.delivery.job.drop,
+        },
       };
     },
     content: () => ({
@@ -275,6 +307,8 @@ export function createApi(host: DebugHost): GameApi {
       return { count: sway.count, capacity: sway.capacity, trees: moving };
     },
 
+    events: () => host.events(),
+    restart: () => host.restart(),
     fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),
     release: () => host.setControls(null),
     teleport(x, y, height, yaw = helicopter.yaw) {

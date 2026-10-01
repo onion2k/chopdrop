@@ -88,6 +88,121 @@
   #boot p {
     color: var(--dim);
   }
+  /* the words while a level is flown: what is wanted and where, the ring while loading, and the card at the end */
+  #hud .top {
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100vw - 28px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+  }
+  #hud.ended .top {
+    display: none;
+  }
+  #hud .bar,
+  #hud .ring {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(14, 12, 20, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+    color: var(--ink);
+    font-weight: 600;
+  }
+  #hud .bar {
+    padding: 8px 14px;
+    border-radius: 12px;
+    font-size: 15px;
+    line-height: 1.25;
+  }
+  #hud .arrow {
+    width: 26px;
+    height: 26px;
+    flex: none;
+    fill: #ffc23a;
+    stroke: #1b1208;
+    stroke-width: 1.2;
+  }
+  #hud .far {
+    color: #ffc23a;
+    white-space: nowrap;
+  }
+  #hud .ring {
+    padding: 5px 12px 5px 5px;
+    border-radius: 999px;
+    font-size: 14px;
+  }
+  #hud .ring[hidden] {
+    display: none;
+  }
+  #hud .ring svg {
+    width: 30px;
+    height: 30px;
+    fill: none;
+    stroke-width: 4;
+  }
+  #hud .ring .track {
+    stroke: rgba(255, 255, 255, 0.2);
+  }
+  #hud .ring .fill {
+    stroke: #ffc23a;
+    stroke-linecap: round;
+  }
+  #hud .done {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+  #hud .done[hidden] {
+    display: none;
+  }
+  #hud .card {
+    pointer-events: auto;
+    text-align: center;
+    padding: 22px 30px;
+    background: rgba(14, 12, 20, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px;
+    backdrop-filter: blur(10px);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  #hud .card h2 {
+    margin: 0 0 4px;
+    font-size: 30px;
+    color: #ffc23a;
+  }
+  #hud .card button {
+    margin-top: 16px;
+    min-width: 160px;
+    min-height: 48px;
+    border: 0;
+    border-radius: 12px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 700;
+    color: #1b1208;
+    background: linear-gradient(#ffb070, #e8863a 55%, #c96a26);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+  }
+  @media (max-width: 600px) {
+    #hud .bar {
+      font-size: 13px;
+    }
+    #hud .card h2 {
+      font-size: 26px;
+    }
+  }
   /* the touch controls: a stick for the left thumb and a lever for the right, orange over the island, shown while flown by touch */
   #touch {
     position: fixed;

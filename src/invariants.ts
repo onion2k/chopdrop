@@ -12,12 +12,16 @@
  * Each broken rule is a line saying what and where.
  */
 import { CHASE, type ChaseCamera } from './chase';
+import { DELIVERY, onPad } from './delivery';
 import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
 import type { Sway } from './sway';
+
+/** The stages a delivery can be at: anything else, set from outside, is a broken rule. */
+const STAGES: readonly string[] = ['pickup', 'carry', 'delivered'];
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
 const TOLERANCE = 1e-9;
@@ -76,6 +80,26 @@ export function checkInvariants(game: Game): string[] {
 
   if (!Number.isFinite(game.t) || game.t < 0) out.push(`the clock reads ${game.t}`);
   out.push(...checkSway(game.sway));
+  out.push(...checkDelivery(game));
+  return out;
+}
+
+/**
+ * What must hold of the delivery: it is at one of its three stages; its ring is a number from nothing to short of a
+ * full one, and runs only while the helicopter is landed on the pad it is wanted on; and its clock is a number that
+ * has not started before the first lift-off.
+ */
+export function checkDelivery(game: Game): string[] {
+  const out: string[] = [];
+  const d = game.delivery;
+  if (!STAGES.includes(d.stage)) return [`no such stage: the delivery is at ${String(d.stage)}`];
+  if (!Number.isFinite(d.ring) || d.ring < 0 || d.ring >= DELIVERY.load)
+    out.push(`the ring reads ${d.ring}, and runs from 0 to short of ${DELIVERY.load}`);
+  else if (d.ring > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
+    out.push(`the ring runs off the pad: ${d.ring.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
+  if (!Number.isFinite(d.time) || d.time < 0) out.push(`the delivery's clock reads ${d.time}`);
+  else if (!d.started && d.time > 0)
+    out.push(`the delivery's clock ran before the first lift-off: ${d.time.toFixed(3)}`);
   return out;
 }
 

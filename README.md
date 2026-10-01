@@ -16,8 +16,15 @@ hills and meadows, a snowy range in the north-west, gullies and valleys
 cut where the rain would cut them, lakes, rivers from the hills to the sea,
 some seven thousand trees of five kinds, which bow away from the rotor's
 downwash when the helicopter comes down low over them and spring back when
-it has gone, and nine landing pads with home on the south coast. There is nothing to deliver yet: the deliveries and where
-they go come one feature at a time, through `/feature`. The template's stub,
+it has gone, and nine landing pads with home on the south coast.
+
+The first level is a delivery: a crate waits on the meadow pad, a gold
+beacon over it, and an arrow at the top of the screen points the way and
+says how far. Land on the pad and stay while the ring fills, and the crate
+is strapped under the helicopter and the beacon moves to the hilltop pad;
+land there and stay, and it is delivered, with the time it took from the
+first lift-off and a button to fly it again. More levels, and where they
+go, come one feature at a time, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -59,7 +66,9 @@ is fixed, and no baseline is moved to make it green.
 
 ## Layout
 
-    src/game.ts        the game without the picture: the island, the helicopter, the clock
+    src/game.ts        the game without the picture: the island, the helicopter, the delivery, the clock
+    src/delivery.ts    the level: a parcel picked up on one pad and delivered to another
+    src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
     src/input.ts       the keyboard or touch, whichever was used last, as the helicopter's controls

@@ -4,7 +4,8 @@
  * flying about, letting go and sinking, hovering by tapping the lift,
  * climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
- * hill, down onto a pad and low over a wood, bowing its trees — with the
+ * hill, down onto a pad and low over a wood, bowing its trees, onto the
+ * pad the parcel is wanted at and waiting there, and flying the level again — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
@@ -68,7 +69,10 @@ export function fuzz(seed: number, frames: number): FuzzResult {
   });
 
   try {
-    const game = new Game({ random: seeded(seed) });
+    const game = new Game({
+      random: seeded(seed),
+      events: { loaded: () => count(happened, 'loaded'), delivered: () => count(happened, 'delivered') },
+    });
     const heli = game.helicopter;
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
     const rig = new ChaseCamera(game.island.ground, game.canopy);
@@ -249,6 +253,35 @@ export function fuzz(seed: number, frames: number): FuzzResult {
           };
           hold.wander = random() < 0.5;
           hold.busy = Math.floor(between(60, 300));
+        },
+      },
+      {
+        name: 'wanted pad',
+        places: true,
+        weight: 2,
+        go() {
+          // over the pad the parcel is wanted at, down onto it, and waiting there as long as a player does, or not quite
+          const target = game.delivery.target;
+          if (target < 0) return;
+          const pad = pads[target];
+          const spread = pad.radius * 0.5;
+          heli.placeAbove(
+            pad.x + between(-spread, spread),
+            pad.y + between(-spread, spread),
+            between(2, 30),
+            between(-Math.PI, Math.PI),
+          );
+          controls = { forward: 0, turn: 0, lift: -1 };
+          hold.busy = framesToLand() + Math.floor(between(30, 150));
+        },
+      },
+      {
+        name: 'fly again',
+        places: true,
+        weight: 1,
+        go() {
+          // the card's button, which is only there once the parcel is delivered
+          if (game.delivery.stage === 'delivered') game.restart();
         },
       },
       {

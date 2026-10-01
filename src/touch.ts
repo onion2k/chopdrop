@@ -101,6 +101,13 @@ export class TouchControls {
     this.version++;
   }
 
+  /** Back to the start: every finger let go, and the lever down at the sink, so a helicopter set on a pad rests there. */
+  reset(): void {
+    this.release();
+    this.lever = 0;
+    this.slid = 0;
+  }
+
   /** Every finger let go: the page has lost its focus or been hidden. */
   release(): void {
     this.stickFinger = -1;

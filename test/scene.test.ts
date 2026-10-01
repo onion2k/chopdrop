@@ -4,7 +4,7 @@
  * once for the file, since it takes most of a second.
  */
 import { describe, expect, it } from 'vitest';
-import { ISLAND, TREE_KINDS, theIsland } from '../src/arena';
+import { ISLAND, LEVELS, TREE_KINDS, theIsland } from '../src/arena';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
 import {
@@ -451,7 +451,8 @@ describe('the trees', () => {
 
   it('move, after the helicopter, and are not among what stands still', () => {
     expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
-    expect(scene.movers.slice(6)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.movers.slice(6, -3)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.movers.slice(-3)).toEqual(['crate', 'crate straps', 'beacon']);
     expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
     expect(scene.pools).toHaveLength(movers.length);
     movers.forEach((g, k) => expect(g.matrices).toBe(scene.pools[k]));
@@ -637,5 +638,64 @@ describe('the trees in the downwash', () => {
       expect(scene.changed[k], scene.movers[k]).toBe(kindsMoving.has(scene.movers[k].split(' ')[0]) ? 1 : 0);
     scene.write(pose(), sway);
     for (const k of treePools()) expect(scene.changed[k], scene.movers[k]).toBe(0);
+  });
+});
+
+describe('the parcel and the beacon', () => {
+  const parcelScene = new Scene();
+  const parcelGroups = parcelScene.dynamic(island);
+  const at = (name: string) => parcelGroups[parcelScene.movers.indexOf(name)].matrices;
+  const { pickup, drop } = LEVELS[0];
+  const job = { pickup, drop };
+  const pads = island.pads;
+  const far = pose({ x: pads[0].x, y: pads[0].y, z: pads[0].z });
+  const foot = (m: Float32Array) => [m[12], m[13], m[14]];
+
+  it('stands the crate on the pickup pad, beside its middle, and the beacon over that pad from high up', () => {
+    parcelScene.write(far, undefined, { stage: 'pickup', target: pickup, job });
+    const p = pads[pickup];
+    const [x, y, z] = foot(at('crate'));
+    expect(z).toBeCloseTo(p.z, 4);
+    const out = Math.hypot(x - p.x, y - p.y);
+    expect(out).toBeGreaterThan(p.radius * 0.5);
+    expect(out).toBeLessThan(p.radius * 0.8);
+    expect(Array.from(at('crate straps'))).toEqual(Array.from(at('crate')));
+    const b = at('beacon');
+    expect(foot(b).map((v) => +v.toFixed(3))).toEqual([p.x, p.y, p.z + 20].map((v) => +v.toFixed(3)));
+    expect(b[10]).toBe(1);
+  });
+
+  it('carries the crate under the helicopter, turning and tilting with it, and moves the beacon to the drop pad', () => {
+    const flying = pose({ x: 40, y: -200, z: 60, yaw: 1.1, pitch: 0.2, roll: -0.1 });
+    parcelScene.write(flying, undefined, { stage: 'carry', target: drop, job });
+    const c = at('crate');
+    const body = parcelScene.pools[0];
+    // the crate's axes are the body's: it is strapped on
+    for (const o of [0, 1, 2, 4, 5, 6, 8, 9, 10]) expect(c[o]).toBeCloseTo(body[o], 6);
+    const [x, y, z] = foot(c);
+    expect(Math.hypot(x - 40, y + 200)).toBeLessThan(1);
+    expect(z).toBeGreaterThan(59);
+    expect(z).toBeLessThan(61);
+    expect(foot(at('beacon'))[0]).toBeCloseTo(pads[drop].x, 4);
+  });
+
+  it('puts the beacon out once the helicopter is near the pad, and once the parcel is delivered, and leaves the crate on the drop pad', () => {
+    const p = pads[pickup];
+    parcelScene.write(pose({ x: p.x + 30, y: p.y, z: p.z + 10 }), undefined, { stage: 'pickup', target: pickup, job });
+    expect(Array.from(at('beacon').subarray(0, 11)).every((v) => v === 0)).toBe(true);
+    parcelScene.write(far, undefined, { stage: 'delivered', target: -1, job });
+    expect(Array.from(at('beacon').subarray(0, 11)).every((v) => v === 0)).toBe(true);
+    const d = pads[drop];
+    const [x, y, z] = foot(at('crate'));
+    expect(Math.hypot(x - d.x, y - d.y)).toBeLessThan(d.radius * 0.8);
+    expect(z).toBeCloseTo(d.z, 4);
+  });
+
+  it('writes the parcel and the beacon every frame, and only when told where the delivery is', () => {
+    const k = parcelScene.movers.indexOf('crate');
+    parcelScene.write(far);
+    expect(Array.from(parcelScene.changed.subarray(k, k + 3))).toEqual([0, 0, 0]);
+    parcelScene.write(far, undefined, { stage: 'pickup', target: pickup, job });
+    expect(Array.from(parcelScene.changed.subarray(k, k + 3))).toEqual([1, 1, 1]);
   });
 });

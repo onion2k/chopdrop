@@ -157,6 +157,36 @@ describe('what must always hold', () => {
     expect(checkCamera(cam, game, canopyKinds())).toEqual([]);
     expect(TREE_STRIDE).toBe(7);
   });
+
+  it('holds of a level flown through, and reports a delivery at no stage, a ring out of range or off the pad, and a clock gone wrong', () => {
+    const { game } = newGame();
+    const { pads } = game.island;
+    const target = () => pads[game.delivery.target];
+    for (let leg = 0; leg < 2; leg++) {
+      game.helicopter.placeAbove(target().x, target().y, 0, 0);
+      for (let f = 0; f < 60; f++) {
+        game.step(DT, { forward: 0, turn: 0, lift: 0 });
+        expect(checkInvariants(game)).toEqual([]);
+      }
+      for (let f = 0; f < 60; f++) game.step(DT, { forward: 0, turn: 0, lift: 0 });
+    }
+    expect(game.delivery.stage).toBe('delivered');
+    const d = game.delivery;
+    game.restart();
+    (d as { stage: string }).stage = 'lost';
+    expect(checkInvariants(game).join('\n')).toMatch(/no such stage/);
+    game.restart();
+    d.ring = 9;
+    expect(checkInvariants(game).join('\n')).toMatch(/the ring reads 9/);
+    d.ring = 0.5;
+    game.helicopter.placeAbove(pads[0].x, pads[0].y, 0, 0);
+    expect(checkInvariants(game).join('\n')).toMatch(/the ring runs off the pad/);
+    d.ring = 0;
+    d.time = 3;
+    expect(checkInvariants(game).join('\n')).toMatch(/clock ran before the first lift-off/);
+    d.time = NaN;
+    expect(checkInvariants(game).join('\n')).toMatch(/clock reads NaN/);
+  });
 });
 
 /** A game with the helicopter hovering four up over the thickest wood for two seconds, its trees bowed. */

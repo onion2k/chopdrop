@@ -833,6 +833,26 @@ export function treeShape(kind: TreeKind): TreeShape {
   }
 }
 
+/* ------------------------------------------------------------------ the parcel and the beacon */
+
+/** The parcel's size, said once: the crate the scene draws, and what it sits on and hangs under. */
+export const CRATE = { side: 1.5, height: 1.1, strap: 0.2 };
+
+/** The parcel: a wooden crate standing on z = 0, and the two straps round it, a hair proud of it so they show. */
+export function crate(): { wood: Mesh; straps: Mesh } {
+  const { side, height, strap } = CRATE;
+  const proud = 0.03;
+  return {
+    wood: box(side, side, height),
+    straps: join([box(side + proud, strap, height + proud), box(strap, side + proud, height + proud)]),
+  };
+}
+
+/** The beacon over a pad that is wanted: a tall square column standing on z = 0, seen from across the island. */
+export function beacon(width: number, height: number): Mesh {
+  return box(width, width, height);
+}
+
 /* ------------------------------------------------------------------ the pads */
 
 /**

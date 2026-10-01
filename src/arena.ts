@@ -5,6 +5,7 @@
  * generator in `island.ts` is the same for any recipe, and the lower modules
  * go on knowing nothing of what is on it.
  */
+import type { Job } from './delivery';
 import { buildIsland, type Island, type IslandRecipe } from './island';
 import { seeded } from './random';
 
@@ -249,6 +250,13 @@ export const ISLAND: IslandRecipe = {
     ],
   },
 };
+
+/**
+ * The levels, in order: each a parcel waiting on one pad and wanted on another, the pads by their place in the
+ * island's list, which a test holds to what they are. The first is a short one with a climb at the end: from the
+ * meadow pad, 187 inland of home, to the hilltop pad 187 beyond it and 53 up.
+ */
+export const LEVELS: readonly (Job & { name: string })[] = [{ name: 'First delivery', pickup: 4, drop: 1 }];
 
 /**
  * The one island, built from the recipe the first time it is asked for and
