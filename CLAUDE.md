@@ -7,12 +7,13 @@ physics from [artshape-physics](https://github.com/onion2k/artshape-physics).
 The README says what the game is; this file says how it is made. The house
 rules in `~/.claude/CLAUDE.md` apply too.
 
-The helicopter is built: flown from the keyboard over the walled floor,
-with a chase camera. Nothing else is: no deliveries, nowhere to take them,
-no save and no touch controls. The template's stub, a sled shoving balls
-into a hole, was taken out in the second commit. The first commit,
-`eda26d8`, has the stub and every gate that held it: it is the model to
-copy from, and `git show eda26d8:<path>` reads any of it.
+The helicopter is built, and the island it flies over: flown from the
+keyboard, with a chase camera, over land and sea made at boot from a recipe.
+Nothing else is: no deliveries, nothing wanted at the nine pads, no save and
+no touch controls. The template's stub, a sled shoving balls into a hole,
+was taken out in the second commit. The first commit, `eda26d8`, has the
+stub and every gate that held it: it is the model to copy from, and
+`git show eda26d8:<path>` reads any of it.
 
 ## The factory
 
@@ -80,27 +81,35 @@ says why. Look at every picture.
 
 ## How the code is laid out
 
-- `src/game.ts` is the game without the picture: the walled floor, the
+- `src/game.ts` is the game without the picture: the island, the
   helicopter and the clock, a step at a time. It knows nothing of the
   renderer or the page. What happens in it will be told through a
   `GameEvents` handed in, as the first commit's does.
 - `src/helicopter.ts` is the player's machine: the flight, and the numbers
-  and size in `HELICOPTER`, said once. It is handed the floor's edge, not
-  the arena.
+  and size in `HELICOPTER`, said once. It is handed a ground, an edge and
+  the height of what it can stand on at every point, not the island.
 - `src/main.ts` is the page. It draws the frame, and will turn the game's
   events into words on the screen. There is no game logic here.
   `src/input.ts` turns keys into `Controls`; `src/chase.ts` is the camera
-  rig, stepped with the game so the pictures repeat.
+  rig, stepped with the game so the pictures repeat, and handed the ground
+  so that it stays above it.
 - `src/debug.ts` is `window.game`, the test API: time, the seed, the
-  helicopter (`fly`, `release`, `teleport`), the camera (`look` parks it,
-  `chase` sends it back) and measuring. Each thing put on the floor gains
-  here what a test needs to place it and read it back.
+  helicopter (`fly`, `release`, `teleport`, which takes a height above the
+  ground and not a height above the sea), the ground (`groundAt`), what is
+  on the island (`content`: the pads, home, the bounds and the ceiling), the
+  camera (`look` parks it, `chase` sends it back) and measuring. Each thing
+  put on the island gains here what a test needs to place it and read it
+  back.
 - `src/invariants.ts` lists the rules that must always hold;
   `scripts/fuzzer.ts` plays the game at random and checks them.
-- Content (the floor and the rock round it) lives in `arena.ts`. Chance
-  comes from `random.ts`, handed in. `scene.ts` is the arena and the
-  helicopter as drawn; `matrix.ts` places, tilts and spins; `meshes.ts`
-  builds the shapes.
+- Content lives in `arena.ts`: the island's recipe, with every number
+  named, and the one island built from it once. The generator is
+  `island.ts`, the same for any recipe; `heightfield.ts` is the grid it
+  works on, sampled on the triangles that are drawn, and the algorithms
+  that read a grid (the flood, the flow, the distances); `noise.ts` is the
+  seeded noise. Chance comes from `random.ts`, handed in. `scene.ts` is the
+  island and the helicopter as drawn; `matrix.ts` places, tilts and spins;
+  `meshes.ts` builds the shapes.
 - There is no physics or save yet. `artshape-physics` stays pinned in
   `package.json`, and `src/physics.ts` comes back as the one door to it with
   the first body; nothing else imports the package. A change it needs goes
@@ -126,7 +135,7 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   key is `chopdrop-save-v1`.
 - **The physics, the bench and the body invariants** (`src/physics.ts`,
   `scripts/bench.ts`, `scripts/benching.ts`), with the first body on the
-  floor, a delivery most likely.
+  island, a delivery most likely.
 - **The autopilot, determinism, leaks and pace** (`src/autopilot.ts`,
   `scripts/determinism*.ts`, `scripts/leak*.ts`, `scripts/pace*.ts`), with
   the first thing the game can be played to: a delivery made. Pace becomes
@@ -139,12 +148,25 @@ The invariants and the fuzzer came back with the helicopter.
 ## Model features
 
 - **The helicopter**, for anything a player flies or that moves: its flight
-  in `helicopter.ts`, handed the floor's edge by `game.ts`; drawn by
-  `scene.ts` as a group per colour and one per rotor, placed by
-  `placeFrame` and `placePart`; followed by `chase.ts`; flown by `input.ts`;
-  read and set by `debug.ts`; ruled by `invariants.ts`; played by the
-  fuzzer's actions; flown by key in `smoke/game.spec.ts`, and pictured in
+  in `helicopter.ts`, handed the island's ground by `game.ts` and held
+  between that and its ceiling; drawn by `scene.ts` as a group per colour
+  and one per rotor, placed by `placeFrame` and `placePart`; followed by
+  `chase.ts`, above the ground; flown by `input.ts`; read and set by
+  `debug.ts`; ruled by `invariants.ts`; played by the fuzzer's actions;
+  flown by key in `smoke/game.spec.ts`, and pictured in
   `smoke/look.spec.ts` (`chase.png`, `turning.png`).
+- **The island**, for anything on the land: its recipe in `arena.ts`,
+  generated by `island.ts` from `heightfield.ts` and `noise.ts`, once, at
+  boot. Its ground, the land and the water over it and the pads' tops, is
+  what the helicopter and the camera stand on, on the very triangles that
+  are drawn; `scene.ts` draws it as a group for each surface and each kind
+  of water, the pads and the trees; `debug.ts` reads it through `content()`
+  and `groundAt`; the invariants hold the helicopter to its ground; the
+  fuzzer flies it, off the pads and onto them, and low at rising land.
+- **The trees**, for scenery there are thousands of: placed by habitat in
+  `island.ts`, shaped to about a hundred and fifty triangles a crown in
+  `meshes.ts`, and drawn by `scene.ts` instanced, a trunk group and a crown
+  group a kind, each tree's colour moved a little by its own shade.
 - **The stub's ball**, for a body: a body kind in `arena.ts`, drawn by
   `scene.ts`, banked by `game.ts`, counted by `invariants.ts`, read by
   `debug.ts`, and pictured, all in `eda26d8`.
@@ -202,8 +224,9 @@ For anything new in the arena, check what it does:
   and two wanted at once
 - **height:** on the ground, at the most the helicopter can climb to, and at
   rest in the air
-- **the wall and the edge of the world:** flown at, carried past, dropped
-  over, in the corners; never left inside the rock
+- **the land and the edge of the world:** hills, water and the edge flown
+  at, carried past, dropped over, in the corners; never left inside the
+  land
 - **the camera:** following at full speed, and behind something tall
 - **save:** saved, reloaded, and loaded from an old save without the field
 - **scale:** many at once, at capacity; and what it costs a frame at that
