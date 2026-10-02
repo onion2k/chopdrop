@@ -70,7 +70,7 @@ async function ringAhead(page: Page, id: string, ring: number, back: number) {
       const before = (k: number, d: number) => {
         const r = rings[k];
         const [x, y] = [r.x - Math.cos(r.yaw) * d, r.y - Math.sin(r.yaw) * d];
-        g.teleport(x, y, r.z - middle - g.groundAt(x, y), r.yaw);
+        g.teleport(x, y, r.z - middle - g.floorAt(x, y), r.yaw);
       };
       for (let k = 0; k < n; k++) {
         before(k, 12);

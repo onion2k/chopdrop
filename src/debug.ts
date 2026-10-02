@@ -157,6 +157,11 @@ export interface GameApi {
   content(): { bounds: Bounds; world: Bounds; ceiling: number; seaLevel: number; pads: PadInfo[]; home: PadInfo };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
+  /**
+   * Where a helicopter at a point rests: the ground, and on a slope a little higher, so its skids are on it. What
+   * `teleport`'s height is over, so a test that wants it at a height above the sea takes this from it.
+   */
+  floorAt(x: number, y: number): number;
 
   /** Every tree whose foot is within `radius` of a point across the ground, nearest first. */
   treesNear(x: number, y: number, radius: number): TreeInfo[];
@@ -299,6 +304,7 @@ export function createApi(host: DebugHost): GameApi {
       home: padInfo(game.island.pads[0]),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
+    floorAt: (x, y) => helicopter.floorAt(x, y),
     treesNear(x, y, radius) {
       const { trees, treeCount } = game.island;
       const found: (TreeInfo & { d: number })[] = [];

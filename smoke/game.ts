@@ -168,7 +168,7 @@ export async function finish(page: Page) {
         if (step.kind === 'ring') {
           const [ax, ay] = [Math.cos(step.yaw), Math.sin(step.yaw)];
           const [x, y] = [step.x - ax * 12, step.y - ay * 12];
-          g.teleport(x, y, step.z - middle - g.groundAt(x, y), step.yaw);
+          g.teleport(x, y, step.z - middle - g.floorAt(x, y), step.yaw);
           g.fly(1, 0, hover);
           g.step(90);
           g.release();

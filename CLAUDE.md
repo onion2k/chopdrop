@@ -138,7 +138,9 @@ says why. Look at every picture.
 - `src/debug.ts` is `window.game`, the test API: time, the seed, the
   helicopter (`fly`, whose lift of `HOVER_LIFT` holds the height, since
   nothing held sinks; `release`; `teleport`, which takes a height above the
-  ground and not a height above the sea), the ground (`groundAt`), what is
+  floor, where the skids rest, and not a height above the sea), the ground
+  (`groundAt`, and `floorAt`, which on a slope is higher, so a test that
+  wants a height above the sea takes the floor from it), what is
   on the island (`content`: the pads, home, the bounds and the ceiling), the
   level (`state().mission`, `events()`, which takes what the game has
   told, `restart`, and `play`, which flies any level as the list does, locked

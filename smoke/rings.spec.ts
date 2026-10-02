@@ -21,7 +21,7 @@ async function before(page: Page, ring: Ring, back: number, across = 0) {
       const g = window.game!;
       const [ax, ay] = [Math.cos(r.yaw), Math.sin(r.yaw)];
       const [x, y] = [r.x - ax * b - ay * c, r.y - ay * b + ax * c];
-      g.teleport(x, y, r.z - middle - g.groundAt(x, y), r.yaw);
+      g.teleport(x, y, r.z - middle - g.floorAt(x, y), r.yaw);
     },
     [ring, back, across, HELICOPTER.size.middle] as const,
   );
