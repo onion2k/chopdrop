@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
-import { DELIVERY, onPad, type Gate, type Level, type Ring } from '../src/mission';
+import { crossed, DELIVERY, onPad, RING as RING_RULES, type Gate, type Level, type Ring } from '../src/mission';
 import { seeded } from '../src/random';
 import { DT, padsOf } from './helpers';
 
@@ -439,5 +439,68 @@ describe('a course: openings to fly through, and a pad to land on', () => {
     expect(told.slice(-2, -1)).toEqual(['landed 0']);
     expect(told.at(-1)).toMatch(/^finished course \d+\.\d\d$/);
     expect(mission.done).toBe(true);
+  });
+});
+
+const RULES_JUMP = RING_RULES.jump;
+
+describe('crossing an opening', () => {
+  // both face +x, so "across" is y and "up" is z from the middle at (0, 0, 200)
+  const ring: Ring = { kind: 'ring', x: 0, y: 0, z: 200, yaw: 0, opening: 8 };
+  const gate: Gate = { kind: 'gate', x: 0, y: 0, z: 200, yaw: 0, width: 20, height: 12, label: 'under the bridge' };
+  const at = (x: number, y = 0, z = 200) => ({ x, y, z });
+
+  it('counts a move straight through a ring from behind to in front', () => {
+    expect(crossed(ring, at(-1), at(1))).toBe(true);
+  });
+
+  it('counts nothing for a move through it backwards', () => {
+    expect(crossed(ring, at(1), at(-1))).toBe(false);
+  });
+
+  it('counts nothing for a crossing of the face outside the ring, across or up', () => {
+    expect(crossed(ring, at(-1, 8.5), at(1, 8.5))).toBe(false);
+    expect(crossed(ring, at(-1, 0, 208.5), at(1, 0, 208.5))).toBe(false);
+    expect(crossed(ring, at(-1, 7.9), at(1, 7.9))).toBe(true);
+  });
+
+  it('works out the crossing point on a slanted move, not the ends', () => {
+    // the end is outside the opening, but the move crosses the face at y = 8, on its rim
+    expect(crossed(ring, at(-1, 6), at(1, 10))).toBe(true);
+    // the end is inside, but the move crosses the face at y = 8.25, outside
+    expect(crossed(ring, at(-1, 9.5), at(1, 7))).toBe(false);
+  });
+
+  it('counts a move across a gate inside its rectangle', () => {
+    expect(crossed(gate, at(-1, 9.9, 205.9), at(1, 9.9, 205.9))).toBe(true);
+    expect(crossed(gate, at(-1, -9.9, 194.1), at(1, -9.9, 194.1))).toBe(true);
+  });
+
+  it('counts nothing across a gate just outside its width or just above or below its height', () => {
+    expect(crossed(gate, at(-1, 10.1), at(1, 10.1))).toBe(false);
+    expect(crossed(gate, at(-1, -10.1), at(1, -10.1))).toBe(false);
+    expect(crossed(gate, at(-1, 0, 206.1), at(1, 0, 206.1))).toBe(false);
+    expect(crossed(gate, at(-1, 0, 193.9), at(1, 0, 193.9))).toBe(false);
+  });
+
+  it('follows the opening round when it faces another way', () => {
+    const turned: Gate = { ...gate, yaw: Math.PI / 2 };
+    // faces +y, so across is x
+    expect(crossed(turned, at(0, -1), at(0, 1))).toBe(true);
+    expect(crossed(turned, at(0, 1), at(0, -1))).toBe(false);
+    expect(crossed(turned, at(10.1, -1), at(10.1, 1))).toBe(false);
+  });
+
+  it('counts nothing for a move longer than a step could fly, which is a teleport', () => {
+    const half = RULES_JUMP / 2;
+    expect(crossed(ring, at(-half + 0.01), at(half - 0.01))).toBe(true);
+    expect(crossed(ring, at(-half - 0.5), at(half + 0.5))).toBe(false);
+    // the jump is the move in three dimensions, not only along the way it is flown
+    expect(crossed(ring, at(-2, 0, 200), at(2, 0, 200 + RULES_JUMP))).toBe(false);
+  });
+
+  it('counts nothing for a move that starts on the face, and counts one that ends on it', () => {
+    expect(crossed(ring, at(0), at(1))).toBe(false);
+    expect(crossed(ring, at(-1), at(0))).toBe(true);
   });
 });

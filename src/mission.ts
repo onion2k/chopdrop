@@ -122,6 +122,29 @@ export function onPad(h: Readonly<Lander>, pad: Readonly<Pad>): boolean {
   );
 }
 
+/**
+ * Whether a move of the helicopter's middle from `from` to `to` went through `opening`, a ring or a gate: from behind
+ * its face to in front of it, crossing inside it (within a ring's radius of its middle, or within a gate's half width
+ * to the side and half height up or down), and no further than a step's flight. It is one rule, said once, so that
+ * whatever else passes openings passes them exactly as a mission does.
+ */
+export function crossed(opening: Ring | Gate, from: Readonly<Point3>, to: Readonly<Point3>): boolean {
+  const ax = Math.cos(opening.yaw),
+    ay = Math.sin(opening.yaw);
+  const before = (from.x - opening.x) * ax + (from.y - opening.y) * ay;
+  const now = (to.x - opening.x) * ax + (to.y - opening.y) * ay;
+  const moved = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z);
+  if (before >= 0 || now < 0 || moved > RING.jump) return false;
+  // where the move crossed the face, across it and up from its middle, and whether that is inside the opening
+  const t = before / (before - now);
+  const cx = from.x + (to.x - from.x) * t - opening.x,
+    cy = from.y + (to.y - from.y) * t - opening.y;
+  const across = -cx * ay + cy * ax;
+  const up = from.z + (to.z - from.z) * t - opening.z;
+  if (opening.kind === 'ring') return Math.hypot(across, up) <= opening.opening;
+  return Math.abs(across) <= opening.width / 2 && Math.abs(up) <= opening.height / 2;
+}
+
 export class Mission {
   /** The step being done, by its place in the level's list; the list's length once the level is done. */
   next = 0;
@@ -135,6 +158,8 @@ export class Mission {
   private readonly wanted: Point3 = { x: 0, y: 0, z: 0 };
   /** Where the helicopter's middle was at the last step, which a ring is passed by moving from; none until it has been seen. */
   private readonly was: Point3 = { x: 0, y: 0, z: 0 };
+  /** Where the helicopter's middle is now, written in place by `through`, so passing an opening makes nothing each step. */
+  private readonly here: Point3 = { x: 0, y: 0, z: 0 };
   private seen = false;
 
   constructor(
@@ -259,31 +284,18 @@ export class Mission {
   }
 
   /**
-   * Whether the helicopter's middle went through `opening`, a ring or a gate, since the last step: from behind its face
-   * to in front of it, crossing inside it (within a ring's radius of its middle, or within a gate's half width to the
-   * side and half height up or down), and no further than a step's flight. Where it is now is remembered either way.
+   * Whether the helicopter went through `opening`, a ring or a gate, since the last step: see `crossed`, which is given
+   * its middle then and now. Where it is now is remembered either way.
    */
   private through(opening: Ring | Gate, h: Readonly<Lander>): boolean {
-    const x = h.x,
-      y = h.y,
-      z = h.z + HELICOPTER.size.middle;
-    const w = this.was;
     const fresh = !this.seen;
-    const ax = Math.cos(opening.yaw),
-      ay = Math.sin(opening.yaw);
-    const before = (w.x - opening.x) * ax + (w.y - opening.y) * ay;
-    const now = (x - opening.x) * ax + (y - opening.y) * ay;
-    const moved = Math.hypot(x - w.x, y - w.y, z - w.z);
+    const now = this.here;
+    now.x = h.x;
+    now.y = h.y;
+    now.z = h.z + HELICOPTER.size.middle;
+    const crossing = !fresh && crossed(opening, this.was, now);
     this.remember(h);
-    if (fresh || before >= 0 || now < 0 || moved > RING.jump) return false;
-    // where the move crossed the face, across it and up from its middle, and whether that is inside the opening
-    const t = before / (before - now);
-    const cx = w.x + (x - w.x) * t - opening.x,
-      cy = w.y + (y - w.y) * t - opening.y;
-    const across = -cx * ay + cy * ax;
-    const up = w.z + (z - w.z) * t - opening.z;
-    if (opening.kind === 'ring') return Math.hypot(across, up) <= opening.opening;
-    return Math.abs(across) <= opening.width / 2 && Math.abs(up) <= opening.height / 2;
+    return crossing;
   }
 
   /** Where the helicopter's middle is now, for the next step to go from. */
