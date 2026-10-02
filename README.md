@@ -38,7 +38,10 @@ rings over the hills, and down onto the shoulder pad. A level's end is told
 in a toast with its time, and flight carries on. Esc, or the corner button,
 brings up the panel: every level, its best time and where it starts, a way
 shown to any of them, the one going given up, and the structures ticked as
-collected. Ten hidden packages with a radar come next, through `/feature`. The template's stub,
+collected. Ten packages are hidden in woods across the island, in blue
+crates: a radar in the corner pings when one is within 100 m, faster as it
+is neared, and landing within 15 m of one finds it. A rescue level comes
+next, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -91,6 +94,7 @@ is fixed, and no baseline is moved to make it green.
     src/panel.ts       the panel: every level, its best time and where it starts, the way shown, and abandon
     src/progress.ts    the save: the best time on each level and the structures collected, kept in the browser
     src/collection.ts  the structures collected: an opening flown through, either way
+    src/finds.ts       the hidden packages found, and the radar that hears the nearest
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn

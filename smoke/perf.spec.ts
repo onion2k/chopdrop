@@ -23,7 +23,7 @@ import { expect, test } from '@playwright/test';
 import { LEVELS } from '../src/arena';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Ring } from '../src/mission';
-import { COLLECTIBLES } from '../src/arena';
+import { COLLECTIBLES, PACKAGES } from '../src/arena';
 import { WOOD, standardView, start, watch } from './game';
 import { moved as hasMoved, type Figures } from './judging';
 
@@ -160,5 +160,70 @@ test('a view at a pair of towers with all seven structures collected: the frame 
   const ms = Math.round(gold.ms * 1000) / 1000;
   info.annotations.push({ type: 'perf-collected', description: `${ms} ms, not held to the baseline or the budget` });
   console.log(`perf: collected view frame ${ms} ms (not held)`);
+  expect(problems).toEqual([]);
+});
+
+test('a view over a wood with a package in it, and the radar badge pulsing: the frames told, not held', async ({
+  page,
+}, info) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  const pack = PACKAGES.find((p) => p.id === 'lake-east-wood')!;
+  // the chase camera behind the helicopter hovering 40 m short of the crate, which is in view: the frame with the crate
+  // pool in it, and the radar hearing it
+  const wood = await page.evaluate(
+    async ([p, hover]) => {
+      const g = window.game!;
+      const yaw = 0.9;
+      g.chase();
+      g.teleport(p.x - Math.cos(yaw) * 40, p.y - Math.sin(yaw) * 40, 22, yaw);
+      g.fly(0, 0, hover);
+      g.step(40);
+      g.release();
+      return { crates: g.state().crates, badge: g.state().radar.badge, ms: await g.measureFrame(50) };
+    },
+    [pack, HOVER_LIFT] as const,
+  );
+  expect(wood.crates).toBe(10);
+  expect(wood.badge).toBe('heard');
+  const woodMs = Math.round(wood.ms * 1000) / 1000;
+  info.annotations.push({ type: 'perf-package', description: `${woodMs} ms, not held to the baseline or the budget` });
+  console.log(`perf: wood with a package view frame ${woodMs} ms (not held)`);
+  // the badge pulsing: the page's own frame, stepped and drawn with its HUD, timed one at a time at 95 m from the crate,
+  // where a ring lives about three quarters of the time and the rest is quiet between them, and told apart by whether
+  // a ring was out on that frame; the same place and view throughout, so the difference is what the badge's writes cost
+  // the page's thread, and the GPU's frame is the same in both
+  const timed = await page.evaluate(
+    ([p, hover]) => {
+      const g = window.game!;
+      const median = (xs: number[]) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+      g.teleport(p.x + 95, p.y, 25, 0);
+      g.chase();
+      g.fly(0, 0, hover);
+      g.step(60);
+      const ring: number[] = [],
+        idle: number[] = [];
+      for (let f = 0; f < 1200; f++) {
+        const t = performance.now();
+        g.step(1);
+        const ms = performance.now() - t;
+        (g.state().radar.step > 0 ? ring : idle).push(ms);
+      }
+      g.release();
+      return { ring: median(ring), idle: median(idle), rings: ring.length, idles: idle.length };
+    },
+    [pack, HOVER_LIFT] as const,
+  );
+  expect(timed.rings, 'frames with a ring out').toBeGreaterThan(100);
+  expect(timed.idles, 'frames between rings').toBeGreaterThan(100);
+  const [ringMs, idleMs] = [timed.ring, timed.idle].map((v) => Math.round(v * 1000) / 1000);
+  info.annotations.push({
+    type: 'perf-badge',
+    description: `${ringMs} ms a stepped frame with a ring out, ${idleMs} ms between rings, not held`,
+  });
+  console.log(
+    `perf: badge pulsing, a stepped frame ${ringMs} ms with a ring out, ${idleMs} ms between rings (not held)`,
+  );
   expect(problems).toEqual([]);
 });

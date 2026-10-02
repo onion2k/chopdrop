@@ -29,7 +29,7 @@ import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
-import { COLLECTIBLES, LEVELS, TREE_KINDS } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, TREE_KINDS } from '../src/arena';
 import { treeSize } from '../src/meshes';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
@@ -37,6 +37,8 @@ import { seeded } from '../src/random';
 const DT = 1 / 60;
 /** How many frames between checks, when nothing has just been done. */
 const CHECK_EVERY = 10;
+/** How many times a seed's own level is tried before the run goes on without it. */
+const OWED_TRIES = 6;
 /** How many of the last things done a failure reports. */
 const LOG_TAIL = 25;
 
@@ -87,6 +89,11 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         ...COLLECTIBLES.flatMap((c) => (random() < 0.3 ? [c.id] : [])),
         ...(random() < 0.2 ? ['from-a-later-game'] : []),
       ],
+      // and some packages found, any of them, and now and then one a later game has
+      found: [
+        ...PACKAGES.flatMap((p) => (random() < 0.25 ? [p.id] : [])),
+        ...(random() < 0.2 ? ['from-a-later-game'] : []),
+      ],
     };
     const game = new Game({
       random: seeded(seed),
@@ -100,6 +107,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         through: () => count(happened, 'through a gate'),
         landed: () => count(happened, 'landed where wanted'),
         collected: () => count(happened, 'collected'),
+        found: () => count(happened, 'found'),
         finished: (_id, _seconds, best) => count(happened, best ? 'finished, a best time' : 'finished'),
       },
     });
@@ -114,6 +122,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
     const { ground, pads, trees, treeCount } = game.island;
     // how many structures were collected at the last check, which only ever goes up within a game
     let collectedAt = game.collection.count;
+    // and how many packages were found, which the same holds of
+    let foundAt = game.finds.count;
     let controls: Controls = { ...IDLE };
     // how many frames the current thing is still held for, whether it is a landing, which ends when the skids touch,
     // the rhythm the lift is tapped at, frames on and frames in all, if it is a hover, and whether it is a run of
@@ -433,6 +443,27 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         go: lineUpOnStructure,
       },
       {
+        name: 'to a package',
+        places: true,
+        weight: 3,
+        go() {
+          // over a place a package lies, then let down onto the ground 10 to 20 m from it at any bearing, so that some
+          // land within its 15 m and some just outside, and held until landed
+          const p = PACKAGES[Math.floor(random() * PACKAGES.length)];
+          const away = between(10, 20);
+          const round = between(-Math.PI, Math.PI);
+          heli.placeAbove(
+            p.x + Math.cos(round) * away,
+            p.y + Math.sin(round) * away,
+            between(2, 30),
+            between(-Math.PI, Math.PI),
+          );
+          controls = { forward: 0, turn: 0, lift: -1 };
+          hold.busy = framesToLand();
+          hold.landing = true;
+        },
+      },
+      {
         name: 'structure run',
         places: true,
         weight: 2,
@@ -487,9 +518,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         go() {
           // at a level's start, whether or not one is going, since nothing may begin while one is: down onto a pickup
           // pad for as long as the load takes, or lined up on the first ring or opening and flown through it
-          // the first of a run goes to the level its seed names, in turn, so that the seeds between them reach every
-          // start; those after are at random
-          const at = timesDone('to a start') === 0 ? seed % LEVELS.length : Math.floor(random() * LEVELS.length);
+          // the level the seed names, in turn, is gone to first and until it has begun (see `owed`), so that the seeds
+          // between them reach every start however the other actions fall; those after are at random
+          const at = owed() ? seed % LEVELS.length : Math.floor(random() * LEVELS.length);
           const start = LEVELS[at].steps[0];
           if (start.kind === 'pickup') downOnPad(start.pad, 90);
           else {
@@ -549,12 +580,22 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       },
     ];
     const total = actions.reduce((n, a) => n + a.weight, 0);
+    /**
+     * Whether the level the seed names is still owed a start: no level was asked for, it has not begun, and it has not
+     * been tried more than a handful of times, so a level that cannot begin shows in the seeds' coverage and does not
+     * swallow the run. Held by design, since which level a seed reaches by chance moves whenever an action is added.
+     */
+    const owed = (): boolean =>
+      level === undefined &&
+      !happened[`started ${LEVELS[seed % LEVELS.length].id}`] &&
+      timesDone('to a start') < OWED_TRIES;
     const act = () => {
       // everything is done once, in an order chosen by chance, before anything is chosen by weight, so that even a
       // short run does everything there is
       const untried = actions.filter((a) => timesDone(a.name) === 0);
       let chosen = actions[0];
-      if (untried.length) chosen = untried[Math.floor(random() * untried.length)];
+      if (owed()) chosen = actions.find((a) => a.name === 'to a start')!;
+      else if (untried.length) chosen = untried[Math.floor(random() * untried.length)];
       else {
         let pick = random() * total;
         for (const a of actions) {
@@ -636,6 +677,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
             `the structures collected went down: ${collectedAt} at the last check, ${game.collection.count} now`,
           );
         collectedAt = game.collection.count;
+        if (game.finds.count < foundAt)
+          problems.push(`the packages found went down: ${foundAt} at the last check, ${game.finds.count} now`);
+        foundAt = game.finds.count;
         if (problems.length) return fail(problems);
       }
     }

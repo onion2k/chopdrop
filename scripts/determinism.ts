@@ -42,7 +42,9 @@ export interface TwiceResult {
  * Everything the game is at this moment, as one number in hex: where the helicopter is, how fast it is going and
  * how it is turned and tilted, its rotor; which level is going (−1 for none) and where it has got to; what the starts
  * are loading and which pad they have blocked; the level guided to (−1 for none); every tree moving and how it leans;
- * the best times kept; the structures collected, how many and which, in order; and the clock. Two games with the same hash are the same game, down to the last bit of every float.
+ * the best times kept; the structures collected, how many and which, in order; the packages found, the same, with
+ * what the radar hears and its clock; and the clock. Two games with the same hash are the same game, down to the last
+ * bit of every float.
  */
 export function hashGame(game: Game): string {
   const { helicopter: h, mission: d, sway } = game;
@@ -79,6 +81,10 @@ export function hashGame(game: Game): string {
   for (const seconds of game.progress.best.values()) eat(seconds);
   eat(game.collection.count);
   for (const id of game.collection.ids) for (let k = 0; k < id.length; k++) eat(id.charCodeAt(k));
+  eat(game.finds.count);
+  for (const id of game.finds.ids) for (let k = 0; k < id.length; k++) eat(id.charCodeAt(k));
+  eat(game.finds.nearest);
+  eat(game.finds.until);
   eat(game.t);
   return (hash >>> 0).toString(16).padStart(8, '0');
 }

@@ -5,7 +5,8 @@ import { LEVELS } from '../src/arena';
 
 describe('the fuzzer', () => {
   it('plays a seed through without breaking a rule, and does everything a player can', () => {
-    const r = fuzz(1, 4000);
+    // long enough to try every action once, which the run's first, a seed's own level, makes room for
+    const r = fuzz(1, 6000);
     expect(r.failure, JSON.stringify(r.failure)).toBe(null);
     for (const action of [
       'fly',
@@ -30,6 +31,7 @@ describe('the fuzzer', () => {
       'onto a structure',
       'through the gate',
       'through a structure',
+      'to a package',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
@@ -51,6 +53,7 @@ describe('the fuzzer', () => {
       'rested on a structure',
       'abandoned',
       'collected',
+      'found',
     ])
       expect(seen, happening).toContain(happening);
   });
@@ -74,6 +77,7 @@ describe('the fuzzer', () => {
 
   it('comes back with a save of some levels done, and starts every level by itself, over the seeds `npm run fuzz` plays', () => {
     const started = new Set<string>();
+    // held by design: each seed's own level is gone to first, until it has begun
     for (let seed = 1; seed <= 12; seed++)
       for (const key of Object.keys(fuzz(seed, 4000).happened)) if (key.startsWith('started ')) started.add(key);
     expect([...started].sort()).toEqual(LEVELS.map((level) => `started ${level.id}`).sort());

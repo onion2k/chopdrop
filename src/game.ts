@@ -13,9 +13,10 @@
  * before anything uses it, so that the first thing that does is seeded from
  * its first line.
  */
-import { COLLECTIBLES, LEVELS, STRUCTURES, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, STRUCTURES, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
 import { Canopy } from './canopy';
 import { Collection } from './collection';
+import { Finds } from './finds';
 import { HELICOPTER, Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
@@ -29,12 +30,14 @@ import { Sway, reachedLean } from './sway';
 /**
  * What the game tells the page as it happens, so the page can put it into words: a level begun or abandoned, a parcel
  * loaded and delivered, a level done, by its name, with the time it took and whether that is the best time on it yet,
- * and a structure collected.
+ * a structure collected and a package found.
  */
 export interface GameEvents extends Omit<MissionEvents, 'finished'> {
   finished?(level: string, seconds: number, best: boolean): void;
   /** A structure collected for the first time: its name, how many are collected now, and of how many there are. */
   collected?(id: string, n: number, of: number): void;
+  /** A hidden package found for the first time: its name, how many are found now, and of how many there are. */
+  found?(id: string, n: number, of: number): void;
 }
 
 /** The last level done: which, how long it took, and whether that was the best time on it yet. */
@@ -84,6 +87,8 @@ export class Game {
   readonly progress: Progress;
   /** The structures collected, by flying through their openings, whatever is going. */
   readonly collection: Collection;
+  /** The hidden packages found, by landing near them, whatever is going, and the radar that hears the rest. */
+  readonly finds: Finds;
   /** What the helicopter cannot fly into: what stands on the island, and the rings that are drawn. */
   readonly solids: Solids;
   /** The last level done, for the toast and the invariants; null until one is. */
@@ -120,6 +125,7 @@ export class Game {
     );
     this.progress = options.progress ?? new Progress();
     this.collection = new Collection(COLLECTIBLES, this.progress);
+    this.finds = new Finds(PACKAGES, this.progress);
     const events = options.events ?? {};
     this.events = events;
     this.mission = new Mission(pads, {
@@ -270,6 +276,12 @@ export class Game {
     if (found) {
       this.progress.persist();
       this.events.collected?.(found.id, this.collection.count, COLLECTIBLES.length);
+    }
+    // after the collection, and whatever is going: a package is found by where the helicopter has just landed
+    const place = this.finds.step(this.helicopter, dt);
+    if (place) {
+      this.progress.persist();
+      this.events.found?.(place.id, this.finds.count, PACKAGES.length);
     }
   }
 }

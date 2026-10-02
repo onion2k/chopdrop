@@ -17,7 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { COLLECTIBLES, LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
 import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Gate, Ring } from '../src/mission';
@@ -201,6 +201,65 @@ async function collecting(page: Page, id: string, radius = 140) {
     [id, HOVER_LIFT, gate.x, gate.y, radius] as const,
   );
   await expect(page.locator('#hud .toast h2')).toHaveText('Collected');
+}
+
+/** The package in a wood by a lake, which a clearing is pictured at, and the three a panel's dots are filled for. */
+const INLAND = PACKAGES.find((p) => p.id === 'lake-east-wood')!;
+const THREE_FOUND = ['west-shore-wood', 'north-gorge-wood', 'east-wood'];
+
+/** The corner the radar's badge is in, which the pictures of it are cut to: a clear look at it and what is behind it. */
+const CORNER = { x: 1040, y: 0, width: 240, height: 120 };
+
+/** The camera parked looking at a package from `radius` away and `polar` down, from `azimuth` round, a frame drawn. */
+async function lookAtPackage(page: Page, p: { x: number; y: number }, radius: number, polar: number, azimuth = -2.2) {
+  await page.evaluate(
+    ([x, y, radius, polar, azimuth]) => {
+      const g = window.game!;
+      g.look(x, y, { azimuth, polar, radius });
+      g.step(1);
+    },
+    [p.x, p.y, radius, polar, azimuth] as const,
+  );
+}
+
+/**
+ * The helicopter hovering `back` from a package and `up` over the ground there, facing it, the chase camera behind it.
+ * Held at the hover while it is stepped on to `ring` frames after a ping, so that the badge shows a ring part way out;
+ * 0 leaves it where it hovered, and the lift let go.
+ */
+async function hoverBy(page: Page, p: { x: number; y: number }, back: number, up: number, ring = 0) {
+  await page.evaluate(
+    ([x, y, back, up, ring, hover]) => {
+      const g = window.game!;
+      const yaw = 0.9;
+      g.chase();
+      g.teleport(x - Math.cos(yaw) * back, y - Math.sin(yaw) * back, up, yaw);
+      g.fly(0, 0, hover);
+      g.step(40);
+      if (ring > 0) {
+        for (let f = 0; f < 600 && !g.state().radar.pinged; f++) g.step(1);
+        g.step(ring);
+      }
+      g.release();
+    },
+    [p.x, p.y, back, up, ring, HOVER_LIFT] as const,
+  );
+}
+
+/** The helicopter let down on the ground 6 m from a package, by letting it sink, and the camera parked over the place. */
+async function findingPackage(page: Page, p: { x: number; y: number }, radius = 50) {
+  await page.evaluate(
+    ([x, y, radius]) => {
+      const g = window.game!;
+      g.teleport(x - 6, y, 8, 0);
+      g.release();
+      for (let f = 0; f < 300 && !g.state().helicopter.landed; f += 5) g.step(5);
+      g.look(x, y, { azimuth: -2.2, polar: 1.0, radius });
+      g.step(1);
+    },
+    [p.x, p.y, radius] as const,
+  );
+  await expect(page.locator('#hud .toast h2')).toHaveText('Package found');
 }
 
 test.describe('what it looks like', () => {
@@ -498,6 +557,69 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('a package in its clearing, a weathered blue-grey crate, from a fixed view over the wood', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await lookAtPackage(page, INLAND, 45, 0.85);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).crates).toBe(10);
+    await expect(page.locator('#view')).toHaveScreenshot('package-near.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the chase camera over a wood with a package in view, the radar hearing it', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await hoverBy(page, INLAND, 40, 22);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).radar.badge).toBe('heard');
+    await expect(page.locator('#view')).toHaveScreenshot('package-chase.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test("the radar's badge, quiet: a grey dot with no package within a hundred metres", async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate(() => window.game!.step(60));
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).radar).toMatchObject({ badge: 'quiet', step: 0 });
+    await expect(page).toHaveScreenshot('radar-quiet.png', { ...TOLERANCE, clip: CORNER });
+    expect(problems).toEqual([]);
+  });
+
+  test("the radar's badge, heard: a gold dot and a ring part way out, in game time", async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await hoverBy(page, INLAND, 70, 25, 22);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).radar).toMatchObject({ badge: 'heard', step: 3 });
+    await expect(page).toHaveScreenshot('radar-heard.png', { ...TOLERANCE, clip: CORNER });
+    expect(problems).toEqual([]);
+  });
+
+  test('a package just found: the toast over the clearing, its crate gone', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await findingPackage(page, INLAND);
+    await hideStats(page);
+    const found = await page.evaluate(() => window.game!.state());
+    expect([found.toast, found.crates]).toEqual(['Package found · 1 of 10', 9]);
+    await expect(page.locator('#view')).toHaveScreenshot('found-toast.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test("the panel, the packages' line under the structures, three of ten found", async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { ...SOME, best: TWO_DONE.best, found: THREE_FOUND } });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#panel .packs h3')).toHaveText('Packages3 of 10');
+    await expect(page.locator('#panel .packs .d.got')).toHaveCount(3);
+    await page.locator('#panel .sheet').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('panel-packages.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('the west bridge, which was not on the island before, from the chase camera downstream of it', async ({
     page,
   }) => {
@@ -652,6 +774,27 @@ test.describe('the first level on a phone, upright', () => {
     await page.locator('#panel .sheet').evaluate((el) => el.scrollTo(0, el.scrollHeight));
     await hideStats(page);
     await expect(page).toHaveScreenshot('panel-structures-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test("the panel, the packages' line and its dots under the structures", async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { ...SOME, best: TWO_DONE.best, found: THREE_FOUND } });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#panel')).toBeVisible();
+    await page.locator('#panel .sheet').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('panel-packages-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test("the radar's badge heard, a ring out, at the top right and clear of the touch controls", async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await hoverBy(page, INLAND, 70, 25, 22);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).radar).toMatchObject({ badge: 'heard', step: 3 });
+    await expect(page).toHaveScreenshot('radar-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 });

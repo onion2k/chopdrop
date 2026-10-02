@@ -15,7 +15,7 @@ import { noFog } from 'artshape-render/game/fog';
 import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer, type Look, type Post } from 'artshape-render/game/renderer';
 import { CHASE, ChaseCamera, fovFor } from './chase';
-import { COLLECTIBLES } from './arena';
+import { COLLECTIBLES, PACKAGES } from './arena';
 import { Autopilot } from './autopilot';
 import { createApi, levelRows } from './debug';
 import { frameCost } from './frame-cost';
@@ -164,7 +164,7 @@ async function main() {
       `The save could not be read (${progress.refused}), so the game starts afresh, and writes over it once a level is done.`,
     );
   // built before the game, which tells it the end; what its button does is below, where the game is put back
-  const hud = new Hud({ panel: showPanel }, COLLECTIBLES.length);
+  const hud = new Hud({ panel: showPanel }, COLLECTIBLES.length + PACKAGES.length);
   const game = new Game({
     ...(seed !== null ? { random: seeded(+seed) } : {}),
     progress,
@@ -180,6 +180,10 @@ async function main() {
         tell(`collected ${id} ${n} ${of}`);
         hud.collected(COLLECTIBLES.find((c) => c.id === id)!.name, n, of, game.t);
       },
+      found: (id, n, of) => {
+        tell(`found ${id} ${n} ${of}`);
+        hud.found(n, of, game.t);
+      },
       finished: (id, seconds, best) => {
         tell(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`);
         const level = game.levels.find((l) => l.id === id)!;
@@ -187,7 +191,7 @@ async function main() {
       },
     },
   });
-  const panel = new Panel(game.levels, game.island.pads, game.collection.collectibles, {
+  const panel = new Panel(game.levels, game.island.pads, game.collection.collectibles, game.finds.places, {
     guide: (id) => {
       game.guide(id);
       carryOn();
@@ -236,7 +240,7 @@ async function main() {
    */
   function showPanel() {
     input.touch.release();
-    panel.show(levelRows(game), game.mission.level?.id ?? null, game.collection.ids);
+    panel.show(levelRows(game), game.mission.level?.id ?? null, game.collection.ids, game.finds.ids);
     hud.listing = true;
     document.body.classList.add('listing');
   }
@@ -273,7 +277,7 @@ async function main() {
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter, game.sway, game.mission, game.collection.ids);
+    scene.write(game.helicopter, game.sway, game.mission, game.collection.ids, game.finds.ids);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });
@@ -331,6 +335,8 @@ async function main() {
     flown.turn = controls.turn;
     flown.lift = controls.lift;
     game.step(dt, controls);
+    // a ping is told on the step it falls due, and the badge reads its ring's age from the game's clock
+    if (game.finds.pinged) hud.ping(game.t);
     rig.step(dt, game.helicopter);
   }
   function draw(dt: number) {
@@ -374,11 +380,14 @@ async function main() {
     screen: () => (panel.shown ? 'panel' : 'flying'),
     toast: () => hud.toast,
     gold: () => scene.gold,
+    crates: () => scene.packagesDrawn,
+    radar: () => hud.radarShown,
     setAutopilot: (on, id) => {
       pilot = on ? new Autopilot(game) : null;
-      // a level or a structure: their names never clash, and one that is neither is refused by name
+      // a package, a structure or a level: their names never clash, and one that is none is refused by name
       if (pilot && id !== undefined) {
-        if (game.collection.collectibles.some((c) => c.id === id)) pilot.collect = id;
+        if (game.finds.places.some((p) => p.id === id)) pilot.find = id;
+        else if (game.collection.collectibles.some((c) => c.id === id)) pilot.collect = id;
         else pilot.wanted = id;
       }
     },

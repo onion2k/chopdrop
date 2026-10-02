@@ -54,9 +54,10 @@
     backdrop-filter: blur(8px);
     pointer-events: none;
   }
+  /* under the radar's badge, which has the corner */
   #stats {
-    top: 16px;
-    right: 16px;
+    top: calc(14px + 44px + 8px + env(safe-area-inset-top));
+    right: calc(14px + env(safe-area-inset-right));
     text-align: right;
     color: var(--dim);
     font-size: 12px;
@@ -227,6 +228,44 @@
     height: 20px;
     fill: #ffc23a;
   }
+  /* the package radar, in the corner opposite the levels button: a dot that is grey when quiet and gold when a package is heard, with a ring sent out from it at each ping; it says nothing of direction, and a finger on it flies on */
+  #hud .radar {
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top));
+    right: calc(14px + env(safe-area-inset-right));
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 12px;
+    background: rgba(14, 12, 20, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  #hud .radar .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffc23a;
+    box-shadow: 0 0 8px #ffc23a;
+  }
+  #hud .radar[data-state='quiet'] .dot {
+    background: rgba(255, 255, 255, 0.25);
+    box-shadow: none;
+  }
+  #hud .radar .ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    translate: -50% -50%;
+    width: 0;
+    height: 0;
+    opacity: 0;
+    border: 2px solid #ffc23a;
+    border-radius: 50%;
+  }
   #hud.away {
     display: none;
   }
@@ -392,6 +431,33 @@
     border-color: #f0b429;
     background: #f0b429;
     color: #1b1208;
+  }
+  /* the packages under the structures: a dot for each, gold once found */
+  #panel .packs {
+    margin-top: 16px;
+  }
+  #panel .packs h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+  }
+  #panel .packs .n {
+    margin-left: 6px;
+    color: #ffc23a;
+  }
+  #panel .packs .dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  #panel .packs .d {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+  }
+  #panel .packs .d.got {
+    border-color: #f0b429;
+    background: #f0b429;
   }
   /* the touch controls: a stick for the left thumb and a lever for the right, orange over the island, shown while flown by touch */
   #touch {

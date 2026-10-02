@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { WATCH, grew, leakRun, sizes, trouble } from '../scripts/leaks';
-import { COLLECTIBLES, LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
 import { RINGS } from '../src/mission';
 import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
@@ -41,6 +41,14 @@ describe('what must stay bounded', () => {
     game.progress.collect('gorge-bridge');
     expect(sizes(game)['structures collected']).toBe(1);
     expect(WATCH['structures collected']!.ceiling).toBe(COLLECTIBLES.length + SAVE.kept);
+    // and a package found is counted, under a ceiling of the ten there are and a save's worth more
+    expect(sizes(game)['packages found']).toBe(0);
+    game.progress.find('east-wood');
+    expect(sizes(game)['packages found']).toBe(1);
+    expect(WATCH['packages found']!.ceiling).toBe(PACKAGES.length + SAVE.kept);
+    expect(trouble({ 'packages found': [PACKAGES.length + SAVE.kept + 1] }).join('\n')).toMatch(
+      /packages found went to/,
+    );
     expect(trouble({ 'structures collected': [COLLECTIBLES.length + SAVE.kept + 1] }).join('\n')).toMatch(
       /structures collected went to/,
     );

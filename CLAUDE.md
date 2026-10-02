@@ -15,8 +15,9 @@ are collected by flying through them, and seven levels, four deliveries, two rin
 and a course. The game opens flying free from home, nothing locked: a level
 begins where its first step is done, on a pad with a crate waiting or
 through a start ring or the towers, one at a time, and the best time on
-each is kept in a save, with the structures collected. Ten hidden packages
-with a radar are still to come (the plan is
+each is kept in a save, with the structures collected and the ten hidden
+packages found, a radar in the corner pinging faster as one is neared. A
+rescue level is still to come (the plan is
 `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
 physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
@@ -137,9 +138,10 @@ says why. Look at every picture.
   corner button): every level, its best time and where it starts, "Show the
   way" and "Abandon", and the structures ticked as collected, holding the
   game while it is up. `src/scene.ts` draws a crate on the pad of every
-  delivery not going, a chequered flag at every start, and a gold collar on
-  each collected tower and gold rails on each collected bridge. There is no
-  game logic here.
+  delivery not going, a chequered flag at every start, a gold collar on
+  each collected tower and gold rails on each collected bridge, and a blue
+  crate on every package not found. The HUD's corner badge is the radar.
+  There is no game logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
   fingers as numbers and tested headless, and drawn and fed by the page in
@@ -194,6 +196,9 @@ bridge` and `landed 6`; `play`, which puts the helicopter at a level's
   `chopdrop-save-v1`, read as if anyone had written it.
   `src/collection.ts` is what has been collected: each structure's opening
   watched by `crossed`, either way through, whatever is going.
+  `src/finds.ts` is the hidden packages found: landed within `FIND.reach`
+  of one finds it, and the radar hears the nearest unfound within
+  `RADAR.range`, its pings falling due in game time by `radarInterval`.
 - There is no physics yet. `artshape-physics` stays pinned in
   `package.json`, and `src/physics.ts` comes back as the one door to it with
   the first body; nothing else imports the package. A change it needs goes
@@ -268,6 +273,17 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   `camera-over.png`, `course-phone.png`, `collected-towers.png`,
   `collected-bridge.png`, `collected-far.png`, `panel-structures.png`), and
   every picture that can see one written again.
+- **The hidden packages**, for anything found by searching: places in
+  `PACKAGES` (`arena.ts`), found by script and pinned in
+  `test/levels.test.ts` (inland, a clearing to land in, a wood round it,
+  140 apart); found by `finds.ts`, told through `GameEvents`, kept by
+  `progress.ts`, ruled by `checkFinds`; drawn by `scene.ts`, heard by the
+  HUD's badge; read through `debug.ts` (`state().found`, `state().radar`,
+  `content().packages`); come down by, within and just past the reach, by
+  the fuzzer's "to a package"; flown to by the autopilot's `find`; found by
+  key and touch in `smoke/find.spec.ts`, all ten by the play-through;
+  pictured (`package-near.png`, `package-chase.png`, `radar-quiet.png`,
+  `radar-heard.png`, `found-toast.png`, `panel-packages.png`).
 - **The course**, for a level of more than one kind of step: `gate` and
   `land` steps in `mission.ts`, a gate passed by the ring's rule with a
   rectangle for its opening; put into words by `hud.ts`; flown by the

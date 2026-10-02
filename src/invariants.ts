@@ -17,6 +17,7 @@
 import { CHASE, type ChaseCamera } from './chase';
 import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
+import { RADAR } from './finds';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
@@ -84,6 +85,7 @@ export function checkInvariants(game: Game): string[] {
   out.push(...checkProgress(game));
   out.push(...checkSolids(game));
   out.push(...checkCollection(game));
+  out.push(...checkFinds(game));
   return out;
 }
 
@@ -111,6 +113,47 @@ export function checkCollection(game: Game): string[] {
   }
   if (!Number.isInteger(collection.count) || collection.count < 0 || collection.count > collection.collectibles.length)
     out.push(`${collection.count} collected, and there are only ${collection.collectibles.length}`);
+  return out;
+}
+
+/**
+ * What must hold of the packages found: each one is a package the game has, or one the save brought; none is found
+ * twice; no more are counted than the game has; and the radar hears nothing beyond its range and exactly the nearest
+ * package not yet found within it, never one that is found. That what is found only grows within a game needs a
+ * history, and is held by the fuzzer. The radar is held to where the helicopter was when it last heard, not where it is
+ * now, which a test or a teleport may have moved since.
+ */
+export function checkFinds(game: Game): string[] {
+  const out: string[] = [];
+  const { finds } = game;
+  const seen = new Set<string>();
+  for (const id of game.progress.found) {
+    if (seen.has(id)) out.push(`${id} is found twice`);
+    seen.add(id);
+    if (!finds.brought.has(id) && !finds.places.some((p) => p.id === id))
+      out.push(`${id} is found, and is no package of the game's, nor one the save brought`);
+  }
+  if (!Number.isInteger(finds.count) || finds.count < 0 || finds.count > finds.places.length)
+    out.push(`${finds.count} found, and there are only ${finds.places.length}`);
+  const { nearest } = finds;
+  if (!Number.isFinite(nearest) || nearest < -1 || nearest > RADAR.range + TOLERANCE) {
+    out.push(`the radar hears a package ${nearest.toFixed(2)} away, and its range is ${RADAR.range}`);
+    return out;
+  }
+  let expected = -1;
+  for (const p of finds.places) {
+    if (finds.has(p.id)) continue;
+    const d = Math.hypot(p.x - finds.heardX, p.y - finds.heardY);
+    if (d <= RADAR.range && (expected < 0 || d < expected)) expected = d;
+  }
+  if (Math.abs(nearest - expected) > 1e-6) {
+    const foundAt = finds.places.find(
+      (p) => finds.has(p.id) && Math.abs(Math.hypot(p.x - finds.heardX, p.y - finds.heardY) - nearest) <= 1e-6,
+    );
+    if (foundAt) out.push(`the radar hears the package it found, ${nearest.toFixed(2)} away: ${foundAt.id}`);
+    else if (nearest < 0) out.push(`the radar hears nothing, and a package is ${expected.toFixed(2)} away`);
+    else out.push(`the radar hears ${nearest.toFixed(2)} away, and the nearest not found is ${expected.toFixed(2)}`);
+  }
   return out;
 }
 

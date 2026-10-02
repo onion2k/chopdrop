@@ -302,6 +302,38 @@ export const COLLECTIBLES: readonly Collectible[] = BUILT.map(({ id, name, openi
 /** What stands on the island in every level, and is solid in every level: every block of all eight. */
 export const STRUCTURES: readonly Block[] = COLLECTIBLES.flatMap((c) => c.blocks);
 
+/** A hidden package's place: where it lies, `z` being the ground under it. Its `id` is in players' saves and never changes. */
+export interface PackagePlace {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * The ten places for hidden packages, found by a script on a grid of 2 and kept here as the numbers it found. Each is
+ * on dry land by the island's own maps and inland (5 or more above the sea), in a clearing (the ground within 1.5 over
+ * 12 square, no tree's foot within 6) that a wood stands round (eight or more trees' feet within 30), 120 or more from
+ * every pad, 60 or more from every structure's blocks and 140 or more from every other, inside the bounds the
+ * helicopter is kept to. The wood and the spacing were loosened and no other rule: twelve trees and 150 apart were
+ * asked first, but inland the most places that keep them is nine at a wood of 8 and 150, and ten fit at a
+ * wood of 8 and 140. Of the places that keep every rule the ten chosen are those whose least gap from each other is
+ * the greatest, 145.8 m. The ground is the island's as it stands, so an island made again otherwise moves every one,
+ * and the tests that pin them say so.
+ */
+export const PACKAGES: readonly PackagePlace[] = [
+  { id: 'west-shore-wood', x: -546.1, y: 19.9, z: 10.85 },
+  { id: 'north-gorge-wood', x: -148.1, y: 389.9, z: 10.0 },
+  { id: 'lake-east-wood', x: 125.9, y: -156.1, z: 27.96 },
+  { id: 'inland-east-wood', x: 179.9, y: 131.9, z: 25.89 },
+  { id: 'south-river-wood', x: 195.9, y: -292.1, z: 26.89 },
+  { id: 'north-east-wood', x: 287.9, y: 241.9, z: 19.95 },
+  { id: 'east-wood', x: 395.9, y: 143.9, z: 18.67 },
+  { id: 'east-ridge-wood', x: 417.9, y: -66.1, z: 48.22 },
+  { id: 'far-north-east-wood', x: 457.9, y: 275.9, z: 24.18 },
+  { id: 'north-east-shore-wood', x: 485.9, y: 423.9, z: 8.7 },
+];
+
 /** The ground kept clear of trees under and round each structure. */
 const CLEARINGS: readonly Clearing[] = BUILT.flatMap((b) => b.clearings);
 

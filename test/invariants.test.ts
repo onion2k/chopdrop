@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
-import { COLLECTIBLES, LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
 import { DELIVERY, RING, type Ring } from '../src/mission';
-import { checkCamera, checkCollection, checkInvariants } from '../src/invariants';
+import { checkCamera, checkCollection, checkFinds, checkInvariants } from '../src/invariants';
+import { RADAR } from '../src/finds';
 import { TREE_STRIDE } from '../src/island';
 import { Game } from '../src/game';
 import { Progress, memoryStore } from '../src/progress';
@@ -366,5 +367,79 @@ describe('what must hold of the structures collected', () => {
     const { game } = newGame();
     game.progress.collected.push('gorge-bridge', 'gorge-bridge');
     expect(checkCollection(game).join('\n')).toMatch(/gorge-bridge is collected twice/);
+  });
+});
+
+describe('what must hold of the packages found', () => {
+  const [one, two] = PACKAGES;
+
+  it('holds of a new game, and of one that has found some', () => {
+    const { game } = newGame();
+    expect(checkFinds(game)).toEqual([]);
+    game.helicopter.place(one.x + 3, one.y, 0, 0);
+    game.step(DT);
+    expect(game.finds.count).toBe(1);
+    expect(checkFinds(game)).toEqual([]);
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it('is part of every check', () => {
+    const { game } = newGame();
+    game.progress.found.push('not-a-package');
+    expect(checkInvariants(game).join('\n')).toMatch(/found/);
+  });
+
+  it('reports an id found that the game does not have and the save did not bring', () => {
+    const { game } = newGame();
+    game.progress.found.push('not-a-package');
+    expect(checkFinds(game).join('\n')).toMatch(/not-a-package is found, and is no package of the game's/);
+  });
+
+  it('does not report an id the save brought that the game does not have', () => {
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(memoryStore('{"best":{},"found":["from-a-later-game"]}')),
+    });
+    expect(checkFinds(game)).toEqual([]);
+  });
+
+  it('reports one found twice', () => {
+    const { game } = newGame();
+    game.progress.found.push(one.id, one.id);
+    expect(checkFinds(game).join('\n')).toMatch(new RegExp(`${one.id} is found twice`));
+  });
+
+  it('reports a count over the ten there are', () => {
+    const { game } = newGame();
+    game.finds.count = PACKAGES.length + 1;
+    expect(checkFinds(game).join('\n')).toMatch(/11 found, and there are only 10/);
+  });
+
+  it('reports a radar that hears beyond its range', () => {
+    const { game } = newGame();
+    game.finds.nearest = RADAR.range + 1;
+    expect(checkFinds(game).join('\n')).toMatch(/hears a package 101\.00 away, and its range is 100/);
+  });
+
+  it('reports a radar that hears a package that is found', () => {
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(memoryStore(JSON.stringify({ best: {}, found: [one.id] }))),
+    });
+    game.helicopter.place(one.x + 30, one.y, 0, 0);
+    game.step(DT);
+    expect(game.finds.nearest).toBe(-1);
+    expect(checkFinds(game)).toEqual([]);
+    game.finds.nearest = 30;
+    expect(checkFinds(game).join('\n')).toMatch(/hears the package it found, 30\.00 away/);
+  });
+
+  it('reports a radar that hears the farther of two, or none with one in range', () => {
+    const { game } = newGame();
+    game.helicopter.place(two.x + 60, two.y, 0, 0);
+    game.step(DT);
+    expect(checkFinds(game)).toEqual([]);
+    game.finds.nearest = -1;
+    expect(checkFinds(game).join('\n')).toMatch(/hears nothing/);
   });
 });

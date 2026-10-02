@@ -1,6 +1,6 @@
 /** The panel's one sum, headless: how its subtitle counts the levels done. The rest of it is DOM, worked in smoke/panel.spec.ts. */
 import { describe, expect, it } from 'vitest';
-import { panelSubtitle, structureRows } from '../src/panel';
+import { packageRows, panelSubtitle, structureRows } from '../src/panel';
 
 describe('the subtitle', () => {
   it('counts the levels with a best time, and says how a level is found', () => {
@@ -42,5 +42,34 @@ describe('the structures section', () => {
     expect(structureRows(all, []).items.every((i) => !i.got)).toBe(true);
     expect(structureRows(all, ['from-a-later-game', 'gorge-bridge']).count).toBe('1 of 3');
     expect(structureRows(all, ['gorge-bridge', 'shoulder-towers', 'west-bridge']).count).toBe('3 of 3');
+  });
+});
+
+describe("the packages' line", () => {
+  const all = Array.from({ length: 10 }, (_, k) => ({ id: `p${k}` }));
+
+  it('says how many of the ten are found, in the words the line has', () => {
+    const words = packageRows(all, ['p2', 'p0', 'p7']);
+    expect(words.heading).toBe('Packages');
+    expect(words.count).toBe('3 of 10');
+    expect(words.line).toBe('Packages · 3 of 10');
+    expect(packageRows(all, []).line).toBe('Packages · 0 of 10');
+    expect(
+      packageRows(
+        all,
+        all.map((p) => p.id),
+      ).line,
+    ).toBe('Packages · 10 of 10');
+  });
+
+  it("has a dot for each, filled as found, in the game's order whatever order they were found in", () => {
+    const { dots } = packageRows(all, ['p9', 'p1']);
+    expect(dots).toHaveLength(10);
+    expect(dots.map((got, k) => (got ? k : -1)).filter((k) => k >= 0)).toEqual([1, 9]);
+  });
+
+  it('leaves out of the count a name the game does not have, and a name found twice', () => {
+    expect(packageRows(all, ['from-a-later-game', 'p3']).count).toBe('1 of 10');
+    expect(packageRows(all, ['p3', 'p3']).count).toBe('1 of 10');
   });
 });

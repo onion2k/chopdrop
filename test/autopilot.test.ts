@@ -4,8 +4,9 @@
  * about it than about the game.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, STRUCTURES } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, STRUCTURES } from '../src/arena';
 import { Autopilot, PILOT } from '../src/autopilot';
+import { FIND } from '../src/finds';
 import { Game } from '../src/game';
 import { HELICOPTER } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
@@ -360,5 +361,143 @@ describe('the autopilot among the structures', () => {
     const pilot = new Autopilot(game);
     pilot.collect = 'gorge-bridge';
     expect(pilot.drive()).toEqual({ forward: 0, turn: 0, lift: 0 });
+  });
+});
+
+describe('the autopilot and the packages', () => {
+  /** The longest it may take from home to land by any one, in seconds: the slowest takes some 56, to the one 417 m off over the gorge. */
+  const LIMIT = 90;
+
+  it('refuses by name a package it is told that the game does not have', () => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    expect(pilot.find).toBeNull();
+    expect(() => (pilot.find = 'the-moon')).toThrow(/no such package: the-moon/);
+    expect(pilot.find).toBeNull();
+    pilot.find = 'east-wood';
+    expect(pilot.find).toBe('east-wood');
+    expect(() => (pilot.find = 'the-moon')).toThrow(/no such package: the-moon/);
+    expect(pilot.find).toBe('east-wood');
+    pilot.find = null;
+    expect(pilot.find).toBeNull();
+  });
+
+  it.each(PACKAGES.map((p) => p.id))('flies from home to land by %s, touching nothing, in time', (id) => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    pilot.find = id;
+    let knocks = 0;
+    for (let f = 0; f < 60 * LIMIT && !game.finds.has(id); f++) {
+      pilot.step(DT);
+      if (game.solids.touched) knocks++;
+      const broken = checkInvariants(game);
+      if (broken.length) throw new Error(`at ${game.t.toFixed(2)} s: ${broken.join('; ')}`);
+    }
+    expect(game.finds.has(id)).toBe(true);
+    expect(knocks).toBe(0);
+    // it found only the one it was sent to, which is no other on the way
+    expect(game.finds.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('comes down on the clearing, with no trunk near it, and finds it landed within reach', () => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    const p = PACKAGES.find((k) => k.id === 'east-wood')!;
+    pilot.find = p.id;
+    for (let f = 0; f < 60 * LIMIT && !game.finds.has(p.id); f++) pilot.step(DT);
+    expect(game.helicopter.landed).toBe(true);
+    expect(Math.hypot(game.helicopter.x - p.x, game.helicopter.y - p.y)).toBeLessThan(FIND.reach);
+  });
+
+  it('puts the level first: with a level going, or told one, it does not go for the package', () => {
+    const { game, pilot } = told('first-delivery');
+    pilot.find = 'east-wood';
+    expect(flown(game, 90, undefined, pilot)).not.toBeNull();
+    expect(game.last!.id).toBe('first-delivery');
+    expect(game.finds.has('east-wood')).toBe(false);
+    pilot.wanted = null;
+    for (let f = 0; f < 60 * LIMIT && !game.finds.has('east-wood'); f++) pilot.step(DT);
+    expect(game.finds.has('east-wood')).toBe(true);
+  });
+
+  it('puts a structure first: it collects the one it is told, and then goes for the package', () => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    pilot.collect = 'gorge-bridge';
+    pilot.find = 'west-shore-wood';
+    for (let f = 0; f < 60 * 240 && !game.collection.has('gorge-bridge'); f++) pilot.step(DT);
+    expect(game.collection.has('gorge-bridge')).toBe(true);
+    expect(game.finds.has('west-shore-wood')).toBe(false);
+    for (let f = 0; f < 60 * 240 && !game.finds.has('west-shore-wood'); f++) pilot.step(DT);
+    expect(game.finds.has('west-shore-wood')).toBe(true);
+  });
+
+  it('asks for nothing once the package is found', () => {
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(memoryStore('{"best":{},"found":["east-wood"]}')),
+    });
+    const pilot = new Autopilot(game);
+    pilot.find = 'east-wood';
+    expect(pilot.drive()).toEqual({ forward: 0, turn: 0, lift: 0 });
+  });
+
+  it('gets out from under the gorge bridge after collecting it, and lands by a package on the far side', () => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    pilot.collect = 'gorge-bridge';
+    for (let f = 0; f < 60 * 240 && !game.collection.has('gorge-bridge'); f++) pilot.step(DT);
+    pilot.collect = null;
+    pilot.find = 'east-wood';
+    let knocks = 0;
+    for (let f = 0; f < 60 * LIMIT && !game.finds.has('east-wood'); f++) {
+      pilot.step(DT);
+      if (game.solids.touched) knocks++;
+    }
+    expect(game.finds.has('east-wood')).toBe(true);
+    expect(knocks).toBe(0);
+  });
+
+  describe('from under a deck, or from any structure just collected', () => {
+    const { middle, rotorRadius } = HELICOPTER.size;
+    const decks = STRUCTURES.filter((b) => b.kind === 'deck');
+    /**
+     * Flown to land by `id`, never stuck; and, unless `grazes`, touching nothing. A route from one structure to a far
+     * package may brush a start ring on its way, which is the ring detour's to put right and is no jam, so those only
+     * have to land.
+     */
+    const lands = (game: Game, pilot: Autopilot, id: string, grazes = false) => {
+      pilot.find = id;
+      let knocks = 0;
+      for (let f = 0; f < 60 * LIMIT && !game.finds.has(id); f++) {
+        pilot.step(DT);
+        if (game.solids.touched) knocks++;
+      }
+      expect(game.finds.has(id)).toBe(true);
+      if (!grazes) expect(knocks).toBe(0);
+    };
+
+    it.each(decks.flatMap((b) => PACKAGES.map((p) => [b.name, p.id] as const)))(
+      'from under %s, lands by %s',
+      (name, id) => {
+        const block = decks.find((k) => k.name === name)!;
+        const game = new Game({ random: seeded(1) });
+        // its middle under the block's middle, with the rotor clear of the underside by the margin
+        game.helicopter.place(block.x, block.y, block.z - middle - rotorRadius - PILOT.margin - 1, 0);
+        lands(game, new Autopilot(game), id);
+      },
+    );
+
+    it.each(COLLECTIBLES.flatMap((c) => PACKAGES.map((p) => [c.id, p.id] as const)))(
+      'just after collecting %s, lands by %s',
+      (cid, id) => {
+        const game = new Game({ random: seeded(1) });
+        const pilot = new Autopilot(game);
+        pilot.collect = cid;
+        for (let f = 0; f < 60 * 240 && !game.collection.has(cid); f++) pilot.step(DT);
+        pilot.collect = null;
+        lands(game, pilot, id, true);
+      },
+    );
   });
 });

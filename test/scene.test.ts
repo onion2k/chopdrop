@@ -4,7 +4,7 @@
  * once for the file, since it takes most of a second.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, ISLAND, LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, ISLAND, LEVELS, PACKAGES, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { Mission, RING, RINGS, type Level, type Ring } from '../src/mission';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
@@ -452,8 +452,8 @@ describe('the trees', () => {
 
   it('move, after the helicopter, and are not among what stands still', () => {
     expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
-    expect(scene.movers.slice(6, -8)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
-    expect(scene.movers.slice(-8)).toEqual([
+    expect(scene.movers.slice(6, -10)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.movers.slice(-10)).toEqual([
       'crate',
       'crate straps',
       'beacon',
@@ -462,6 +462,8 @@ describe('the trees', () => {
       'flags dark',
       'flags light',
       'collected',
+      'packages',
+      'package straps',
     ]);
     expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
     expect(scene.pools).toHaveLength(movers.length);
@@ -1224,5 +1226,116 @@ describe('the collected look', () => {
     expect(goldScene.gold).toBe(0);
     collect('gorge-bridge', 'shoulder-towers');
     expect(goldScene.gold).toBe(4);
+  });
+});
+
+describe('the hidden packages', () => {
+  const packScene = new Scene();
+  const groups = packScene.dynamic(island);
+  const woodAt = packScene.movers.indexOf('packages');
+  const strapsAt = packScene.movers.indexOf('package straps');
+  const far = pose({ x: island.pads[0].x, y: island.pads[0].y, z: island.pads[0].z });
+  const show = (...found: string[]) => packScene.write(far, undefined, nothing, [], found);
+  /** The placements drawn, each as the crate it is: where it stands, and its size across and up. */
+  const drawn = (pool = packScene.pools[woodAt]) => {
+    const out: { slot: number; x: number; y: number; z: number; across: number; up: number }[] = [];
+    for (let k = 0; k < pool.length / 16; k++) {
+      if (noSize(pool, k)) continue;
+      const m = pool.subarray(16 * k, 16 * k + 16);
+      out.push({ slot: k, x: m[12], y: m[13], z: m[14], across: Math.hypot(m[0], m[1]), up: m[10] });
+    }
+    return out;
+  };
+
+  it('is a pool of crates and a pool of straps, each sized once to the places there are', () => {
+    expect(PACKAGES).toHaveLength(10);
+    expect(woodAt).toBeGreaterThan(0);
+    expect(strapsAt).toBe(woodAt + 1);
+    expect(groups[woodAt].count).toBe(PACKAGES.length);
+    expect(groups[strapsAt].count).toBe(PACKAGES.length);
+    expect(packScene.pools[woodAt]).toHaveLength(PACKAGES.length * 16);
+    expect(packScene.pools[strapsAt]).toHaveLength(PACKAGES.length * 16);
+    // made again, there is still the one pair of groups; and written, a pool is neither grown nor swapped
+    const again = new Scene();
+    again.dynamic(island);
+    again.dynamic(island);
+    expect(again.movers.filter((m) => m === 'packages')).toHaveLength(1);
+    expect(again.movers.filter((m) => m === 'package straps')).toHaveLength(1);
+    const before = packScene.pools[woodAt];
+    show();
+    show(...PACKAGES.map((p) => p.id));
+    expect(packScene.pools[woodAt]).toBe(before);
+    expect(before).toHaveLength(PACKAGES.length * 16);
+  });
+
+  it('is painted weathered blue-grey with dark straps', () => {
+    const linear = (hex: number) => [hex >> 16, (hex >> 8) & 255, hex & 255].map((c) => +((c / 255) ** 2.2).toFixed(5));
+    expect(Array.from(groups[woodAt].albedo!).map((v) => +v.toFixed(5))).toEqual(linear(0x5f7d96));
+    expect(Array.from(groups[strapsAt].albedo!).map((v) => +v.toFixed(5))).toEqual(linear(0x26303a));
+  });
+
+  it("stands a crate on each place at its z, one and four tenths of the delivery crate's size, turned a little by its place in the list", () => {
+    show();
+    const crates = drawn();
+    expect(crates).toHaveLength(PACKAGES.length);
+    PACKAGES.forEach((p, k) => {
+      const c = crates.find((d) => d.slot === k)!;
+      expect(c, p.id).toBeDefined();
+      expect([c.x, c.y, c.z].map((v) => +v.toFixed(3))).toEqual([p.x, p.y, p.z].map((v) => +v.toFixed(3)));
+      expect(c.across).toBeCloseTo(1.4, 5);
+      expect(c.up).toBeCloseTo(1.4, 5);
+    });
+    // turned by the index: no two the same way, and the first not at all
+    const yaw = (k: number) => {
+      const m = packScene.pools[woodAt].subarray(16 * k, 16 * k + 16);
+      return Math.atan2(m[1], m[0]);
+    };
+    expect(yaw(0)).toBeCloseTo(0, 5);
+    expect(new Set(PACKAGES.map((_, k) => yaw(k).toFixed(3))).size).toBe(PACKAGES.length);
+    // the straps are on the same places
+    expect(Array.from(packScene.pools[strapsAt])).toEqual(Array.from(packScene.pools[woodAt]));
+  });
+
+  it('draws none for a package that is found, and the others still', () => {
+    show('east-wood', 'west-shore-wood');
+    const crates = drawn();
+    expect(crates).toHaveLength(PACKAGES.length - 2);
+    const slotOf = (id: string) => PACKAGES.findIndex((p) => p.id === id);
+    expect(crates.map((c) => c.slot)).not.toContain(slotOf('east-wood'));
+    expect(crates.map((c) => c.slot)).not.toContain(slotOf('west-shore-wood'));
+    expect(drawn(packScene.pools[strapsAt])).toHaveLength(PACKAGES.length - 2);
+    show(...PACKAGES.map((p) => p.id));
+    expect(drawn()).toEqual([]);
+    // a name the game does not have is not a crate, and takes none away
+    show('from-a-later-game');
+    expect(drawn()).toHaveLength(PACKAGES.length);
+  });
+
+  it('is written only when what is found changes', () => {
+    show();
+    show('east-wood');
+    expect([packScene.changed[woodAt], packScene.changed[strapsAt]]).toEqual([1, 1]);
+    show('east-wood');
+    expect([packScene.changed[woodAt], packScene.changed[strapsAt]]).toEqual([0, 0]);
+    packScene.write(far, undefined, nothing, [], ['east-wood']);
+    expect([packScene.changed[woodAt], packScene.changed[strapsAt]]).toEqual([0, 0]);
+    show('east-wood', 'west-shore-wood');
+    expect(packScene.changed[woodAt]).toBe(1);
+    // a game begun again with fewer found is written again, and a read with nothing handed leaves them be
+    show();
+    expect(packScene.changed[woodAt]).toBe(1);
+    expect(drawn()).toHaveLength(PACKAGES.length);
+    packScene.write(far);
+    expect(packScene.changed[woodAt]).toBe(0);
+    expect(drawn()).toHaveLength(PACKAGES.length);
+  });
+
+  it('counts what is drawn, for the test API', () => {
+    show();
+    expect(packScene.packagesDrawn).toBe(PACKAGES.length);
+    show('east-wood');
+    expect(packScene.packagesDrawn).toBe(PACKAGES.length - 1);
+    show(...PACKAGES.map((p) => p.id));
+    expect(packScene.packagesDrawn).toBe(0);
   });
 });

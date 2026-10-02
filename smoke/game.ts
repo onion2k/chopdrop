@@ -57,7 +57,7 @@ export async function start(
   options: {
     seed?: number;
     paused?: boolean;
-    save?: { best: Record<string, number>; collected?: string[] } | string;
+    save?: { best: Record<string, number>; collected?: string[]; found?: string[] } | string;
   } = {},
 ) {
   const { seed, paused, save } = options;

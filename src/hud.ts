@@ -2,13 +2,16 @@
  * The words on the screen: flying free, a hint that a crate is to be landed on or a start flown; shown the way, an
  * arrow turned toward the start of a level and how far off it is; and with a level going, what is wanted, at which pad or
  * which ring of how many, the arrow and distance to it and the clock from the level's beginning. The loader fills while
- * a parcel is loaded or unloaded, a button in the corner opens the panel, and a toast under the bar tells a level done or a
- * structure collected and goes after a few seconds of game time, a structure's waiting for the one before it. It reads
- * where the game has got to and is told the end, and each structure collected, by the game's events; it writes to the
- * page only when a word or a figure on it changes. Without it a player would not know where to go, nor that they had
+ * a parcel is loaded or unloaded, a button in the corner opens the panel, and a toast under the bar tells a level done, a
+ * structure collected or a package found and goes after a few seconds of game time, a structure's or a package's waiting
+ * for the one before it. A badge in the other corner is the package radar: a grey dot when no package is within its range
+ * and a gold one that sends out a ring at each ping when one is, which says nothing of where. It reads where the game has
+ * got to and is told the end, each structure collected, each package found and each ping, by the game's events; it
+ * writes to the page only when a word or a figure on it changes. Without it a player would not know where to go, nor that they had
  * got there.
  */
 import type { Point } from './chase';
+import { RADAR } from './finds';
 import type { Game } from './game';
 import { DELIVERY, type Level, type LevelKind, type Step } from './mission';
 
@@ -109,6 +112,71 @@ export function collectedWords(name: string, n: number, of: number): string {
   return `Collected ${name} · ${n} of ${of}`;
 }
 
+/** The toast's words for a package found, as the test API reads them: "Package found · 3 of 10". */
+export function foundWords(n: number, of: number): string {
+  return `Package found · ${n} of ${of}`;
+}
+
+/**
+ * How long a ring from the radar's dot takes to grow and fade, in seconds of game time, said once: the ring's age is
+ * read from the game's clock and not the page's, so a picture of it is the same every run, and a game held behind the
+ * panel holds it.
+ */
+export const RADAR_RING = 0.9;
+/** How many steps the ring is drawn in over its life, so the page writes its style at most this many times a ping. */
+export const RADAR_STEPS = 6;
+/** How many rings the badge has: one for every ping that can be alive at once, at the fastest the radar pings. */
+export const RADAR_RINGS = Math.ceil(RADAR_RING / RADAR.fastest);
+/** A ring's diameter in pixels when it is first drawn and how much more it gains by its last step, and how bright it starts, against the badge's 44. */
+const RING = { start: 12, grow: 32, opacity: 0.9 };
+
+/** What the badge is: quiet, or hearing a package, and the step its newest ring is at, 0 for none. */
+export interface RadarBadge {
+  state: 'quiet' | 'heard';
+  step: number;
+}
+/** What a ring looks like at a step: its diameter in pixels and its opacity, both nothing for step 0. */
+export interface RadarRing {
+  step: number;
+  size: number;
+  opacity: number;
+}
+
+/** Every badge and ring there can be, made once, so that working one out each frame makes nothing. */
+const BADGES: readonly RadarBadge[] = [
+  { state: 'quiet', step: 0 },
+  ...Array.from({ length: RADAR_STEPS + 1 }, (_, step): RadarBadge => ({ state: 'heard', step })),
+];
+const RING_LOOKS: readonly RadarRing[] = Array.from({ length: RADAR_STEPS + 1 }, (_, step) => {
+  const share = (step - 0.5) / RADAR_STEPS;
+  return step === 0
+    ? { step, size: 0, opacity: 0 }
+    : { step, size: RING.start + RING.grow * share, opacity: RING.opacity * (1 - share) };
+});
+
+/**
+ * The step a ring `age` seconds old is at: 0 before it begins and once it is spent, and from 1 to `RADAR_STEPS` over its
+ * life. Pure, so a page and a test read the same one.
+ */
+export function ringStep(age: number): number {
+  if (!(age >= 0) || age >= RADAR_RING) return 0;
+  return Math.min(RADAR_STEPS, Math.floor((age / RADAR_RING) * RADAR_STEPS) + 1);
+}
+
+/** A ring `age` seconds old as it is drawn: how big and how faint, from its step. */
+export function radarRing(age: number): RadarRing {
+  return RING_LOOKS[ringStep(age)];
+}
+
+/**
+ * The badge with the nearest package `nearest` away (−1 when none is in range) and its newest ring `since` seconds old:
+ * quiet and ringless with nothing heard, and otherwise heard, the ring at its step. It is the same at any distance, since
+ * the badge says nothing of where; the distance only decides the ping's pace, which `finds.ts` has.
+ */
+export function radarBadge(nearest: number, since: number): RadarBadge {
+  return nearest < 0 ? BADGES[0] : BADGES[1 + ringStep(since)];
+}
+
 /**
  * A toast: the four places the card writes (its title, then the two halves of the line under it and what is between
  * them), the words as the test API reads them, whether it is a level's, and the game time it began to be shown at.
@@ -135,11 +203,11 @@ function copy(to: ToastText, from: ToastText): void {
 }
 
 /**
- * What the card says and what waits behind it, in game time. A level's toast is shown at once; a structure's, told while
+ * What the card says and what waits behind it, in game time. A level's toast is shown at once; a structure's or a package's, told while
  * another shows, waits its turn and is then shown for `TOAST.seconds` of its own, counted from the moment the one before
  * it ended and not from when it was seen, so the same game shows the same toasts however often it is drawn. The waiting
- * are a ring of slots sized once, as many as there are structures to collect, since each can be told once: past that the
- * oldest waiting is let go. A level's toast that comes while a structure's shows takes the card, and the structure's
+ * are a ring of slots sized once, as many as there are structures to collect and packages to find, since each can be told once: past that the
+ * oldest waiting is let go. A level's toast that comes while another shows takes the card, and the other
  * goes to the front of the queue, to be shown whole once it has gone. It makes nothing after it is built.
  */
 export class ToastQueue {
@@ -202,28 +270,27 @@ export class ToastQueue {
 
   /** The structure `name` collected, the `n`th of `of`, told at game time `now`: shown at once if nothing is, and otherwise in its turn. */
   collected(name: string, n: number, of: number, now: number): void {
+    this.line('Collected', name, ' · ', `${n} of ${of}`, collectedWords(name, n, of), now);
+  }
+
+  /** A package found, the `n`th of `of`, told at game time `now`: shown at once if nothing is, and otherwise in its turn. */
+  found(n: number, of: number, now: number): void {
+    this.line('Package found', `${n} of ${of}`, '', '', foundWords(n, of), now);
+  }
+
+  /** A toast that is not a level's: shown at once if nothing is shown, and otherwise put at the back to wait. */
+  private line(title: string, left: string, sep: string, right: string, words: string, now: number): void {
     this.update(now);
     if (this.showing) {
-      this.push(
-        {
-          title: 'Collected',
-          left: name,
-          sep: ' · ',
-          right: `${n} of ${of}`,
-          words: collectedWords(name, n, of),
-          level: false,
-          from: 0,
-        },
-        false,
-      );
+      this.push({ title, left, sep, right, words, level: false, from: 0 }, false);
       return;
     }
     const t = this.now;
-    t.title = 'Collected';
-    t.left = name;
-    t.sep = ' · ';
-    t.right = `${n} of ${of}`;
-    t.words = collectedWords(name, n, of);
+    t.title = title;
+    t.left = left;
+    t.sep = sep;
+    t.right = right;
+    t.words = words;
     t.level = false;
     t.from = now;
     this.showing = true;
@@ -296,7 +363,19 @@ export class Hud {
     loader: -1,
     loaderWords: '',
     toast: -1,
+    radar: '' as RadarBadge['state'] | '',
+    step: -1,
   };
+  /**
+   * The radar's rings, one element each: the game time each was begun at (−infinity for none), the step each is drawn at
+   * (−1 for not yet written), and which is begun next. Sized once.
+   */
+  private readonly radar: HTMLElement;
+  private readonly rings: HTMLElement[] = [];
+  private readonly pinged = new Float64Array(RADAR_RINGS).fill(-Infinity);
+  private readonly ringStepShown = new Int8Array(RADAR_RINGS).fill(-1);
+  private nextRing = 0;
+  private lastPing = -Infinity;
   /** The level the way is shown to, and the point it starts at, worked out once when it changes and not every frame. */
   private guide: Level | null = null;
   private guideAt = { x: 0, y: 0 };
@@ -309,7 +388,7 @@ export class Hud {
   /** Whether the panel is up over it: it is hidden, and its keys are the panel's. */
   private away = false;
 
-  /** `toasts` is how many structures there are to collect, which is the most that can wait behind a toast. */
+  /** `toasts` is how many structures there are to collect and packages to find together, which is the most that can wait behind a toast. */
   constructor(actions: HudActions, toasts: number) {
     this.toasts = new ToastQueue(toasts);
     this.root = document.createElement('div');
@@ -317,6 +396,7 @@ export class Hud {
     this.root.hidden = true;
     this.root.innerHTML = `
       <button type="button" class="to-levels" aria-label="Levels" title="Levels (Esc)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="7" height="7" rx="2" /><rect x="11" y="2" width="7" height="7" rx="2" /><rect x="2" y="11" width="7" height="7" rx="2" /><rect x="11" y="11" width="7" height="7" rx="2" /></svg></button>
+      <div class="radar" data-state="quiet" role="img" aria-label="Package radar: nothing heard">${'<span class="ring"></span>'.repeat(RADAR_RINGS)}<span class="dot"></span></div>
       <div class="top">
         <div class="bar" data-mode="free"><span class="hint"></span><svg class="arrow" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0,-11 L8,7 L0,3 L-8,7 Z" /></svg><span class="goal"></span><span class="far"></span><span class="clock"></span></div>
         <div class="loader" hidden><svg viewBox="-15 -15 30 30" aria-hidden="true"><circle class="track" r="11" /><circle class="fill" r="11" transform="rotate(-90)" /></svg><span class="what"></span></div>
@@ -324,6 +404,8 @@ export class Hud {
       </div>`;
     document.body.append(this.root);
     const find = <T extends Element>(selector: string) => this.root.querySelector(selector) as T;
+    this.radar = find<HTMLElement>('.radar');
+    this.rings.push(...Array.from(this.radar.querySelectorAll<HTMLElement>('.ring')));
     this.bar = find<HTMLElement>('.bar');
     this.arrow = find<SVGElement>('.arrow');
     this.goal = find<HTMLElement>('.goal');
@@ -362,6 +444,11 @@ export class Hud {
     this.root.classList.toggle('away', on);
   }
 
+  /** What the badge shows as it was last drawn: whether it hears a package, and the step its newest ring is at. */
+  get radarShown(): { badge: RadarBadge['state']; step: number } {
+    return { badge: this.shown.radar || 'quiet', step: Math.max(0, this.shown.step) };
+  }
+
   /** The toast's words while it is shown, or null. */
   get toast(): string | null {
     return this.toasts.current?.words ?? null;
@@ -388,6 +475,7 @@ export class Hud {
         this.best.textContent = toast.right;
       }
     }
+    this.drawRadar(game);
     const step = d.current;
     const mode = barMode(step !== undefined, game.guided !== null, on);
     if (mode !== s.mode) {
@@ -454,6 +542,42 @@ export class Hud {
   }
 
   /**
+   * The radar badge: grey and ringless with nothing heard, gold with a ring out from the dot for each ping that is still
+   * going. A ring's age is the game's time since its ping, so the same game draws the same badge; an element is written
+   * only when its step changes, which is at most `RADAR_STEPS` times a ping, and nothing is made.
+   */
+  private drawRadar(game: Game): void {
+    const s = this.shown;
+    const now = game.t;
+    const badge = radarBadge(game.finds.nearest, now - this.lastPing);
+    if (badge.state !== s.radar) {
+      this.radar.dataset.state = s.radar = badge.state;
+      this.radar.setAttribute(
+        'aria-label',
+        badge.state === 'quiet' ? 'Package radar: nothing heard' : 'Package radar: a package is near',
+      );
+      // a ring written for the other state is written again
+      this.ringStepShown.fill(-1);
+    }
+    for (let k = 0; k < RADAR_RINGS; k++) {
+      const step = badge.state === 'quiet' ? 0 : ringStep(now - this.pinged[k]);
+      if (step === this.ringStepShown[k]) continue;
+      this.ringStepShown[k] = step;
+      const look = RING_LOOKS[step];
+      const style = this.rings[k].style;
+      style.width = style.height = `${look.size}px`;
+      style.opacity = String(look.opacity);
+    }
+    s.step = badge.step;
+  }
+
+  /** A ping from the radar, as the game tells it, at game time `now`: a ring begins at the dot. */
+  ping(now: number): void {
+    this.pinged[this.nextRing] = this.lastPing = now;
+    this.nextRing = (this.nextRing + 1) % RADAR_RINGS;
+  }
+
+  /**
    * The end, as the game tells it, at game time `now`: the toast, with the title by the kind of level, the time it took
    * and, if this is the best time on it yet, "New best". It is shown for `TOAST.seconds` of game time from `now`, ahead of
    * any structure's toast waiting.
@@ -465,6 +589,11 @@ export class Hud {
   /** A structure collected, as the game tells it, at game time `now`: its toast, now or in its turn after the one shown. */
   collected(name: string, n: number, of: number, now: number): void {
     this.toasts.collected(name, n, of, now);
+  }
+
+  /** A package found, as the game tells it, at game time `now`: its toast, now or in its turn after the one shown. */
+  found(n: number, of: number, now: number): void {
+    this.toasts.found(n, of, now);
   }
 
   /** The toast put away and everything written afresh on the next draw, as when the helicopter is put somewhere new. */
@@ -481,7 +610,13 @@ export class Hud {
       loader: -1,
       loaderWords: '',
       toast: -1,
+      radar: '',
+      step: -1,
     };
+    // the rings of the last place are not carried to the new one
+    this.pinged.fill(-Infinity);
+    this.lastPing = -Infinity;
+    this.ringStepShown.fill(-1);
     this.loader.hidden = true;
   }
 }

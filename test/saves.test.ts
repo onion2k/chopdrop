@@ -26,6 +26,7 @@ const KEPT: Record<string, Record<string, number>> = {
   '01-first.json': {},
   '02-best-times.json': { 'first-delivery': 38.4, 'over-the-water': 61.25 },
   '03-collected.json': { 'first-delivery': 38.4 },
+  '04-found.json': { 'first-delivery': 38.4 },
 };
 
 /** What each save held of the structures collected, in order: none for a shape from before there were any. */
@@ -33,6 +34,15 @@ const COLLECTED: Record<string, string[]> = {
   '01-first.json': [],
   '02-best-times.json': [],
   '03-collected.json': ['gorge-bridge', 'shoulder-towers', 'from-a-later-game'],
+  '04-found.json': ['gorge-bridge'],
+};
+
+/** What each save held of the packages found, in order: none for a shape from before there were any. */
+const FOUND: Record<string, string[]> = {
+  '01-first.json': [],
+  '02-best-times.json': [],
+  '03-collected.json': [],
+  '04-found.json': ['east-wood', 'west-shore-wood', 'from-a-later-game'],
 };
 
 describe('saves from every shape the game has written', () => {
@@ -47,6 +57,7 @@ describe('saves from every shape the game has written', () => {
         expect(p.refused).toBeNull();
         expect(Object.fromEntries(p.best)).toEqual(KEPT[file]);
         expect(p.collected).toEqual(COLLECTED[file]);
+        expect(p.found).toEqual(FOUND[file]);
       });
 
       it('plays on from where it left off, every level it opens, and breaks no rule', () => {
@@ -62,6 +73,11 @@ describe('saves from every shape the game has written', () => {
         for (const id of COLLECTED[file]) expect(game.collection.has(id), id).toBe(true);
       });
 
+      it('marks what it had found as found in the game', () => {
+        const game = new Game({ random: seeded(7), progress: new Progress(memoryStore(read(file))) });
+        for (const id of FOUND[file]) expect(game.finds.has(id), id).toBe(true);
+      });
+
       it('comes back as it went, written again in the shape of today', () => {
         const store = memoryStore(read(file));
         const before = new Progress(store);
@@ -70,6 +86,7 @@ describe('saves from every shape the game has written', () => {
         const after = new Progress(memoryStore(store.json));
         expect(Object.fromEntries(after.best)).toEqual(KEPT[file]);
         expect(after.collected).toEqual(COLLECTED[file]);
+        expect(after.found).toEqual(FOUND[file]);
       });
     });
   }
@@ -78,6 +95,7 @@ describe('saves from every shape the game has written', () => {
     const progress = new Progress(memoryStore());
     progress.record(LEVELS[0].id, 40);
     progress.collect('gorge-bridge');
+    progress.find('east-wood');
     const now = Object.keys(progress.toJSON()).sort();
     const newest = Object.keys(JSON.parse(read(files[files.length - 1])) as object).sort();
     expect(newest, 'add a save in the new shape to test/saves').toEqual(now);

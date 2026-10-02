@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { COLLECTIBLES, LEVELS, theIsland, type Collectible } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, theIsland, type Collectible } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
@@ -271,7 +271,7 @@ describe('the levels in play', () => {
     expect(game.last).toEqual({ id: 'first-delivery', seconds, best: true });
     expect(told.at(-1)).toBe(`finished first-delivery ${seconds.toFixed(2)} best`);
     expect(game.progress.best.get('first-delivery')).toBe(seconds);
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': seconds }, collected: [] });
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': seconds }, collected: [], found: [] });
     expect(game.mission.level).toBeNull();
     expect(seconds).toBeGreaterThan(1 + DELIVERY.load);
   });
@@ -286,7 +286,7 @@ describe('the levels in play', () => {
     expect(game.last!.seconds).toBeGreaterThan(first);
     expect(told.at(-1)).toBe(`finished first-delivery ${game.last!.seconds.toFixed(2)}`);
     expect(game.progress.best.get('first-delivery')).toBe(first);
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first }, collected: [] });
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first }, collected: [], found: [] });
     // a faster run lowers it
     liftOff(game, 0.5);
     deliver(game, 'first-delivery', 0.2);
@@ -613,7 +613,7 @@ describe('the structures collected, in the game', () => {
     expect(store.json).toBeNull();
     through(game, gorge);
     through(game, towers);
-    expect(JSON.parse(store.json!)).toEqual({ best: {}, collected: ['gorge-bridge', 'shoulder-towers'] });
+    expect(JSON.parse(store.json!)).toEqual({ best: {}, collected: ['gorge-bridge', 'shoulder-towers'], found: [] });
     const again = new Game({ random: seeded(1), progress: new Progress(memoryStore(store.json)) });
     expect(again.collection.count).toBe(2);
     expect(again.collection.has('gorge-bridge')).toBe(true);
@@ -648,4 +648,63 @@ describe('the structures collected, in the game', () => {
       expect(game.collection.count).toBe(0);
     },
   );
+});
+
+describe('the packages found, in the game', () => {
+  const [one, two] = PACKAGES;
+  const played = (json: string | null = null) => {
+    const told: string[] = [];
+    const store = memoryStore(json);
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(store),
+      events: { found: (id, n, of) => told.push(`found ${id} ${n} ${of}`) },
+    });
+    return { game, told, store };
+  };
+  const landAt = (game: Game, p: { x: number; y: number }, away: number) => {
+    game.helicopter.place(p.x + away, p.y, 0, 0);
+    for (let f = 0; f < 5; f++) game.step(DT);
+  };
+
+  it('tells what was found, how many are found now and of how many there are, once each', () => {
+    const { game, told } = played();
+    landAt(game, one, 5);
+    landAt(game, two, 5);
+    landAt(game, one, 5);
+    expect(told).toEqual([`found ${one.id} 1 10`, `found ${two.id} 2 10`]);
+  });
+
+  it('keeps it in the save as it is found, in order, and not before', () => {
+    const { game, store } = played();
+    expect(store.json).toBeNull();
+    landAt(game, two, 2);
+    landAt(game, one, 2);
+    expect(JSON.parse(store.json!)).toEqual({ best: {}, collected: [], found: [two.id, one.id] });
+    const again = new Game({ random: seeded(1), progress: new Progress(memoryStore(store.json)) });
+    expect(again.finds.count).toBe(2);
+    expect(again.finds.has(two.id)).toBe(true);
+  });
+
+  it('tells nothing for a package the save had found, nor for one landed 16 m from', () => {
+    const { game, told } = played(JSON.stringify({ best: {}, found: [one.id] }));
+    landAt(game, one, 2);
+    landAt(game, two, 16);
+    expect(told).toEqual([]);
+  });
+
+  it('counts an id the save brought that the game does not have as no one of the ten', () => {
+    const { game, told } = played('{"best":{},"found":["from-a-later-game"]}');
+    landAt(game, one, 2);
+    expect(told).toEqual([`found ${one.id} 1 10`]);
+  });
+
+  it('finds with a level going, and goes on with the level', () => {
+    const { game, told } = played();
+    game.begin('ring-trial');
+    landAt(game, one, 2);
+    expect(told).toHaveLength(1);
+    expect(game.mission.level?.id).toBe('ring-trial');
+    expect(checkInvariants(game)).toEqual([]);
+  });
 });

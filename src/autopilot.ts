@@ -14,11 +14,14 @@
  * With nothing going and no level told to it, it can be told a structure by name, and flies through its opening, from
  * whichever side is nearer, and then stands still: the play-through collects the structures by it.
  *
+ * With nothing going, and no structure to collect, it can be told a package by name, and flies to it as it flies to a
+ * pad, over the treetops, and comes straight down onto the clearing's middle: the play-through finds the packages by it.
+ *
  * The gates play the game through it: the pace of a level, the same game
  * twice, nothing kept for ever over a long play, and the play-through in the
  * page. Without it none of them has anything to time or watch.
  */
-import type { Collectible } from './arena';
+import type { Collectible, PackagePlace } from './arena';
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
 import { RING, onPad, type Gate, type Level, type Ring } from './mission';
@@ -72,6 +75,8 @@ export class Autopilot {
   private flying: Gate | null = null;
   /** The structure it is told to collect while nothing else is asked of it, found once when it is told; null for none. */
   private collecting: Collectible | null = null;
+  /** The package it is told to land by while nothing else is asked of it, found once when it is told; null for none. */
+  private seeking: PackagePlace | null = null;
   /** Each collectible's opening and the same turned about, built once, so that choosing a side makes nothing. */
   private readonly sides: { id: string; ahead: Gate; behind: Gate }[];
 
@@ -98,6 +103,21 @@ export class Autopilot {
     const found = this.game.collection.collectibles.find((c) => c.id === id);
     if (!found) throw new Error(`no such structure: ${id}`);
     this.collecting = found;
+  }
+
+  /** The id of the package it will go and land by while nothing else is asked of it, or null for none; an id the game does not have is refused. */
+  get find(): string | null {
+    return this.seeking?.id ?? null;
+  }
+
+  set find(id: string | null) {
+    if (id === null) {
+      this.seeking = null;
+      return;
+    }
+    const place = this.game.finds.places.find((p) => p.id === id);
+    if (!place) throw new Error(`no such package: ${id}`);
+    this.seeking = place;
   }
 
   /** The name of the level it will fly to and do while nothing is going, or null for none; a name the game does not have is refused. */
@@ -131,7 +151,12 @@ export class Autopilot {
     c.turn = 0;
     c.lift = 0;
     const step = mission.current ?? this.told?.steps[0];
-    if (!step) return this.collecting ? this.collectStructure() : c;
+    if (!step) {
+      // a structure first, which is quick, and then a package; each only while it is not yet done
+      if (this.collecting && !this.game.collection.has(this.collecting.id)) return this.collectStructure();
+      if (this.seeking && !this.game.finds.has(this.seeking.id)) return this.flyTo(this.seeking, true);
+      return c;
+    }
     if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
     const pad = island.pads[step.pad];
     // on the pad that is wanted: still, while the parcel loads; unless a level has just ended on it, which loads
@@ -141,12 +166,24 @@ export class Autopilot {
       return c;
     }
 
-    let dx = pad.x - h.x,
-      dy = pad.y - h.y;
+    return this.flyTo(pad, false);
+  }
+
+  /**
+   * To a place and down onto it: up to its cruise, turned toward it, across at speed, braked to arrive slowly over it, and
+   * straight down once it is over it and all but stopped. A pad is flown to over the highest ground on the way; a package,
+   * which lies in a wood, over the treetops too, since a crown is no ground it can fly through.
+   */
+  private flyTo(to: { x: number; y: number; z: number }, overTrees: boolean): Controls {
+    const c = this.controls;
+    const { helicopter: h } = this.game;
+    let dx = to.x - h.x,
+      dy = to.y - h.y;
     const far = Math.hypot(dx, dy);
-    let cruise = this.cruise(pad.x, pad.y, pad.z);
+    let cruise = this.cruise(to.x, to.y, to.z);
+    if (overTrees) cruise = Math.min(HELICOPTER.ceiling, Math.max(cruise, this.treetops(to.x, to.y) + PILOT.clear / 2));
     // round a tower or over the deck, where one is in the way
-    if (this.detour(null, pad.x, pad.y, cruise)) {
+    if (this.detour(null, to.x, to.y, cruise)) {
       dx = this.via.x - h.x;
       dy = this.via.y - h.y;
       cruise = this.via.z;
@@ -160,15 +197,28 @@ export class Autopilot {
     const heading = Math.atan2(dy, dx);
     const off = wrap(heading - h.yaw);
     c.turn = clamp(off * PILOT.steer, -1, 1);
-    // the speed it may have here, to shed by the pad; ahead of that, brake
+    // the speed it may have here, to shed by the place; ahead of that, brake
     const along = h.vx * Math.cos(h.yaw) + h.vy * Math.sin(h.yaw);
     const allowed = Math.min(HELICOPTER.maxSpeed, Math.sqrt(2 * PILOT.brake * Math.max(0, far - PILOT.over / 2)));
     const high = h.z > cruise - PILOT.clear / 2;
     if (Math.abs(off) < PILOT.aimed && high) c.forward = clamp((allowed - along) / 4, -1, 1);
     else if (along > 1) c.forward = -1;
-    // up to its cruise and held there, and never lower while it has a way to go
-    c.lift = clamp(HOVER_LIFT + (cruise - h.z) * PILOT.hold, -1, 1);
+    // up to its cruise and held there, and never lower while it has a way to go; and off the ground first, which it
+    // cannot move across: a detour that holds the height it is at, as the way out from under a deck does, asks for
+    // no climb, and a helicopter that had settled on the ground there would sit pressing forward for ever
+    c.lift = h.landed ? 1 : clamp(HOVER_LIFT + (cruise - h.z) * PILOT.hold, -1, 1);
     return c;
+  }
+
+  /** The top of the highest crown on the straight way from here to (x, y), or −Infinity over no wood. Makes nothing. */
+  private treetops(x: number, y: number): number {
+    const { helicopter: h, canopy } = this.game;
+    let top = -Infinity;
+    for (let k = 0; k <= PILOT.look; k++) {
+      const t = k / PILOT.look;
+      top = Math.max(top, canopy.heightAt(h.x + (x - h.x) * t, h.y + (y - h.y) * t));
+    }
+    return top;
   }
 
   /**

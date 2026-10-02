@@ -3,14 +3,21 @@
  * a level starts and how it is put, what the bar shows and the toast's life against game time.
  */
 import { describe, expect, it } from 'vitest';
-import { LEVELS, theIsland } from '../src/arena';
+import { LEVELS, PACKAGES, COLLECTIBLES, theIsland } from '../src/arena';
+import { RADAR } from '../src/finds';
 import {
   TOAST,
   ToastQueue,
   barMode,
   clock,
+  RADAR_RING,
+  RADAR_RINGS,
+  RADAR_STEPS,
   collectedWords,
+  foundWords,
   pointer,
+  radarBadge,
+  radarRing,
   startPoint,
   startWords,
   toastShown,
@@ -259,5 +266,126 @@ describe("a collected structure's toast", () => {
     queue.collected('the gorge bridge', 1, 7, 10);
     expect(barMode(false, false, queue.update(11) !== null)).toBe('quiet');
     expect(barMode(false, false, queue.update(13) !== null)).toBe('free');
+  });
+});
+
+describe("a found package's toast", () => {
+  it('says "Package found", then how many of the ten', () => {
+    expect(foundWords(3, 10)).toBe('Package found · 3 of 10');
+    const queue = new ToastQueue(17);
+    queue.found(3, 10, 10);
+    const t = queue.update(10)!;
+    expect([t.title, t.left, t.sep, t.right, t.words, t.level]).toEqual([
+      'Package found',
+      '3 of 10',
+      '',
+      '',
+      'Package found · 3 of 10',
+      false,
+    ]);
+    expect(queue.update(12.99)).not.toBeNull();
+    expect(queue.update(13)).toBeNull();
+  });
+
+  it("waits behind a structure's toast, and is shown in its turn", () => {
+    const queue = new ToastQueue(17);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    queue.found(1, 10, 11);
+    expect(queue.update(11)!.words).toBe('Collected the gorge bridge · 1 of 7');
+    expect(queue.waiting).toBe(1);
+    expect(queue.update(13)!.words).toBe('Package found · 1 of 10');
+    expect(queue.update(16)).toBeNull();
+  });
+
+  it("never covers a level's toast: it waits for it, and a level's toast that comes after takes the card from it", () => {
+    const queue = new ToastQueue(17);
+    queue.level('delivery', 30, true, 10);
+    queue.found(1, 10, 11);
+    expect(queue.update(11)!.title).toBe('Delivered!');
+    expect(queue.update(12.99)!.title).toBe('Delivered!');
+    expect(queue.update(13)!.words).toBe('Package found · 1 of 10');
+    // a level done while one is shown takes the card, and the package goes in front of what waits
+    const other = new ToastQueue(17);
+    other.found(1, 10, 10);
+    other.collected('the west bridge', 2, 7, 10);
+    other.level('rings', 40, false, 11);
+    expect(other.update(11)!.title).toBe('Trial complete!');
+    expect(other.update(14)!.words).toBe('Package found · 1 of 10');
+    expect(other.update(17)!.words).toBe('Collected the west bridge · 2 of 7');
+  });
+
+  it('has room for every structure and every package at once, which the page sizes it by', () => {
+    const room = COLLECTIBLES.length + PACKAGES.length;
+    const queue = new ToastQueue(room);
+    queue.level('delivery', 30, false, 1);
+    for (let n = 1; n <= COLLECTIBLES.length; n++) queue.collected(`s${n}`, n, COLLECTIBLES.length, 1);
+    for (let n = 1; n <= PACKAGES.length; n++) queue.found(n, PACKAGES.length, 1);
+    expect(queue.waiting).toBe(room);
+    const shown: string[] = [];
+    for (let t = 4; t < 4 + 3 * room; t += 3) shown.push(queue.update(t)!.words);
+    expect(shown.at(-1)).toBe(`Package found · ${PACKAGES.length} of ${PACKAGES.length}`);
+    expect(shown).toHaveLength(room);
+  });
+});
+
+describe('the radar badge', () => {
+  it('is quiet with nothing heard, whatever the time since a ping, and shows no ring', () => {
+    expect(radarBadge(-1, 0)).toEqual({ state: 'quiet', step: 0 });
+    expect(radarBadge(-1, 0.3)).toEqual({ state: 'quiet', step: 0 });
+  });
+
+  it('is heard at any distance within the radar, and at the edge of it', () => {
+    expect(radarBadge(0, 0.1).state).toBe('heard');
+    expect(radarBadge(60, 0.1).state).toBe('heard');
+    expect(radarBadge(RADAR.range, 0.1).state).toBe('heard');
+  });
+
+  it('shows a ring from a ping until the ring is spent, and none before one or long after', () => {
+    expect(radarBadge(60, 0).step).toBe(1);
+    expect(radarBadge(60, RADAR_RING - 1e-9).step).toBe(RADAR_STEPS);
+    expect(radarBadge(60, RADAR_RING).step).toBe(0);
+    expect(radarBadge(60, 100).step).toBe(0);
+    expect(radarBadge(60, Infinity).step).toBe(0);
+    expect(radarBadge(60, -0.5).step).toBe(0);
+  });
+
+  it('says nothing of direction: the same for any nearest, the ring the same size at 5 m and at 95', () => {
+    expect(radarBadge(5, 0.4)).toEqual(radarBadge(95, 0.4));
+  });
+});
+
+describe("the radar's ring", () => {
+  it('is a fixed few steps over a fixed share of game time', () => {
+    expect(RADAR_RING).toBeGreaterThan(0);
+    expect(RADAR_STEPS).toBeGreaterThanOrEqual(3);
+    expect(RADAR_STEPS).toBeLessThanOrEqual(12);
+    const steps = new Set<number>();
+    for (let a = 0; a < RADAR_RING; a += RADAR_RING / 1000) steps.add(radarRing(a).step);
+    expect([...steps].sort((a, b) => a - b)).toEqual(Array.from({ length: RADAR_STEPS }, (_, k) => k + 1));
+  });
+
+  it('grows and fades with its age, from a small bright ring to a large faint one, and is gone when spent', () => {
+    let size = 0,
+      opacity = 2;
+    for (let s = 1; s <= RADAR_STEPS; s++) {
+      const r = radarRing(((s - 0.5) / RADAR_STEPS) * RADAR_RING);
+      expect(r.step).toBe(s);
+      expect(r.size).toBeGreaterThan(size);
+      expect(r.opacity).toBeLessThan(opacity);
+      expect(r.opacity).toBeGreaterThan(0);
+      [size, opacity] = [r.size, r.opacity];
+    }
+    expect(size).toBeLessThanOrEqual(44);
+    expect(radarRing(RADAR_RING)).toEqual({ step: 0, size: 0, opacity: 0 });
+    expect(radarRing(-1)).toEqual({ step: 0, size: 0, opacity: 0 });
+  });
+
+  it('depends on the age alone, so a picture is the same every run', () => {
+    expect(radarRing(0.37)).toEqual(radarRing(0.37));
+  });
+
+  it('has a ring for every ping that can be alive at once, at the fastest the radar pings', () => {
+    expect(RADAR_RINGS).toBe(Math.ceil(RADAR_RING / RADAR.fastest));
+    expect(RADAR_RINGS).toBeLessThanOrEqual(8);
   });
 });

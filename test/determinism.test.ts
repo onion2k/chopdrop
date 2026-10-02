@@ -88,6 +88,37 @@ describe('the determinism check', () => {
     expect(hashGame(counted), 'how many').not.toBe(was);
   });
 
+  it('sees how many packages are found, and which, in what order, how near the radar hears one, and its clock', () => {
+    const game = () => new Game({ random: seeded(1) });
+    const was = hashGame(game());
+    const one = game();
+    one.progress.find('east-wood');
+    one.finds.count = 1;
+    expect(hashGame(one)).not.toBe(was);
+    const other = game();
+    other.progress.find('west-shore-wood');
+    other.finds.count = 1;
+    expect(hashGame(other), 'which').not.toBe(hashGame(one));
+    const ab = game();
+    ab.progress.find('east-wood');
+    ab.progress.find('west-shore-wood');
+    ab.finds.count = 2;
+    const ba = game();
+    ba.progress.find('west-shore-wood');
+    ba.progress.find('east-wood');
+    ba.finds.count = 2;
+    expect(hashGame(ab), 'in what order').not.toBe(hashGame(ba));
+    const counted = game();
+    counted.finds.count = 1;
+    expect(hashGame(counted), 'how many').not.toBe(was);
+    const heard = game();
+    heard.finds.nearest = 42;
+    expect(hashGame(heard), 'how near').not.toBe(was);
+    const clocked = game();
+    clocked.finds.until = 0.5;
+    expect(hashGame(clocked), 'the clock').not.toBe(was);
+  });
+
   it('sees the helicopter moved a thousandth, turned a millionth, a tree leaned, and the ring a hair fuller', () => {
     const game = () => {
       const g = new Game({ random: seeded(1) });

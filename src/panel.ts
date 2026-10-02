@@ -2,8 +2,9 @@
  * The panel, over the island dimmed: a row for each level with its name, the best time on it and where it starts, and
  * on each row its own button, "Show the way", which points the HUD's arrow at the start, or "Abandon" on the row of the
  * level going. Esc or the HUD's corner button brings it up mid-flight and Esc or its cross puts it away; the game is
- * held behind it. Under the levels is a list of the structures, each ticked once it is collected, with how many of them.
- * It is built once, from the levels, the pads and the structures, and written only when it is shown. It asks the page
+ * held behind it. Under the levels is a list of the structures, each ticked once it is collected, with how many of them,
+ * and under that the hidden packages: how many are found, and a dot for each, filled gold as it is.
+ * It is built once, from the levels, the pads, the structures and the packages, and written only when it is shown. It asks the page
  * to show the way, to abandon or to close. Without it a player would have nowhere to find what there is to fly, nor a
  * way to give a level up.
  */
@@ -43,12 +44,33 @@ export function structureRows(
   return { heading: 'Structures', count: `${items.filter((i) => i.got).length} of ${items.length}`, items };
 }
 
+/** The packages line as words: its heading, how many are found, the line whole, and a dot for each, true once found. */
+export interface PackageRows {
+  heading: string;
+  count: string;
+  line: string;
+  dots: boolean[];
+}
+
+/**
+ * What the packages line says: a dot for each of `all`, in the game's order, true if its id is in `found`; and the count
+ * of those the game has, so a name a later game's save brought, or one named twice, is not one.
+ */
+export function packageRows(all: readonly { id: string }[], found: readonly string[]): PackageRows {
+  const dots = all.map(({ id }) => found.includes(id));
+  const count = `${dots.filter(Boolean).length} of ${dots.length}`;
+  return { heading: 'Packages', count, line: `Packages · ${count}`, dots };
+}
+
 export class Panel {
   private readonly root: HTMLElement;
   private readonly rows: HTMLElement[] = [];
   private readonly sub: HTMLElement;
   private readonly structureCount: HTMLElement;
   private readonly structureItems: HTMLElement[] = [];
+  private readonly packs: HTMLElement;
+  private readonly packCount: HTMLElement;
+  private readonly packDots: HTMLElement[] = [];
   private readonly close: HTMLButtonElement;
   /** The levels by their names, in the order of the rows, so a button says which it is for. */
   private readonly ids: string[];
@@ -60,6 +82,7 @@ export class Panel {
     levels: readonly { id: string; name: string; steps: readonly Step[] }[],
     pads: readonly PadWords[],
     private readonly structures: readonly { id: string; name: string }[],
+    private readonly packages: readonly { id: string }[],
     private readonly actions: PanelActions,
   ) {
     this.ids = levels.map((level) => level.id);
@@ -73,6 +96,7 @@ export class Panel {
         <div class="sub"></div>
         <div class="rows"></div>
         <div class="structures"><h3>Structures<span class="n"></span></h3><div class="list"></div></div>
+        <div class="packs"><h3>Packages<span class="n"></span></h3><div class="dots"></div></div>
       </div>`;
     document.body.append(this.root);
     const list = this.root.querySelector('.rows')!;
@@ -95,6 +119,15 @@ export class Panel {
       things.append(item);
       this.structureItems.push(item);
     }
+    const dots = this.root.querySelector('.packs .dots')!;
+    for (let k = 0; k < packages.length; k++) {
+      const dot = document.createElement('span');
+      dot.className = 'd';
+      dots.append(dot);
+      this.packDots.push(dot);
+    }
+    this.packs = this.root.querySelector('.packs')!;
+    this.packCount = this.root.querySelector('.packs .n')!;
     this.structureCount = this.root.querySelector('.structures .n')!;
     this.sub = this.root.querySelector('.sub')!;
     this.close = this.root.querySelector('.close')!;
@@ -115,10 +148,16 @@ export class Panel {
 
   /**
    * Up over the island, with each level as `rows` say, and the one named `going` marked, with a button to abandon it
-   * in place of the one that shows the way; and the structures ticked that `collected` names. The first row's button has
+   * in place of the one that shows the way; the structures ticked that `collected` names; and the packages' dots filled
+   * for those `found` names, written afresh each time. The first row's button has
    * the focus, so Tab and Enter work.
    */
-  show(rows: readonly LevelRow[], going: string | null, collected: readonly string[] = []): void {
+  show(
+    rows: readonly LevelRow[],
+    going: string | null,
+    collected: readonly string[] = [],
+    found: readonly string[] = [],
+  ): void {
     rows.forEach((row, k) => {
       const el = this.rows[k];
       const best = el.querySelector<HTMLElement>('.best')!;
@@ -137,6 +176,10 @@ export class Panel {
       item.classList.toggle('got', got);
       item.querySelector('.mark')!.textContent = got ? '✓' : '';
     });
+    const packs = packageRows(this.packages, found);
+    this.packCount.textContent = packs.count;
+    this.packs.setAttribute('aria-label', packs.line);
+    packs.dots.forEach((got, k) => this.packDots[k].classList.toggle('got', got));
     this.going = going;
     this.root.hidden = false;
     this.open = true;

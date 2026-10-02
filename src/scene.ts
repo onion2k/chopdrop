@@ -14,7 +14,7 @@
 import { MATERIAL_STRIDE, type GameGroup } from 'artshape-render/game/renderer';
 import type { Box } from 'artshape-render/game/shadows';
 import type { Mesh } from 'artshape-render/mesh/types';
-import { COLLECTIBLES, ISLAND, LEVELS, TREE_KINDS, type Collectible } from './arena';
+import { COLLECTIBLES, ISLAND, LEVELS, PACKAGES, TREE_KINDS, type Collectible, type PackagePlace } from './arena';
 import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
@@ -193,6 +193,15 @@ const BAND = 7;
 const COLLECTED_PAINT: Paint = { albedo: seen(0xf0b429).map((c) => c * 1.2) as Rgb, roughness: 0.4 };
 const COLLAR = { across: 0.4, tall: 2.2, over: 0.2 };
 const RAIL_COVER = 0.02;
+
+/**
+ * The hidden packages, a crate of the parcel's shape at `size` times its size in weathered blue-grey with dark straps,
+ * chosen from a mock so that it is seen close over and is never taken for a parcel to deliver. Each is turned by `turn`
+ * radians for each place before it in the list, so no two lie the same way. A package found is drawn at no size.
+ */
+const PACKAGE_PAINT: Paint = { albedo: seen(0x5f7d96), roughness: 0.9 };
+const PACKAGE_STRAP_PAINT: Paint = { albedo: seen(0x26303a), roughness: 0.9 };
+const PACKAGE = { size: 1.4, turn: 0.7 };
 
 /**
  * The start flags, chosen from a mock: a dark pole 0.3 square and 6 tall, and a cloth of 3 by 2 squares of 1.1, chequered
@@ -567,6 +576,14 @@ export class Scene {
   private goldSlots = 0;
   private readonly goldFor: Uint8Array;
   private goldWritten = false;
+  /**
+   * The hidden packages' places, which a crate is drawn on, and where their two groups are among the pools; the pool is
+   * written only when the set found changes from what it was last written for. Sized once, by the places.
+   */
+  private readonly places: readonly PackagePlace[];
+  private packagesAt = -1;
+  private readonly foundFor: Uint8Array;
+  private packagesWritten = false;
   /** What the resting crates were last written for, so they are written only when what is going changes. */
   private cratesFor: Level | null | undefined;
   /** Where the ring groups are among the pools, and what they were last written for, so they are written only on a change. */
@@ -584,10 +601,16 @@ export class Scene {
 
   /**
    * The scene of `levels`: which of them have a crate to wait on a pad, a ring to be drawn as a start and flags to mark
-   * it, worked out once here so that no frame works it out again; and the structures that can be collected, each with
-   * its place in the gold. The arena's unless told otherwise.
+   * it, worked out once here so that no frame works it out again; the structures that can be collected, each with its
+   * place in the gold; and the places of the hidden packages. The arena's unless told otherwise.
    */
-  constructor(levels: readonly Level[] = LEVELS, collectibles: readonly Collectible[] = COLLECTIBLES) {
+  constructor(
+    levels: readonly Level[] = LEVELS,
+    collectibles: readonly Collectible[] = COLLECTIBLES,
+    packages: readonly PackagePlace[] = PACKAGES,
+  ) {
+    this.places = packages;
+    this.foundFor = new Uint8Array(packages.length);
     for (const { id, blocks } of collectibles) {
       this.collectable.push({ id, blocks, first: this.goldSlots });
       for (const b of blocks) this.goldSlots += b.kind === 'tower' ? 1 : b.kind === 'deck' ? 2 : 0;
@@ -770,6 +793,13 @@ export class Scene {
       this.goldWritten = false;
       if (this.goldSlots > 0)
         add('collected', unit, COLLECTED_PAINT, new Float32Array(this.goldSlots * 16), this.goldSlots);
+      // the hidden packages, a crate on each place there is, a placement a place and none at any size once it is found,
+      // written only when the packages found change
+      this.packagesAt = this.pools.length;
+      this.packagesWritten = false;
+      const n = this.places.length;
+      add('packages', wood, PACKAGE_PAINT, new Float32Array(n * 16), n);
+      add('package straps', straps, PACKAGE_STRAP_PAINT, new Float32Array(n * 16), n);
     }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
@@ -813,9 +843,16 @@ export class Scene {
    * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
    * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again. Given what is
    * going, which may be nothing, the crates, the beacon, the rings and the flags are written as it says; and given the
-   * names of the structures collected, the gold on each, which is written only when they change.
+   * names of the structures collected, the gold on each, which is written only when they change; and given the names of
+   * the packages found, a crate on every place of one not found, written only when they change.
    */
-  write(pose: HelicopterPose, sway?: Sway, going?: Going, collected?: readonly string[]): void {
+  write(
+    pose: HelicopterPose,
+    sway?: Sway,
+    going?: Going,
+    collected?: readonly string[],
+    found?: readonly string[],
+  ): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
     this.changed.fill(0, HELICOPTER_GROUPS);
@@ -833,6 +870,7 @@ export class Scene {
       this.flag(going);
     }
     if (collected && this.goldAt >= 0) this.paintGold(collected);
+    if (found && this.packagesAt >= 0) this.paintPackages(found);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -984,6 +1022,41 @@ export class Scene {
       }
     }
     this.changed[at] = 1;
+  }
+
+  /**
+   * A crate on each place of a package not found, turned by its place in the list, every other placement at no size.
+   * A name the game does not have is not a place. Written only when the set found is not what it was last written for;
+   * the check reads and writes in place and makes nothing.
+   */
+  private paintPackages(found: readonly string[]): void {
+    const at = this.packagesAt;
+    const was = this.foundFor;
+    let changed = !this.packagesWritten;
+    for (let k = 0; k < this.places.length; k++) {
+      const now = found.includes(this.places[k].id) ? 1 : 0;
+      if (now !== was[k]) changed = true;
+      was[k] = now;
+    }
+    if (!changed) return;
+    this.packagesWritten = true;
+    const [wood, straps] = [this.pools[at], this.pools[at + 1]];
+    for (let k = 0; k < this.places.length; k++) {
+      const { x, y, z } = this.places[k];
+      place(wood, k, x, y, z, k * PACKAGE.turn, was[k] ? 0 : PACKAGE.size);
+    }
+    straps.set(wood);
+    this.changed[at] = this.changed[at + 1] = 1;
+  }
+
+  /** How many crates of packages are drawn now: what the test API says, and nothing the frame uses. */
+  get packagesDrawn(): number {
+    if (this.packagesAt < 0) return 0;
+    const m = this.pools[this.packagesAt];
+    let drawn = 0;
+    for (let k = 0; k < this.places.length; k++)
+      if (m[k * 16] !== 0 || m[k * 16 + 5] !== 0 || m[k * 16 + 10] !== 0) drawn++;
+    return drawn;
   }
 
   /** How many placements of gold are drawn now: what the test API says, and nothing the frame uses. */

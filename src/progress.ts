@@ -1,6 +1,6 @@
 /**
  * What the player has done, and where it is kept: the best time on each
- * level, by the level's name, and the structures collected, by theirs, in the browser's storage or, for the game run
+ * level, by the level's name, and the structures collected and the packages found, by theirs, in the browser's storage or, for the game run
  * without a page, in memory. Which levels are open is worked out from it and
  * never kept, so a level slotted into the list later opens by the same rule
  * as the rest, and a player's times stay with the levels they were flown on.
@@ -36,6 +36,8 @@ export interface SaveShape {
   best: Record<string, number>;
   /** The structures collected, by name, in the order they were. */
   collected: string[];
+  /** The packages found, by name, in the order they were. */
+  found: string[];
 }
 
 /** Where the save is kept. */
@@ -90,6 +92,8 @@ export class Progress {
    * added to only through `collect`, which keeps it free of names that are not names and of any twice.
    */
   readonly collected: string[] = [];
+  /** The packages found, by name, in the order they were: public to be read, and added to only through `find`. */
+  readonly found: string[] = [];
   /** Why the save in the store could not be read, if it could not; null if it was read, or there was none. */
   readonly refused: string | null = null;
 
@@ -117,9 +121,17 @@ export class Progress {
     return true;
   }
 
+  /** The package `id` found; whether it was new. */
+  find(id: string): boolean {
+    if (!NAME.test(id)) throw new Error(`"${id}" is not a package's name`);
+    if (this.found.includes(id)) return false;
+    this.found.push(id);
+    return true;
+  }
+
   /** The save as it is written. */
   toJSON(): SaveShape {
-    return { best: Object.fromEntries(this.best), collected: [...this.collected] };
+    return { best: Object.fromEntries(this.best), collected: [...this.collected], found: [...this.found] };
   }
 
   /** The save written to its store. */
@@ -136,7 +148,8 @@ export class Progress {
       return 'it is not JSON';
     }
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'it is not a table';
-    this.readCollected((raw as Record<string, unknown>).collected);
+    this.readNames((raw as Record<string, unknown>).collected, this.collected);
+    this.readNames((raw as Record<string, unknown>).found, this.found);
     const best = (raw as Record<string, unknown>).best;
     // a save from before there were times, the template's own, has none, and is a fresh start and not a broken save
     if (best === undefined) return null;
@@ -150,15 +163,15 @@ export class Progress {
   }
 
   /**
-   * The structures collected from a save, what can be read of them: a field that is not a list is dropped, and in a
-   * list each entry that is not a name, and each repeat, and each past the limit. An id the game does not have is
-   * kept, as a later game's save would bring one.
+   * The names kept in a list in a save (the structures collected, the packages found), what can be read of them: a field
+   * that is not a list is dropped, and in a list each entry that is not a name, and each repeat, and each past the
+   * limit. A name the game does not have is kept, as a later game's save would bring one.
    */
-  private readCollected(field: unknown): void {
+  private readNames(field: unknown, into: string[]): void {
     if (!Array.isArray(field)) return;
     for (const id of field as unknown[]) {
-      if (this.collected.length >= SAVE.kept) break;
-      if (typeof id === 'string' && NAME.test(id) && !this.collected.includes(id)) this.collected.push(id);
+      if (into.length >= SAVE.kept) break;
+      if (typeof id === 'string' && NAME.test(id) && !into.includes(id)) into.push(id);
     }
   }
 }

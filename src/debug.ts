@@ -25,7 +25,7 @@
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
-import { TREE_KINDS, type Collectible, type TreeKind } from './arena';
+import { TREE_KINDS, type Collectible, type PackagePlace, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
 import type { Game, LastLevel } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
@@ -98,8 +98,18 @@ export interface GameState {
   blocked: number;
   /** The structures collected, by name, in the order they were; one a save brought that the game does not have is in it too. */
   collected: string[];
+  /** The hidden packages found, by name, in the order they were; one a save brought that the game does not have is in it too. */
+  found: string[];
+  /**
+   * What the radar heard at the last step: the distance to the nearest package not yet found within its range, or −1
+   * for none, and whether a ping fell due on that step; and what the badge on the page shows as it was last drawn:
+   * `badge` quiet or heard, and the `step` its newest ring is at, 0 for no ring.
+   */
+  radar: { nearest: number; pinged: boolean; badge: 'quiet' | 'heard'; step: number };
   /** How many placements of gold the scene is drawing: a collar on each tower and a cover over each rail of the structures collected. */
   gold: number;
+  /** How many crates of hidden packages the scene is drawing: one on each place of a package not found. */
+  crates: number;
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -188,6 +198,8 @@ export interface GameApi {
     structures: Block[];
     /** The bridges and pairs of towers that can be collected, each with its opening and the blocks it is solid as. */
     collectibles: Collectible[];
+    /** The hidden packages, each where it lies, with `z` the ground under it. */
+    packages: PackagePlace[];
   };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
@@ -205,7 +217,7 @@ export interface GameApi {
   /**
    * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
    * `delivered 1`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
-   * `abandoned first-delivery`, `collected gorge-bridge 1 7`.
+   * `abandoned first-delivery`, `collected gorge-bridge 1 7`, `found east-wood 1 10`.
    */
   events(): string[];
   /** Flying free from home again: landed on the home pad, anything going abandoned (told), nothing guided. */
@@ -225,12 +237,12 @@ export interface GameApi {
   /** Every level as the panel shows it: its name, its kind and the best time on it. Nothing is locked. */
   levels(): LevelRow[];
   /** What the player has done, as it is saved, and why the save the game found could not be read, if it could not. */
-  save(): { best: Record<string, number>; refused: string | null };
+  save(): { best: Record<string, number>; collected: string[]; found: string[]; refused: string | null };
   /**
    * The autopilot flying in place of the player, or not: what the play-through flies the level by. Given a level `id`,
    * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going; given a
-   * structure's `id`, it flies through that structure's opening while nothing else is asked of it. Level ids and
-   * structure ids never clash; one that is neither throws.
+   * structure's `id`, it flies through that structure's opening, and given a package's `id`, it flies to it and lands by
+   * it, while nothing else is asked of it. Level, structure and package ids never clash; one that is none throws.
    */
   autopilot(on: boolean, id?: string): void;
   /** Every rule that must always hold and does not, as `invariants.ts` says: none, if all is well. */
@@ -281,6 +293,10 @@ export interface DebugHost {
   toast(): string | null;
   /** How many placements of gold the scene has written. */
   gold(): number;
+  /** How many crates of packages the scene has written at a size. */
+  crates(): number;
+  /** The radar's badge as the page last drew it. */
+  radar(): { badge: 'quiet' | 'heard'; step: number };
   /** The autopilot flying in place of the keys and touch, or not, told the level or the structure to do while nothing is going. */
   setAutopilot(on: boolean, id?: string): void;
   /** Play one frame of `dt`, without drawing. */
@@ -352,7 +368,10 @@ export function createApi(host: DebugHost): GameApi {
         toast: host.toast(),
         blocked: game.starts.blocked,
         collected: [...game.collection.ids],
+        found: [...game.finds.ids],
+        radar: { nearest: game.finds.nearest, pinged: game.finds.pinged, ...host.radar() },
         gold: host.gold(),
+        crates: host.crates(),
       };
     },
     content: () => ({
@@ -369,6 +388,7 @@ export function createApi(host: DebugHost): GameApi {
         opening: { ...opening, ...(opening.flags && { flags: opening.flags.map((f) => ({ ...f })) }) },
         blocks: blocks.map((block) => ({ ...block })),
       })),
+      packages: game.finds.places.map(({ id, x, y, z }) => ({ id, x, y, z })),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
     floorAt: (x, y) => helicopter.floorAt(x, y),

@@ -4,7 +4,7 @@
  * makes it the level it is: over the water, over the range, up the mountain.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { PILOT } from '../src/autopilot';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, TREE_STRIDE } from '../src/island';
@@ -835,5 +835,97 @@ describe('where a level begins', () => {
     const pickups = LEVELS.flatMap((level) => (level.steps[0].kind === 'pickup' ? [level.steps[0].pad] : []));
     expect(pickups).toEqual([4, 3, 7, 2]);
     expect(new Set(pickups).size).toBe(4);
+  });
+});
+
+/**
+ * How many trees' feet a wood must have within 30 of a package, said once. Twelve was asked for first; eight is what
+ * ten places inland could keep.
+ */
+const WOOD = 8;
+
+/**
+ * How far apart packages must be. It is not 150: with the places inland, 150 left nine, and ten fit only at 140.
+ */
+const SPACING = 140;
+
+/** How far above the sea a package's ground must be: inland, and not a beach. */
+const INLAND = 5;
+
+/** How far (x, y) is from a block's footprint, which is nothing inside it. */
+function fromBlock(b: Block, x: number, y: number): number {
+  const along = (x - b.x) * Math.cos(b.yaw) + (y - b.y) * Math.sin(b.yaw);
+  const across = -(x - b.x) * Math.sin(b.yaw) + (y - b.y) * Math.cos(b.yaw);
+  return Math.hypot(Math.max(Math.abs(along) - b.length / 2, 0), Math.max(Math.abs(across) - b.width / 2, 0));
+}
+
+describe('the hidden packages', () => {
+  const apartBy = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  it('are ten, each known by a name that is kebab-case, unique, and no level its own nor structure its own', () => {
+    expect(PACKAGES).toHaveLength(10);
+    const ids = PACKAGES.map((p) => p.id);
+    expect(new Set(ids).size).toBe(10);
+    for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    const taken = new Set([...LEVELS.map((l) => l.id), ...COLLECTIBLES.map((c) => c.id)]);
+    for (const id of ids) expect(taken.has(id), id).toBe(false);
+  });
+
+  it('stand on dry land: in no lake, no sea and no river', () => {
+    for (const p of PACKAGES) expect(wet(p.x, p.y), p.id).toBe(false);
+  });
+
+  it(`stand inland: the ground ${INLAND} or more above the sea`, () => {
+    for (const p of PACKAGES) expect(p.z, p.id).toBeGreaterThanOrEqual(INLAND);
+  });
+
+  it('have z equal to the ground there, within 0.05', () => {
+    for (const p of PACKAGES) expect(Math.abs(p.z - ground.heightAt(p.x, p.y)), p.id).toBeLessThanOrEqual(0.05);
+  });
+
+  it('have a clearing to land in: the ground within 1.5 over 12 square, sampled every 3, and no tree foot within 6', () => {
+    for (const p of PACKAGES) {
+      let lo = Infinity,
+        hi = -Infinity;
+      for (let a = -6; a <= 6; a += 3)
+        for (let b = -6; b <= 6; b += 3) {
+          const h = ground.heightAt(p.x + a, p.y + b);
+          [lo, hi] = [Math.min(lo, h), Math.max(hi, h)];
+          expect(wet(p.x + a, p.y + b), `${p.id} at ${a},${b}`).toBe(false);
+        }
+      expect(hi - lo, p.id).toBeLessThanOrEqual(1.5);
+      const near = TREES.filter((t) => apartBy(t, p) < 6);
+      expect(near, p.id).toEqual([]);
+    }
+  });
+
+  it(`stand in a wood: ${WOOD} or more trees' feet within 30`, () => {
+    for (const p of PACKAGES)
+      expect(TREES.filter((t) => apartBy(t, p) <= 30).length, p.id).toBeGreaterThanOrEqual(WOOD);
+  });
+
+  it('keep 120 from every pad and 60 from every structure block', () => {
+    for (const p of PACKAGES) {
+      for (const pad of pads) expect(apartBy(p, pad), `${p.id} and a pad`).toBeGreaterThanOrEqual(120);
+      for (const b of STRUCTURES) expect(fromBlock(b, p.x, p.y), `${p.id} and ${b.name}`).toBeGreaterThanOrEqual(60);
+    }
+  });
+
+  it(`keep ${SPACING} from each other`, () => {
+    PACKAGES.forEach((a, i) =>
+      PACKAGES.slice(i + 1).forEach((b) =>
+        expect(apartBy(a, b), `${a.id} and ${b.id}`).toBeGreaterThanOrEqual(SPACING),
+      ),
+    );
+  });
+
+  it("stand inside the bounds the helicopter's middle is kept to, with room to land", () => {
+    const r = HELICOPTER.reach;
+    for (const p of PACKAGES) {
+      expect(p.x, p.id).toBeGreaterThan(bounds.minX + r);
+      expect(p.x, p.id).toBeLessThan(bounds.maxX - r);
+      expect(p.y, p.id).toBeGreaterThan(bounds.minY + r);
+      expect(p.y, p.id).toBeLessThan(bounds.maxY - r);
+    }
   });
 });

@@ -59,9 +59,10 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
    */
   let told: string[] = [];
   const collected: string[] = [];
+  const found: string[] = [];
   const hear = async () => {
     for (const line of await page.evaluate(() => window.game!.events()))
-      (line.startsWith('collected ') ? collected : told).push(line);
+      (line.startsWith('collected ') ? collected : line.startsWith('found ') ? found : told).push(line);
   };
   /** Played in thirty-frame steps until `done` holds, the rules checked; false if it never did. */
   const until = async (done: () => Promise<boolean>, limit: number) => {
@@ -222,8 +223,43 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
   await step(1);
   expect((await state()).gold).toBe(structures.reduce((n, s) => n + s.gold, 0));
 
-  // every level has its time in the panel, and the panel shows every structure ticked
+  // after the structures, each hidden package found by the autopilot told its name, with its toast and its crate gone
+  const packages = await page.evaluate(() => window.game!.content().packages);
+  expect(packages).toHaveLength(10);
+  expect((await state()).crates, 'a crate on each place').toBe(10);
+  for (const [n, pack] of packages.entries()) {
+    expect(await until(async () => (await state()).toast === null, 600), 'the last toast gone').toBe(true);
+    await page.evaluate((id) => window.game!.autopilot(true, id), pack.id);
+    told = [];
+    expect(await until(async () => (await state()).found.includes(pack.id), 7200), `${pack.id} found`).toBe(true);
+    await hear();
+    expect(found.at(-1), `${pack.id} told`).toBe(`found ${pack.id} ${n + 1} 10`);
+    expect(told, 'nothing else told').toEqual([]);
+    await page.evaluate(() => window.game!.autopilot(false));
+    await step(1);
+    const toast = page.locator('#hud .toast');
+    await expect(toast).toBeVisible();
+    await expect(toast.locator('h2')).toHaveText('Package found');
+    await expect(toast.locator('.t')).toHaveText(`${n + 1} of 10`);
+    expect((await state()).toast).toBe(`Package found · ${n + 1} of 10`);
+    expect((await state()).crates, `${pack.id}'s crate gone`).toBe(10 - (n + 1));
+  }
+  expect(found).toHaveLength(10);
+  expect(new Set(found.map((line) => line.split(' ')[1])).size, 'each told once').toBe(10);
+  expect((await state()).found.sort()).toEqual(packages.map((p) => p.id).sort());
+  const keptFound = await page.evaluate(
+    (key) => (JSON.parse(localStorage.getItem(key)!) as { found: string[] }).found,
+    SAVE_KEY,
+  );
+  expect(keptFound, 'kept in the save, in the order they were').toEqual(found.map((line) => line.split(' ')[1]));
+  await until(async () => (await state()).toast === null, 600);
+  await step(1);
+  expect((await state()).radar.badge, 'nothing left to hear').toBe('quiet');
+
+  // every level has its time in the panel, and the panel shows every structure ticked and every package found
   await page.keyboard.press('Escape');
+  await expect(page.locator('#panel .packs h3')).toHaveText('Packages10 of 10');
+  await expect(page.locator('#panel .packs .d.got')).toHaveCount(10);
   await expect(page.locator('#panel .structures h3')).toHaveText('Structures7 of 7');
   await expect(page.locator('#panel .structures .item.got')).toHaveCount(7);
   await expect(page.locator('#panel .structures .item.got .mark')).toHaveText(Array(7).fill('✓'));
