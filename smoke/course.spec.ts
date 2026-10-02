@@ -1,8 +1,8 @@
 /**
- * The course in the page, flown by the keys and by touch as a player flies it: between the towers, under the bridge,
- * the bridge missed by going over its deck and gone back for, its deck struck and knocked back off, the words and the
- * arrow for the opening wanted, and the clock running from the first lift-off and stopping as the skids touch the pad
- * it ends on. The helicopter is set before each opening through the test API, a short way off; what it does from there
+ * The course in the page, flown by the keys and by touch as a player flies it: begun by flying between the towers,
+ * then under the bridge, the bridge missed by going over its deck and gone back for, its deck struck and knocked back
+ * off, the words and the arrow for the opening wanted, and the clock running from the towers and stopping as the skids
+ * touch the pad it ends on. The helicopter is set before each opening through the test API, a short way off; what it does from there
  * is the controls'.
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -40,7 +40,7 @@ async function forward(page: Page, frames: number) {
   await page.keyboard.up('w');
 }
 
-test('the course by the keys: between the towers, the bridge gone over and struck, under it, and the landing', async ({
+test('the course by the keys: begun between the towers, the bridge gone over and struck, under it, and the landing', async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -48,18 +48,25 @@ test('the course by the keys: between the towers, the bridge gone over and struc
   await start(page, { seed: 11, paused: true });
   await page.evaluate(() => window.game!.play('under-and-between'));
   await step(page, 1);
+  // put at the start, nothing begun: the hint, and no clock
+  expect((await state(page)).mission.level).toBeNull();
+  await expect(page.locator('#hud .hint')).toBeVisible();
+  await step(page, 60);
+  expect((await state(page)).mission.level).toBeNull();
+
+  // between the towers, thirty back with W held: that begins the course
+  await page.keyboard.down('w');
+  for (let f = 0; f < 300 && !(await state(page)).mission.level; f += 5) await step(page, 5);
+  await page.keyboard.up('w');
+  expect(await page.evaluate(() => window.game!.events())).toEqual([
+    'started under-and-between',
+    'through between the towers',
+  ]);
   const [towers, bridge] = await gatesOf(page);
   expect([towers.label, bridge.label]).toEqual(['between the towers', 'under the bridge']);
-  await expect(page.locator('#hud .goal')).toHaveText('Fly between the towers');
-  // the clock waits for the first lift-off, on the pad
-  await step(page, 60);
-  await expect(page.locator('#hud .clock')).toHaveText('0:00');
-
-  // between the towers: lined up fifteen short, W held, and through
-  await before(page, towers, 15);
-  await forward(page, 100);
-  expect(await page.evaluate(() => window.game!.events())).toEqual(['through between the towers']);
   await expect(page.locator('#hud .goal')).toHaveText('Fly under the bridge');
+  await expect(page.locator('#hud .hint')).toBeHidden();
+  await step(page, 60);
   await expect(page.locator('#hud .clock')).toHaveText(/^0:0[1-9]$/);
 
   // over the bridge's deck and on past it: still the one wanted, and the arrow turned back to it
@@ -104,28 +111,27 @@ test('the course by the keys: between the towers, the bridge gone over and struc
   // the rest flown, and the clock stops as the skids touch the pad it ends on
   await finish(page);
   const end = await state(page);
-  expect(end.screen).toBe('card');
-  await expect(page.locator('#hud .card h2')).toHaveText('Course complete!');
+  expect([end.screen, end.mission.level]).toEqual(['flying', null]);
+  await expect(page.locator('#hud .toast h2')).toHaveText('Course complete!');
   const told = await page.evaluate(() => window.game!.events());
   expect(told.slice(0, 4)).toEqual(['passed 1 3', 'passed 2 3', 'passed 3 3', 'landed 6']);
   expect(told[4]).toMatch(/^finished under-and-between \d+\.\d\d best$/);
   await step(page, 120);
-  expect((await state(page)).mission.time).toBe(end.mission.time);
+  expect((await state(page)).last).toEqual(end.last);
   expect(problems).toEqual([]);
 });
 
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('between the towers by touch: the lever at its stop and the stick pushed', async ({ page }) => {
+  test('between the towers by touch, which begins the course: the lever at its stop and the stick pushed', async ({
+    page,
+  }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => window.game!.play('under-and-between'));
     await step(page, 1);
-    const [towers] = await gatesOf(page);
-    await before(page, towers, 15);
-    await step(page, 1);
-    await expect(page.locator('#hud .goal')).toHaveText('Fly between the towers');
+    await expect(page.locator('#hud .hint')).toBeVisible();
     const travel = await leverTravel(page);
     const hand = await fingers(page);
     // the right thumb sets the lever at its stop, and the left pushes the stick straight up
@@ -134,10 +140,13 @@ test.describe('on a phone', () => {
     expect((await state(page)).input.lever).toBe(HOVER_LIFT);
     await hand.down(1, 100, 690);
     await hand.move(1, 100, 610);
-    await step(page, 100);
+    for (let f = 0; f < 300 && !(await state(page)).mission.level; f += 5) await step(page, 5);
     await hand.up(1);
     await hand.up(2);
-    expect(await page.evaluate(() => window.game!.events())).toEqual(['through between the towers']);
+    expect(await page.evaluate(() => window.game!.events())).toEqual([
+      'started under-and-between',
+      'through between the towers',
+    ]);
     await expect(page.locator('#hud .goal')).toHaveText('Fly under the bridge');
     expect(problems).toEqual([]);
   });

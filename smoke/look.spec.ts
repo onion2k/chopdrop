@@ -17,9 +17,11 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { LEVELS } from '../src/arena';
 import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
-import { WOOD, fingers, leverTravel, standardView, start, watch } from './game';
+import type { Gate, Ring } from '../src/mission';
+import { DELIVERIES, WOOD, fingers, leverTravel, standardView, start, watch } from './game';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -37,12 +39,15 @@ async function hideStats(page: Page) {
   await page.locator('#stats').evaluate((el: HTMLElement) => (el.hidden = true));
 }
 
-/** The parcel loaded on the pad it waits on and carried `along` the way to the pad it is wanted on, flying level at it. */
-async function carrying(page: Page, along = 0.45) {
+/**
+ * The delivery `id` begun as a player begins it, landed on its crate for as long as it takes to load, and then the
+ * parcel carried `along` the way to the pad it is wanted on, flying level at it.
+ */
+async function carrying(page: Page, id = 'first-delivery', along = 0.45) {
+  const { pickup, drop } = DELIVERIES[id];
   await page.evaluate(
-    ([hover, share]) => {
+    ([pickup, drop, hover, share]) => {
       const g = window.game!;
-      const [pickup, drop] = g.state().mission.steps.map((step) => ('pad' in step ? step.pad : -1));
       const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
       g.teleport(a.x, a.y, 0, 0);
       g.step(100);
@@ -52,23 +57,25 @@ async function carrying(page: Page, along = 0.45) {
       g.step(50);
       g.release();
     },
-    [HOVER_LIFT, along],
+    [pickup, drop, HOVER_LIFT, along] as const,
   );
 }
 
 /**
  * A level of rings or openings under way: the level `id` flown, its rings and openings before the one at `n` flown
- * through by lining up on each, and the helicopter `back` before that one on its axis, at its height, flying at it;
+ * through by lining up on each, the first of them beginning it, and the helicopter `back` before that one on its axis, at its height, flying at it;
  * the camera behind it.
  */
 async function openingAhead(page: Page, id: string, n: number, back: number) {
+  const openings = LEVELS.find((l) => l.id === id)!.steps.filter(
+    (s): s is Ring | Gate => s.kind === 'ring' || s.kind === 'gate',
+  );
   await page.evaluate(
-    ([level, n, b, middle, hover]) => {
+    ([level, openings, n, b, middle, hover]) => {
       const g = window.game!;
       g.play(level);
       g.fly(0, 0, 1);
       g.step(30);
-      const openings = g.state().mission.steps.filter((s) => s.kind === 'ring' || s.kind === 'gate');
       const before = (k: number, d: number) => {
         const r = openings[k];
         const [x, y] = [r.x - Math.cos(r.yaw) * d, r.y - Math.sin(r.yaw) * d];
@@ -84,7 +91,7 @@ async function openingAhead(page: Page, id: string, n: number, back: number) {
       g.step(40);
       g.release();
     },
-    [id, n, back, HELICOPTER.size.middle, HOVER_LIFT] as const,
+    [id, openings, n, back, HELICOPTER.size.middle, HOVER_LIFT] as const,
   );
 }
 
@@ -108,27 +115,64 @@ async function besideTower(page: Page, out: number) {
   );
 }
 
-/** Two levels done, so the list shows each standing a level can have: done with its time, open and picked, and locked. */
+/** Two levels done, so the panel shows rows with a time and rows without. */
 const TWO_DONE = { best: { 'first-delivery': 41.2, 'ring-trial': 33.5 } };
 
 /**
- * The parcel taken from the meadow pad to the hilltop pad and delivered, the card up: lifted off first, as a player
- * does, so the clock runs, and set down facing past the crate so it is in the picture.
+ * The parcel taken from the meadow pad to the hilltop pad and delivered, the toast up: begun by landing on the crate,
+ * flown for about half a minute, and set down facing past where the crate stood, so the toast has a time that reads as
+ * a delivery and not a blink.
  */
 async function delivered(page: Page) {
-  await page.evaluate(() => {
-    const g = window.game!;
-    const [pickup, drop] = g.state().mission.steps.map((step) => ('pad' in step ? step.pad : -1));
-    const pads = g.content().pads;
-    g.fly(0, 0, 1);
-    g.step(30);
-    g.release();
-    g.teleport(pads[pickup].x, pads[pickup].y, 0, 0);
-    g.step(100);
-    g.teleport(pads[drop].x, pads[drop].y, 0, pads[drop].yaw + 0.5);
-    g.step(100);
-  });
-  await expect(page.locator('#hud .done')).toBeVisible();
+  const { pickup, drop } = DELIVERIES['first-delivery'];
+  await page.evaluate(
+    ([pickup, drop, hover]) => {
+      const g = window.game!;
+      const pads = g.content().pads;
+      g.teleport(pads[pickup].x, pads[pickup].y, 0, 0);
+      g.step(100);
+      g.teleport(pads[pickup].x, pads[pickup].y, 10, 0);
+      g.fly(0, 0, hover);
+      g.step(2100);
+      g.release();
+      g.teleport(pads[drop].x, pads[drop].y, 0, pads[drop].yaw + 0.5);
+      g.step(100);
+    },
+    [pickup, drop, HOVER_LIFT] as const,
+  );
+  await expect(page.locator('#hud .toast')).toBeVisible();
+}
+
+/** The first ring of the ring trial, and of the valley: what a start is flown through. */
+const TRIAL = LEVELS.find((l) => l.id === 'ring-trial')!.steps[0] as Ring;
+const TOWERS_GATE = LEVELS.find((l) => l.id === 'under-and-between')!.steps[0] as Gate;
+
+/**
+ * The helicopter hovering `back` before the opening at (x, y, z) facing `yaw`, its middle `up` over the opening's and
+ * `aside` to one side, flying slowly at it for half a second: the chase camera behind it, nothing begun.
+ */
+async function before(
+  page: Page,
+  o: { x: number; y: number; z: number; yaw: number },
+  back: number,
+  up = 0,
+  aside = 0,
+) {
+  await page.evaluate(
+    ([o, back, up, aside, middle]) => {
+      const g = window.game!;
+      const [x, y] = [
+        o.x - Math.cos(o.yaw) * back - Math.sin(o.yaw) * aside,
+        o.y - Math.sin(o.yaw) * back + Math.cos(o.yaw) * aside,
+      ];
+      g.chase();
+      g.teleport(x, y, o.z + up - middle - g.floorAt(x, y), o.yaw);
+      g.fly(0.6, 0, 0.53);
+      g.step(30);
+      g.release();
+    },
+    [o, back, up, aside, HELICOPTER.size.middle] as const,
+  );
 }
 
 test.describe('what it looks like', () => {
@@ -203,14 +247,12 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('the first level: loading on the meadow pad, the loader half full', async ({ page }) => {
+  test('free flight: loading on the crate on the meadow pad, the loader half full', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => {
       const g = window.game!;
-      const first = g.state().mission.steps[0];
-      if (!('pad' in first)) throw new Error('the first level starts with a parcel');
-      const pad = g.content().pads[first.pad];
+      const pad = g.content().pads[4];
       g.teleport(pad.x, pad.y, 0, 2.3);
       g.step(45);
     });
@@ -224,24 +266,27 @@ test.describe('what it looks like', () => {
     await start(page, { seed: 11, paused: true });
     await carrying(page);
     await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the hilltop pad');
     await expect(page.locator('#view')).toHaveScreenshot('level-carrying.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
-  test('the first level: delivered, the card and the crate on the hilltop pad', async ({ page }) => {
+  test('delivered on the hilltop pad: the toast alone, the hint hidden under it, the game not held', async ({
+    page,
+  }) => {
     const problems = watch(page);
-    await start(page, { seed: 11, paused: true });
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
     await delivered(page);
     await hideStats(page);
-    await expect(page.locator('#view')).toHaveScreenshot('level-delivered.png', TOLERANCE);
+    expect((await page.evaluate(() => window.game!.state().toast))!).toMatch(/^Delivered! 0:\d\d ★ New best$/);
+    await expect(page.locator('#view')).toHaveScreenshot('toast.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
   test('over the water: the parcel carried out over the lake, toward the lakeside pad', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    await page.evaluate(() => window.game!.play('over-the-water'));
-    await carrying(page, 0.62);
+    await carrying(page, 'over-the-water', 0.62);
     await hideStats(page);
     await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the lakeside pad');
     await expect(page.locator('#view')).toHaveScreenshot('level-over-the-water.png', TOLERANCE);
@@ -278,12 +323,12 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('the course: between the towers, from the chase camera', async ({ page }) => {
+  test('the course: before the towers, nothing begun, from the chase camera', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await openingAhead(page, 'under-and-between', 0, 35);
     await hideStats(page);
-    await expect(page.locator('#hud .goal')).toHaveText('Fly between the towers');
+    await expect(page.locator('#hud .hint')).toBeVisible();
     await expect(page.locator('#view')).toHaveScreenshot('course-towers.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
@@ -306,12 +351,68 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('the list of levels over the island dimmed: two done, the third picked, the last locked', async ({ page }) => {
+  test('flying free near a start ring: the hint in the bar, and a crate on a pad in view', async ({ page }) => {
     const problems = watch(page);
-    await start(page, { seed: 11, paused: true, list: true, save: TWO_DONE });
-    await page.evaluate(() => window.game!.step(1));
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate((ring) => {
+      // the helicopter hovering beside the trial's first ring, which is seen from the side with its flag, and the lakeside
+      // pad and the crate that waits on it beyond, from a camera parked over the meadow
+      const g = window.game!;
+      g.teleport(ring.x - 30, ring.y, 12, ring.yaw);
+      g.look(ring.x + 20, ring.y + 6, { azimuth: -0.8, polar: 1.15, radius: 125 });
+      g.fly(0, 0, 0.53);
+      g.step(30);
+      g.release();
+    }, TRIAL);
     await hideStats(page);
-    await expect(page.locator('#view')).toHaveScreenshot('levels.png', TOLERANCE);
+    await expect(page.locator('#hud .hint')).toBeVisible();
+    await expect(page.locator('#view')).toHaveScreenshot('free.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a start ring with its flag, from the chase camera', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await before(page, TRIAL, 60, 9);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('start-ring.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the towers, a flag on the top of each', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await before(page, TOWERS_GATE, 100, 12);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('start-towers.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('shown the way: the arrow and the distance to the ring trial', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await before(page, TRIAL, 220, 25, 40);
+    await page.evaluate(() => {
+      window.game!.guide('ring-trial');
+      window.game!.step(1);
+    });
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('To the start · Ring trial');
+    await expect(page.locator('#view')).toHaveScreenshot('guided.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the panel over the island dimmed: two done, the third going', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: TWO_DONE });
+    await page.evaluate(() => {
+      window.game!.begin('over-the-water');
+      window.game!.step(60);
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#panel')).toBeVisible();
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('panel.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -375,15 +476,26 @@ for (const [name, viewport] of [
 test.describe('the first level on a phone, upright', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('carrying, and delivered', async ({ page }) => {
+  test('carrying, and the toast', async ({ page }) => {
     const problems = watch(page);
-    await start(page, { seed: 11, paused: true });
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
     await carrying(page);
     await hideStats(page);
     await expect(page).toHaveScreenshot('level-phone-carrying.png', TOLERANCE);
-    await page.evaluate(() => window.game!.restart());
+    await page.evaluate(() => window.game!.home());
     await delivered(page);
-    await expect(page).toHaveScreenshot('level-phone-delivered.png', TOLERANCE);
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('toast-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('flying free near a start ring, the hint in the bar', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await before(page, TRIAL, 45);
+    await hideStats(page);
+    await expect(page.locator('#hud .hint')).toBeVisible();
+    await expect(page).toHaveScreenshot('free-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -405,12 +517,17 @@ test.describe('the first level on a phone, upright', () => {
     expect(problems).toEqual([]);
   });
 
-  test('the list of levels, two columns of them', async ({ page }) => {
+  test('the panel, one column of rows', async ({ page }) => {
     const problems = watch(page);
-    await start(page, { seed: 11, paused: true, list: true, save: TWO_DONE });
-    await page.evaluate(() => window.game!.step(1));
+    await start(page, { seed: 11, paused: true, save: TWO_DONE });
+    await page.evaluate(() => {
+      window.game!.begin('over-the-water');
+      window.game!.step(60);
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#panel')).toBeVisible();
     await hideStats(page);
-    await expect(page).toHaveScreenshot('levels-phone.png', TOLERANCE);
+    await expect(page).toHaveScreenshot('panel-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 });

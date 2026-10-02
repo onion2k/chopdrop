@@ -27,12 +27,12 @@
  */
 import { TREE_KINDS, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
-import type { Game, ListedLevel } from './game';
+import type { Game, LastLevel } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
 import { checkInvariants } from './invariants';
 import { TREE_STRIDE } from './island';
 import { treeSize } from './meshes';
-import type { Step } from './mission';
+import type { LevelKind, Step } from './mission';
 import { seeded } from './random';
 import type { Block } from './solids';
 
@@ -47,8 +47,8 @@ export interface GameState {
   t: number;
   frame: number;
   paused: boolean;
-  /** What is on the screen: the list of levels, with the game held behind it; a level being flown; or the card at its end. */
-  screen: 'levels' | 'flying' | 'card';
+  /** What is on the screen: free flight, or a level being flown, with the toast over it; or the panel, with the game held behind it. */
+  screen: 'flying' | 'panel';
   /**
    * Where the helicopter is and how it is going. `z` is its skids' height above the sea, `floor` the height of the
    * ground it stands on here (the most under its middle and its skids) and `height` the one above the other; `vz` is
@@ -73,24 +73,29 @@ export interface GameState {
   /** How it is being flown (by the keys or by touch), the controls it was flown with at the last step, and the touch lever's lift. */
   input: InputState;
   /**
-   * Where the level has got to: which level, the pad it starts from, its steps and the one being done (the steps'
-   * length once all are), the pad wanted now (−1 once done) and the point it wants the helicopter at (null once done),
-   * whether a parcel is aboard, the loading (seconds landed on that pad), and the time since the first lift-off and
-   * whether that has come.
+   * Where the level going has got to: which level (null with nothing going), its steps (none with nothing going) and
+   * the one being done, the pad wanted now (−1 with nothing going) and the point it wants the helicopter at (null with
+   * nothing going), whether a parcel is aboard, the loading (seconds landed on the pad wanted, or with nothing going the
+   * seconds it has stood on a pickup pad for a level to begin), and the time since the level began.
    */
   mission: {
-    level: string;
-    start: number;
+    level: string | null;
     steps: Step[];
     next: number;
-    done: boolean;
     target: number;
     goal: { x: number; y: number; z: number } | null;
     carrying: boolean;
     loading: number;
     time: number;
-    started: boolean;
   };
+  /** The level the HUD shows the way to the start of, or null. */
+  guided: string | null;
+  /** The last level done, for the toast, or null until one is. */
+  last: LastLevel | null;
+  /** The toast's words while it is shown, "Delivered! 0:38 ★ New best", or null: it goes after three seconds of game time. */
+  toast: string | null;
+  /** The pad nothing begins from until the helicopter lifts off, by its place in the pads' list; −1 for none. */
+  blocked: number;
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -133,6 +138,19 @@ export interface InputState {
   by: 'keys' | 'touch';
   controls: Controls;
   lever: number;
+}
+
+/** A level as the panel shows it: what it is, and the best time on it, or null. Nothing is locked. */
+export interface LevelRow {
+  id: string;
+  name: string;
+  kind: LevelKind;
+  best: number | null;
+}
+
+/** Every level, as the panel and the test API show them. */
+export function levelRows(game: Game): LevelRow[] {
+  return game.levels.map(({ id, name, kind }) => ({ id, name, kind, best: game.progress.best.get(id) ?? null }));
 }
 
 export interface GameApi {
@@ -179,20 +197,34 @@ export interface GameApi {
   sway(): SwayState;
 
   /**
-   * What the game has told since this was last asked, oldest first, as lines: `loaded 4`, `delivered 1`, `passed 2 6`,
-   * `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`.
+   * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
+   * `delivered 1`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
+   * `abandoned first-delivery`.
    */
   events(): string[];
-  /** The level from the start again, as "Fly again" does. */
-  restart(): void;
-  /** The level named `id` flown from the start, as picking it from the list does, whether the list would let it be or not. */
+  /** Flying free from home again: landed on the home pad, anything going abandoned (told), nothing guided. */
+  home(): void;
+  /**
+   * The helicopter put at the start of the level named `id`, with nothing begun and anything going abandoned (told): for
+   * a delivery landed on its pickup pad, which then loads and begins as it is stepped; for a ring or an opening hovering
+   * 30 back on its axis, its middle at its height, facing it.
+   */
   play(id: string): void;
-  /** Every level as the list shows it: locked, open or done, and the best time on it. */
-  levels(): ListedLevel[];
+  /** The level named `id` begun at once, wherever the helicopter is; a name the game does not have throws. */
+  begin(id: string): void;
+  /** The level going given up, told, with no time kept; nothing happens with none going. */
+  abandon(): void;
+  /** The HUD shown the way to the start of the level named `id`, or to none with null; a name the game does not have throws. */
+  guide(id: string | null): void;
+  /** Every level as the panel shows it: its name, its kind and the best time on it. Nothing is locked. */
+  levels(): LevelRow[];
   /** What the player has done, as it is saved, and why the save the game found could not be read, if it could not. */
   save(): { best: Record<string, number>; refused: string | null };
-  /** The autopilot flying in place of the player, or not: what the play-through flies the level by. */
-  autopilot(on: boolean): void;
+  /**
+   * The autopilot flying in place of the player, or not: what the play-through flies the level by. Given a level `id`,
+   * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going.
+   */
+  autopilot(on: boolean, id?: string): void;
   /** Every rule that must always hold and does not, as `invariants.ts` says: none, if all is well. */
   invariants(): string[];
 
@@ -231,14 +263,16 @@ export interface DebugHost {
   input(): InputState;
   /** What the game has told, taken away as it is read. */
   events(): string[];
-  /** The level from the start again, as the page's "Fly again" does. */
-  restart(): void;
-  /** The level named `id` flown from the start, as picking it from the list does. */
+  /** Flying free from home again, as the page does it: the camera behind the helicopter and the toast put away. */
+  home(): void;
+  /** The helicopter put at the start of the level named `id`, as the panel's "fly" does it. */
   play(id: string): void;
   /** What is on the screen. */
   screen(): GameState['screen'];
-  /** The autopilot flying in place of the keys and touch, or not. */
-  setAutopilot(on: boolean): void;
+  /** The toast's words while it is shown, or null. */
+  toast(): string | null;
+  /** The autopilot flying in place of the keys and touch, or not, told the level to do while nothing is going. */
+  setAutopilot(on: boolean, id?: string): void;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
   draw(dt: number): void;
@@ -294,18 +328,19 @@ export function createApi(host: DebugHost): GameApi {
         camera: { mode: rig.mode, position: [...rig.position], target: [...rig.target] },
         input: host.input(),
         mission: {
-          level: game.mission.level.id,
-          start: game.mission.level.start ?? 0,
-          steps: game.mission.level.steps.map((step) => ({ ...step })),
+          level: game.mission.level?.id ?? null,
+          steps: game.mission.level?.steps.map((step) => ({ ...step })) ?? [],
           next: game.mission.next,
-          done: game.mission.done,
           target: game.mission.target,
           goal: game.mission.goal && { ...game.mission.goal },
           carrying: game.mission.carrying,
-          loading: game.mission.loading,
+          loading: game.mission.level ? game.mission.loading : game.starts.loading,
           time: game.mission.time,
-          started: game.mission.started,
         },
+        guided: game.guided?.id ?? null,
+        last: game.last && { ...game.last },
+        toast: host.toast(),
+        blocked: game.starts.blocked,
       };
     },
     content: () => ({
@@ -358,11 +393,14 @@ export function createApi(host: DebugHost): GameApi {
     },
 
     events: () => host.events(),
-    restart: () => host.restart(),
+    home: () => host.home(),
     play: (id) => host.play(id),
-    levels: () => game.levelList(),
+    begin: (id) => game.begin(id),
+    abandon: () => game.abandon(),
+    guide: (id) => game.guide(id),
+    levels: () => levelRows(game),
     save: () => ({ ...game.progress.toJSON(), refused: game.progress.refused }),
-    autopilot: (on) => host.setAutopilot(on),
+    autopilot: (on, id) => host.setAutopilot(on, id),
     invariants: () => checkInvariants(game),
     fly: (forward, turn, lift) => host.setControls({ forward, turn, lift }),
     release: () => host.setControls(null),

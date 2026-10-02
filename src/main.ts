@@ -3,6 +3,8 @@
  * happens on the island happens in `game.ts`; this reads the keyboard, steps
  * the game and the chase camera on the fixed step, and draws the frame on the
  * game path of artshape-render, in a toon look: a sunny day on a toy island.
+ * The game opens flying free; Esc or the corner button brings up the panel,
+ * and a level done is told by the toast.
  * Every movement, the camera's too, is made in `simulate`, so the same flight
  * gives the same picture, and `draw` only shows where things have got to.
  * There is no game logic here.
@@ -14,12 +16,12 @@ import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer, type Look, type Post } from 'artshape-render/game/renderer';
 import { CHASE, ChaseCamera, fovFor } from './chase';
 import { Autopilot } from './autopilot';
-import { createApi } from './debug';
+import { createApi, levelRows } from './debug';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
 import { Hud } from './hud';
 import { Input } from './input';
-import { LevelList } from './level-list';
+import { Panel } from './panel';
 import { Progress, browserStore } from './progress';
 import { seeded } from './random';
 import { Scene } from './scene';
@@ -160,12 +162,14 @@ async function main() {
     console.warn(
       `The save could not be read (${progress.refused}), so the game starts afresh, and writes over it once a level is done.`,
     );
-  // built before the game, which tells it the end; what their buttons do is below, where the game is put back
-  const hud = new Hud({ again, next, levels: showLevels });
+  // built before the game, which tells it the end; what its button does is below, where the game is put back
+  const hud = new Hud({ panel: showPanel });
   const game = new Game({
     ...(seed !== null ? { random: seeded(+seed) } : {}),
     progress,
     events: {
+      started: (id) => tell(`started ${id}`),
+      abandoned: (id) => tell(`abandoned ${id}`),
       loaded: (pad) => tell(`loaded ${pad}`),
       delivered: (pad) => tell(`delivered ${pad}`),
       passed: (ring, of) => tell(`passed ${ring} ${of}`),
@@ -173,17 +177,22 @@ async function main() {
       landed: (pad) => tell(`landed ${pad}`),
       finished: (id, seconds, best) => {
         tell(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`);
-        hud.finished(
-          game.mission.level.kind,
-          seconds,
-          progress.best.get(id) ?? null,
-          best,
-          game.nextLevel?.name ?? null,
-        );
+        const level = game.levels.find((l) => l.id === id)!;
+        hud.finished(level.kind, seconds, best, game.t);
       },
     },
   });
-  const list = new LevelList(game.levels, { fly: play, close: carryOn });
+  const panel = new Panel(game.levels, game.island.pads, {
+    guide: (id) => {
+      game.guide(id);
+      carryOn();
+    },
+    abandon: () => {
+      game.abandon();
+      carryOn();
+    },
+    close: carryOn,
+  });
 
   // ---- the scene ----
 
@@ -201,42 +210,34 @@ async function main() {
   // a phone shows its touch controls from the start; anything else, once a finger is put on it
   if (matchMedia('(pointer: coarse)').matches) input.by = 'touch';
   const touchView = new TouchView(input, document.getElementById('stage')!);
-  /** Whether a level has been picked to fly since the page opened: until one is, the list has no flight to go back to. */
-  let underway = false;
-  /** The level named `id` from the start, on its own pad: the game, the camera behind the helicopter, the lever down and the card and the list put away. */
+  /** The helicopter put at the start of the level named `id`, nothing begun: the camera behind it, the lever down and the toast and the panel put away. */
   function play(id: string) {
-    game.play(id);
+    game.moveToStart(id);
     rig.snap(game.helicopter);
     input.touch.reset();
     hud.fly();
     carryOn();
-    underway = true;
   }
-  /** The same level from the start again. */
-  function again() {
-    play(game.mission.level.id);
-  }
-  /** The level after this one, from the start. */
-  function next() {
-    const after = game.nextLevel;
-    if (after) play(after.id);
+  /** Flying free from home again: the camera behind the helicopter, the lever down and the toast and the panel put away. */
+  function home() {
+    game.home();
+    rig.snap(game.helicopter);
+    input.touch.reset();
+    hud.fly();
+    carryOn();
   }
   /**
-   * The list of levels up, and the game held behind it: the level being flown picked, if there is one to go back to,
-   * and otherwise the one to fly next. Fingers on the glass are let go, so none is left holding the stick.
+   * The panel up, and the game held behind it. Fingers on the glass are let go, so none is left holding the stick.
    */
-  function showLevels() {
-    const resumable = underway && !game.mission.done;
-    const ids = game.levels.map((level) => level.id);
-    const picked = resumable ? game.levels.indexOf(game.mission.level) : progress.pick(ids);
+  function showPanel() {
     input.touch.release();
-    list.show(game.levelList(), picked, resumable);
+    panel.show(levelRows(game), game.mission.level?.id ?? null);
     hud.listing = true;
     document.body.classList.add('listing');
   }
-  /** The list put away, and the game going on from where it was held. */
+  /** The panel put away, and the game going on from where it was held. */
   function carryOn() {
-    list.hide();
+    panel.hide();
     hud.listing = false;
     document.body.classList.remove('listing');
   }
@@ -267,7 +268,7 @@ async function main() {
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter, game.sway, game.mission, game.mission);
+    scene.write(game.helicopter, game.sway, game.mission);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });
@@ -311,15 +312,14 @@ async function main() {
   stats.hidden = false;
   help.hidden = false;
   hud.show();
-  showLevels();
 
   // ---- each frame ----
 
   let frames = 0;
   let smoothed = 0;
   function simulate(dt: number) {
-    // held while the list of levels is up: nothing moves, the camera neither, until it goes
-    if (list.shown) return;
+    // held while the panel is up: nothing moves, the camera neither, until it goes
+    if (panel.shown) return;
     frames++;
     const controls = pilot ? pilot.drive() : input.read();
     flown.forward = controls.forward;
@@ -329,7 +329,7 @@ async function main() {
     rig.step(dt, game.helicopter);
   }
   function draw(dt: number) {
-    touchView.draw(list.shown);
+    touchView.draw(panel.shown);
     hud.draw(game, rig);
     upload();
     cam.update();
@@ -364,11 +364,13 @@ async function main() {
     },
     input: () => ({ by: input.by, controls: { ...flown }, lever: input.touch.lever }),
     events: () => told.splice(0),
-    restart: again,
+    home,
     play,
-    screen: () => (list.shown ? 'levels' : hud.ended ? 'card' : 'flying'),
-    setAutopilot: (on) => {
+    screen: () => (panel.shown ? 'panel' : 'flying'),
+    toast: () => hud.toast,
+    setAutopilot: (on, id) => {
       pilot = on ? new Autopilot(game) : null;
+      if (pilot && id !== undefined) pilot.wanted = id;
     },
     measureFrame,
   });

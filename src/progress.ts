@@ -10,7 +10,7 @@
  * once there is a time to keep. A time that is not a time, or a name that is
  * not a level's, is dropped, and the rest kept. A level the game does not
  * list is kept too, as a later game's save would have one. Without it a
- * player would start from the first level on every visit.
+ * player would lose their times on every visit.
  */
 
 /** The key the save is kept under in the browser: given out with the first save, so kept. */
@@ -26,9 +26,6 @@ export const SAVE = {
 
 /** What a level's name may be: words in small letters and figures, joined by hyphens, as `first-delivery`. */
 const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
-/** Where a level stands for the player: not yet to be flown, to be flown, or flown to the end at least once. */
-export type Standing = 'locked' | 'open' | 'done';
 
 /** The save as it is written: the best time on each level, in seconds, by its name. */
 export interface SaveShape {
@@ -89,18 +86,6 @@ export class Progress {
   constructor(private readonly saves: SaveStore = memoryStore()) {
     const json = saves.load();
     if (json !== null) this.refused = this.read(json);
-  }
-
-  /** Where the level at `index` in `ids` stands: done if it has a time, open if it is first or the one before is done. */
-  standing(ids: readonly string[], index: number): Standing {
-    if (this.best.has(ids[index])) return 'done';
-    return index === 0 || this.best.has(ids[index - 1]) ? 'open' : 'locked';
-  }
-
-  /** The level to offer first, by its place in `ids`: the first open and not done, or the first if every one is done. */
-  pick(ids: readonly string[]): number {
-    for (let k = 0; k < ids.length; k++) if (this.standing(ids, k) === 'open') return k;
-    return 0;
   }
 
   /** The level `id` done in `seconds`, kept if it is the best time on it yet; whether it was. */

@@ -6,9 +6,10 @@
  * the ground it stands on and the ceiling, never faster, steeper or more
  * banked than it is built to be, and never sinking through the ground it
  * stands on. The ground it says it stands on is the ground under it. The
- * clock only runs forward. A level is at one of its steps, and a best time
- * is a time, and never slower than the level was just done in. The
- * helicopter is never inside anything solid.
+ * clock only runs forward. With nothing going the mission reads as nothing;
+ * a level going is at one of its steps past the first, and nothing starts
+ * while it is. A best time is a time, and never slower than the level was
+ * just done in. The helicopter is never inside anything solid.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
@@ -93,46 +94,76 @@ export function checkSolids(game: Game): string[] {
 }
 
 /**
- * What must hold of the player's best times: each one is a time, and the level being flown, once done, has a time
- * kept and one no slower than it was just done in, since a best time is only ever lowered. A level never lifted off
- * from, which only a test's teleport can finish, is not timed.
+ * What must hold of the player's best times: each one is a time, and the last level done has a time kept, and one no
+ * slower than it was just done in, since a best time is only ever lowered. A level that ended as it began, which has no
+ * time, is not held to one.
  */
 export function checkProgress(game: Game): string[] {
   const out: string[] = [];
   for (const [id, seconds] of game.progress.best)
     if (!Number.isFinite(seconds) || seconds <= 0) out.push(`the best time on ${id} is ${seconds}, not a time`);
-  const { mission } = game;
-  if (!mission.done || !mission.started) return out;
-  const { id } = mission.level;
-  const best = game.progress.best.get(id);
-  if (best === undefined) out.push(`${id} is done, and no time is kept for it`);
-  else if (best > mission.time + TOLERANCE)
+  const { last } = game;
+  if (!last || !(last.seconds > 0)) return out;
+  const best = game.progress.best.get(last.id);
+  if (best === undefined) out.push(`${last.id} is done, and no time is kept for it`);
+  else if (best > last.seconds + TOLERANCE)
     out.push(
-      `the best time on ${id} is ${best.toFixed(3)} s, slower than the ${mission.time.toFixed(3)} s it was just done in`,
+      `the best time on ${last.id} is ${best.toFixed(3)} s, slower than the ${last.seconds.toFixed(3)} s it was just done in`,
     );
   return out;
 }
 
 /**
- * What must hold of the level being flown: it is at one of its steps, or past the last; the pad it wants is one of the
- * island's; its loading is a number from nothing to short of a full load, and runs only while the helicopter is landed on
- * the pad it is wanted on; and its clock is a number that has not started before the first lift-off.
+ * What must hold of the level going, or of nothing going. With nothing going, the mission reads as nothing: no step,
+ * no pad or place wanted, no clock and no loading. With a level going, it is past its first step, which began it, and
+ * short of its last, which ends it; the pad it wants is one of the island's; its loading is a number from nothing to
+ * short of a full load, and runs only while the helicopter is landed on the pad it is wanted on; and its clock is a
+ * number. The starts' loader is a number from nothing to short of a full load, and runs only with nothing going and
+ * the helicopter landed on a pickup pad that is not blocked, since nothing starts while a level is going, nor from the
+ * pad a level has just ended on.
  */
 export function checkMission(game: Game): string[] {
   const out: string[] = [];
   const d = game.mission;
-  const steps = d.level.steps.length;
-  if (!Number.isInteger(d.next) || d.next < 0 || d.next > steps)
-    return [`no such step: the level is at step ${d.next} of ${steps}`];
+  const { starts } = game;
+  const level = d.level;
+  if (!Number.isFinite(starts.loading) || starts.loading < 0 || starts.loading >= DELIVERY.load)
+    out.push(`the starts' loading reads ${starts.loading}, and runs from 0 to short of ${DELIVERY.load}`);
+  else if (starts.loading > 0) {
+    if (level) out.push(`the starts are loading while a level is going: ${starts.loading.toFixed(3)}`);
+    else if (!onPickupPad(game))
+      out.push(
+        `the starts' loading runs off a pickup pad: ${starts.loading.toFixed(3)} with the helicopter not landed on one that is not blocked`,
+      );
+  }
+  if (!level) {
+    if (d.next !== 0) out.push(`nothing is going, and the level is at step ${d.next}`);
+    if (d.target !== -1) out.push(`nothing is going, and it wants pad ${d.target}`);
+    if (d.goal !== null) out.push(`nothing is going, and it wants somewhere`);
+    if (d.time !== 0) out.push(`nothing is going, and the clock reads ${d.time}`);
+    if (d.loading !== 0) out.push(`nothing is going, and the loading reads ${d.loading}`);
+    return out;
+  }
+  const steps = level.steps.length;
+  if (!Number.isInteger(d.next) || d.next < 1 || d.next >= steps)
+    return [...out, `no such step: the level is at step ${d.next} of ${steps}`];
   if (d.target < -1 || d.target >= game.island.pads.length || !Number.isInteger(d.target))
-    return [`no such pad: the level wants pad ${d.target} of ${game.island.pads.length}`];
+    return [...out, `no such pad: the level wants pad ${d.target} of ${game.island.pads.length}`];
   if (!Number.isFinite(d.loading) || d.loading < 0 || d.loading >= DELIVERY.load)
     out.push(`the loading reads ${d.loading}, and runs from 0 to short of ${DELIVERY.load}`);
   else if (d.loading > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
     out.push(`the loading runs off the pad: ${d.loading.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
   if (!Number.isFinite(d.time) || d.time < 0) out.push(`the level's clock reads ${d.time}`);
-  else if (!d.started && d.time > 0) out.push(`the level's clock ran before the first lift-off: ${d.time.toFixed(3)}`);
   return out;
+}
+
+/** Whether the helicopter is landed on a pad some level begins from, which is not the one blocked. */
+function onPickupPad(game: Game): boolean {
+  const { pads } = game.island;
+  return game.levels.some((level) => {
+    const first = level.steps[0];
+    return first.kind === 'pickup' && first.pad !== game.starts.blocked && onPad(game.helicopter, pads[first.pad]);
+  });
 }
 
 /** The wash at a tree, worked out afresh for each check, which may make one: it is not run each frame. */

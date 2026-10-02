@@ -21,23 +21,23 @@ in red steel crosses the gorge at the head of the northern river, and two
 red and white towers stand on the high ground by the shoulder pad: they
 are there in every level, and solid.
 
-The game opens on a list of seven levels, each opened by finishing the one
-before, with the best time on each kept in the browser and the clock
-running at the top of the screen from the first lift-off. Two are ring
-trials: rings to fly through in order, the one wanted lit gold, solid
-enough to knock the helicopter back, six over the meadow and nine up a
-river valley. The last is a course from the shoulder pad: between the
-towers, up the gorge and under the bridge, through three rings over the
-hills, and back to land where it began. The rest are deliveries:
-a crate waits on one pad, a gold beacon over it, and an arrow at the top of
-the screen points the way and says how far. Land on the pad and stay while
-the loader fills, and the crate is strapped under the helicopter and the
-beacon moves to the pad it is wanted on; land there and stay, and it is
-delivered, with the time it took from the first lift-off, and the way on to
-the next level, to fly it again, or back to the list. The first is a short
-hop from the meadow to a hilltop; then over a lake, over the mountains, and
-up to a pad on the shoulder of the range. A search comes next, through
-`/feature`. The template's stub,
+The game opens flying free from home, with seven levels to find and
+nothing locked. A level begins where its first step is done, one at a time,
+and the best time on each is kept in the browser, the clock at the top of
+the screen running from that first step. Four are deliveries: a crate waits
+on a pad, and landing there and staying while the loader fills straps it
+under the helicopter, puts a gold beacon over the pad it is wanted on, and
+an arrow at the top of the screen points the way and says how far; land
+there and stay, and it is delivered. Two are ring trials, begun by flying
+through a first ring with a chequered flag on it: rings to fly through in
+order, the one wanted lit gold, solid enough to knock the helicopter back,
+six over the meadow and nine up a river valley. The last is a course begun
+between the flagged towers: up the gorge and under the bridge, through three
+rings over the hills, and down onto the shoulder pad. A level's end is told
+in a toast with its time, and flight carries on. Esc, or the corner button,
+brings up the panel: every level, its best time and where it starts, a way
+shown to any of them, and the one going given up. Collectible structures
+and ten hidden packages with a radar come next, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -83,10 +83,11 @@ is fixed, and no baseline is moved to make it green.
 ## Layout
 
     src/game.ts        the game without the picture: the island, the helicopter, the mission, the clock
-    src/mission.ts     the level as it is flown: its steps, parcels picked up and delivered, rings and openings flown through, a landing
+    src/mission.ts     the level going, if any: its steps, parcels picked up and delivered, rings and openings flown through, a landing
+    src/starts.ts      what begins a level, with nothing going: a crate loaded, or a start ring or opening flown through
     src/solids.ts      what the helicopter cannot fly into: the bridge, the towers and the rings' tubes, which knock it back
-    src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
-    src/level-list.ts  the list of levels the game opens on: locked, open or done, and the best times
+    src/hud.ts         the words on the screen: the hint, what is wanted and where, and the toast at a level's end
+    src/panel.ts       the panel: every level, its best time and where it starts, the way shown, and abandon
     src/progress.ts    the save: the best time on each level, kept in the browser
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size

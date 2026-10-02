@@ -1,9 +1,11 @@
 /**
  * What the smoke tests share: starting the game in a page and waiting until
- * it is ready, and watching the page for errors. The game opens on the list
- * of levels; a test is taken straight into the first level, as picking it
- * there does, unless it is about the list. The helicopter starts landed on
- * the home pad, so a test begins there: where it wants to be anywhere else on
+ * it is ready, and watching the page for errors. The game opens flying free,
+ * landed on the home pad with nothing going and no panel up, and `start`
+ * leaves it so: a test that wants a level begins it as a player does, by
+ * landing on a crate or flying through a start, or through `begin`, and one
+ * that wants to stand at a level's start asks for `play`. Where a test wants
+ * the helicopter anywhere else on
  * the island it asks for through `teleport`, with a height above the ground,
  * and for the pads and the edges through `content`. Everything else a test
  * does goes through `window.game`, the game's test API (`src/debug.ts`),
@@ -48,14 +50,13 @@ export const SAVE_KEY = 'chopdrop-save-v1';
  * run, so everything after is the test's own stepping. `save` is what the
  * player has done, as the game writes it, or a string to be kept as it is,
  * written once before the page first loads, so a reload reads what the game
- * wrote since. `list` leaves the list of levels up; otherwise the first level
- * is flown, as picking it there does.
+ * wrote since. Nothing is begun: the game is flying free.
  */
 export async function start(
   page: Page,
-  options: { seed?: number; paused?: boolean; save?: { best: Record<string, number> } | string; list?: boolean } = {},
+  options: { seed?: number; paused?: boolean; save?: { best: Record<string, number> } | string } = {},
 ) {
-  const { seed, paused, save, list } = options;
+  const { seed, paused, save } = options;
   if (save !== undefined)
     await page.addInitScript(
       ({ key, json }) => {
@@ -70,8 +71,15 @@ export async function start(
   if (paused) query.set('paused', '1');
   await page.goto(query.size ? `/?${query.toString()}` : '/');
   await ready(page);
-  if (!list) await page.evaluate(() => window.game!.play('first-delivery'));
 }
+
+/** The pads each delivery is picked up from and set down on, by their place in the island's list, by level. */
+export const DELIVERIES: Record<string, { pickup: number; drop: number }> = {
+  'first-delivery': { pickup: 4, drop: 1 },
+  'over-the-water': { pickup: 3, drop: 2 },
+  'over-the-range': { pickup: 7, drop: 5 },
+  'mountain-drop': { pickup: 2, drop: 6 },
+};
 
 /** Wait until the game is booted and its frame loop running, or say what the boot screen was stuck on. */
 export async function ready(page: Page) {
@@ -153,19 +161,16 @@ export function leverTravel(page: Page): Promise<number> {
 }
 
 /**
- * The level being flown, finished as a player finishes it: lifted off, then each step done in turn, landed on its pad
- * and waited on, or lined up a short way before its ring or its opening at its height and flown through. The game must
- * be paused.
+ * The level going, finished as a player finishes it: each step still to do, in turn, landed on its pad and waited on,
+ * or lined up a short way before its ring or its opening at its height and flown through. The game must be paused.
  */
 export async function finish(page: Page) {
   await page.evaluate(
     ([middle, hover]) => {
       const g = window.game!;
-      g.fly(0, 0, 1);
-      g.step(30);
-      g.release();
       const pads = g.content().pads;
-      for (const step of g.state().mission.steps) {
+      const { steps, next } = g.state().mission;
+      for (const step of steps.slice(next)) {
         if (step.kind === 'ring' || step.kind === 'gate') {
           const [ax, ay] = [Math.cos(step.yaw), Math.sin(step.yaw)];
           const [x, y] = [step.x - ax * 12, step.y - ay * 12];

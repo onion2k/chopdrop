@@ -18,25 +18,49 @@ describe('the determinism check', () => {
     expect(new Set(r.checkpoints).size).toBeGreaterThan(6);
   });
 
-  it('flies the levels in turn, each from the start once the one before is done, and the first again after the last', () => {
-    const seen: string[] = [];
+  it('flies the levels in turn from home, each begun by its own start and done before the next, and the first again after the last', () => {
+    const begun: string[] = [];
+    const done: string[] = [];
     let at = '';
-    // long enough for all seven, about six minutes of game, and the first begun again
-    for (const game of flight(1, 60 * 60 * 7)) {
-      if (game.mission.level.id !== at) seen.push((at = game.mission.level.id));
+    let last: unknown = null;
+    // long enough for all seven, about eight minutes of game with the flights between them, and the first begun again
+    for (const game of flight(1, 60 * 60 * 10)) {
+      const id = game.mission.level?.id ?? '';
+      if (id && id !== at) begun.push(id);
+      at = id;
+      if (game.last !== last) {
+        last = game.last;
+        done.push(game.last!.id);
+      }
     }
-    expect(seen.slice(0, LEVELS.length + 1)).toEqual([...LEVELS.map((level) => level.id), LEVELS[0].id]);
+    expect(begun.slice(0, LEVELS.length + 1)).toEqual([...LEVELS.map((level) => level.id), LEVELS[0].id]);
+    expect(done.slice(0, LEVELS.length)).toEqual(LEVELS.map((level) => level.id));
   });
 
-  it('sees which level it is and the best times kept, as well as where the helicopter is', () => {
+  it('sees which level is going, or none, the best times kept, what the starts are loading and have blocked, and the level guided to', () => {
     const game = () => new Game({ random: seeded(1) });
     const was = hashGame(game());
+    const going = game();
+    going.begin('mountain-drop');
     const other = game();
-    other.play('mountain-drop');
-    expect(hashGame(other)).not.toBe(was);
+    other.begin('first-delivery');
+    expect(hashGame(going)).not.toBe(was);
+    expect(hashGame(going)).not.toBe(hashGame(other));
     const kept = game();
     kept.progress.record('first-delivery', 40);
     expect(hashGame(kept)).not.toBe(was);
+    const loading = game();
+    loading.starts.loading += 1e-6;
+    expect(hashGame(loading)).not.toBe(was);
+    const blocked = game();
+    blocked.starts.blocked = 3;
+    expect(hashGame(blocked)).not.toBe(was);
+    const guided = game();
+    guided.guide('ring-trial');
+    expect(hashGame(guided)).not.toBe(was);
+    const guidedOther = game();
+    guidedOther.guide('over-the-range');
+    expect(hashGame(guidedOther)).not.toBe(hashGame(guided));
   });
 
   it('sees the helicopter moved a thousandth, turned a millionth, a tree leaned, and the ring a hair fuller', () => {

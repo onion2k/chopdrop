@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
-import { RING, type Ring } from '../src/mission';
+import { LEVELS } from '../src/arena';
+import { DELIVERY, RING, type Ring } from '../src/mission';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
 import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
@@ -179,42 +180,106 @@ describe('what must always hold', () => {
     expect(at(CHASE.offBlocks)).toBe('');
   });
 
-  it('holds of a level flown through, and reports a level at no step, a loading out of range or off the pad, and a clock gone wrong', () => {
+  it('holds of free flight, and of a level begun by landing on its crate and done, every step of the way', () => {
     const { game } = newGame();
     const { pads } = game.island;
-    const target = () => pads[game.mission.target];
-    for (let leg = 0; leg < 2; leg++) {
-      game.helicopter.placeAbove(target().x, target().y, 0, 0);
-      for (let f = 0; f < 60; f++) {
+    expect(checkInvariants(game)).toEqual([]);
+    for (const pad of [4, 1]) {
+      game.helicopter.placeAbove(pads[pad].x, pads[pad].y, 0, 0);
+      for (let f = 0; f < 120; f++) {
         game.step(DT, { forward: 0, turn: 0, lift: 0 });
-        expect(checkInvariants(game)).toEqual([]);
+        expect(checkInvariants(game), `pad ${pad}, frame ${f}`).toEqual([]);
       }
-      for (let f = 0; f < 60; f++) game.step(DT, { forward: 0, turn: 0, lift: 0 });
     }
-    expect(game.mission.done).toBe(true);
+    expect(game.mission.level).toBeNull();
+    expect(game.last?.id).toBe('first-delivery');
+  });
+
+  it('reports nothing going that is not nothing: a step, a clock, a loading, a pad wanted or a goal', () => {
+    const { game } = newGame();
     const d = game.mission;
-    game.restart();
-    d.next = 3;
-    expect(checkInvariants(game).join('\n')).toMatch(/no such step: the level is at step 3 of 2/);
+    d.next = 1;
+    expect(checkInvariants(game).join('\n')).toMatch(/nothing is going, and the level is at step 1/);
+    d.next = 0;
+    d.time = 3;
+    expect(checkInvariants(game).join('\n')).toMatch(/nothing is going, and the clock reads 3/);
+    d.time = 0;
+    d.loading = 0.5;
+    expect(checkInvariants(game).join('\n')).toMatch(/nothing is going, and the loading reads 0.5/);
+    d.loading = 0;
+    expect(checkInvariants(game)).toEqual([]);
+    Object.defineProperty(d, 'target', { get: () => 3, configurable: true });
+    expect(checkInvariants(game).join('\n')).toMatch(/nothing is going, and it wants pad 3/);
+    Object.defineProperty(d, 'target', { get: () => -1, configurable: true });
+    Object.defineProperty(d, 'goal', { get: () => ({ x: 0, y: 0, z: 0 }), configurable: true });
+    expect(checkInvariants(game).join('\n')).toMatch(/nothing is going, and it wants somewhere/);
+  });
+
+  it('reports the starts loading out of range, not a number, or off a pickup pad, or on one that is blocked', () => {
+    const { game } = newGame();
+    const { pads } = game.island;
+    const s = game.starts;
+    s.loading = DELIVERY.load;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading reads 1.5/);
+    s.loading = -1;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading reads -1/);
+    s.loading = NaN;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading reads NaN/);
+    // loading with the helicopter on home, which starts nothing
+    s.loading = 0.5;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading runs off a pickup pad/);
+    // on a pickup pad it is right, and blocked it is not
+    game.helicopter.placeAbove(pads[4].x, pads[4].y, 0, 0);
+    s.loading = 0;
+    game.step(DT);
+    expect(s.loading).toBeGreaterThan(0);
+    expect(checkInvariants(game)).toEqual([]);
+    s.blocked = 4;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading runs off a pickup pad/);
+    // and in the air over it
+    s.blocked = -1;
+    game.helicopter.placeAbove(pads[4].x, pads[4].y, 5, 0);
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading runs off a pickup pad/);
+  });
+
+  it('reports a level going at no step, before its first step is done or past its last, and a loading or a clock gone wrong', () => {
+    const { game } = newGame();
+    const { pads } = game.island;
+    game.begin('first-delivery');
+    const d = game.mission;
+    expect(checkInvariants(game)).toEqual([]);
+    d.next = 0;
+    expect(checkInvariants(game).join('\n')).toMatch(/no such step: the level is at step 0 of 2/);
+    d.next = 2;
+    expect(checkInvariants(game).join('\n')).toMatch(/no such step: the level is at step 2 of 2/);
     d.next = 0.5;
     expect(checkInvariants(game).join('\n')).toMatch(/no such step/);
-    game.restart();
+    d.next = 1;
     d.loading = 9;
     expect(checkInvariants(game).join('\n')).toMatch(/the loading reads 9/);
     d.loading = 0.5;
     game.helicopter.placeAbove(pads[0].x, pads[0].y, 0, 0);
     expect(checkInvariants(game).join('\n')).toMatch(/the loading runs off the pad/);
     d.loading = 0;
-    d.time = 3;
-    expect(checkInvariants(game).join('\n')).toMatch(/clock ran before the first lift-off/);
     d.time = NaN;
     expect(checkInvariants(game).join('\n')).toMatch(/clock reads NaN/);
+    d.time = -1;
+    expect(checkInvariants(game).join('\n')).toMatch(/clock reads -1/);
+    // a clock that has run on the ground is fine: it runs from the beginning
+    d.time = 3;
+    expect(checkInvariants(game)).toEqual([]);
   });
 
-  it('reports the helicopter inside a ring, which nothing a player does can leave it', () => {
+  it('reports the starts loading while a level is going, since nothing starts then', () => {
     const { game } = newGame();
-    game.play('ring-trial');
-    const ring = game.mission.current as Ring;
+    game.begin('first-delivery');
+    game.starts.loading = 0.5;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts are loading while a level is going: 0.5/);
+  });
+
+  it('reports the helicopter inside a start ring, which nothing a player does can leave it', () => {
+    const { game } = newGame();
+    const ring = LEVELS.find((l) => l.id === 'ring-trial')!.steps[0] as Ring;
     const h = game.helicopter;
     expect(checkInvariants(game)).toEqual([]);
     // set by hand, past the push a placing would give it: its middle on the top of the first ring's tube
@@ -222,24 +287,25 @@ describe('what must always hold', () => {
     h.y = ring.y;
     h.z = ring.z + ring.opening + RING.tube - HELICOPTER.size.middle;
     h.floor = h.floorAt(h.x, h.y);
-    expect(checkInvariants(game).join('\n')).toMatch(/inside ring 1 of 6: its reach 5\.200 past touching it/);
+    expect(checkInvariants(game).join('\n')).toMatch(/inside ring 1 of 2: its reach 5\.200 past touching it/);
   });
 
-  it('holds of a level done and kept, and reports a best time slower than the level was just done in, or not a time', () => {
+  it('holds of a level done and kept, and reports a best time slower than the level was just done in, not kept, or not a time', () => {
     const { game } = newGame();
     const { pads } = game.island;
-    for (let f = 0; f < 30; f++) game.step(DT, { forward: 0, turn: 0, lift: 1 });
-    while (!game.mission.done) {
-      const pad = pads[game.mission.target];
-      game.helicopter.placeAbove(pad.x, pad.y, 0, 0);
-      for (let f = 0; f < 100; f++) game.step(DT);
+    for (const pad of [4, 1]) {
+      game.helicopter.placeAbove(pads[pad].x, pads[pad].y, 0, 0);
+      for (let f = 0; f < 120; f++) game.step(DT);
     }
+    expect(game.last).not.toBeNull();
     expect(checkInvariants(game)).toEqual([]);
-    const id = game.mission.level.id;
-    game.progress.best.set(id, game.mission.time + 1);
+    const { id, seconds } = game.last!;
+    game.progress.best.set(id, seconds + 1);
     expect(checkInvariants(game).join('\n')).toMatch(
       /the best time on first-delivery is \d+\.\d+ s, slower than the \d+\.\d+ s it was just done in/,
     );
+    game.progress.best.delete(id);
+    expect(checkInvariants(game).join('\n')).toMatch(/first-delivery is done, and no time is kept for it/);
     game.progress.best.set(id, -2);
     expect(checkInvariants(game).join('\n')).toMatch(/the best time on first-delivery is -2, not a time/);
     game.progress.best.set(id, NaN);

@@ -11,8 +11,11 @@ The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
 from a recipe, its trees bowing in the rotor's downwash, a bridge and two towers that stand
 solid in every level, and seven levels, four deliveries, two ring trials
-and a course, opened one by one from the list the game opens on, the best
-time on each kept in a save. The search is still to come (the plan is
+and a course. The game opens flying free from home, nothing locked: a level
+begins where its first step is done, on a pad with a crate waiting or
+through a start ring or the towers, one at a time, and the best time on
+each is kept in a save. Collectible structures and ten hidden packages with
+a radar are still to come (the plan is
 `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
 physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
@@ -81,7 +84,7 @@ back with the first body.
     npm run check          all of it: check:quick, fuzz, determinism, leaks, pace, then smoke with perf and look (~70 s)
     npm test               unit tests (Vitest, test/)
     npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again,
-                           -- --level ID starts every seed on one level, as a player with every level done
+                           -- --level ID begins one level at once on every seed
     npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget;
                            the chase and downwash views' frames told, not held
     npm run smoke          the game in headless Chromium on the real GPU (Playwright, smoke/)
@@ -101,17 +104,22 @@ says why. Look at every picture.
 ## How the code is laid out
 
 - `src/game.ts` is the game without the picture: the island, the
-  helicopter, the trees it has set swaying, the mission and the clock, a
-  step at a time, and `restart`. It knows nothing of the renderer or the
-  page; what happens in it is told through the `GameEvents` handed in.
-  `src/mission.ts` is the level as it is flown: its steps done in order
-  (a parcel picked up, a parcel dropped, a ring or an opening flown
-  through, a landing), the loading that fills while the helicopter is
-  landed on the pad it is wanted on (`onPad`, said once), a ring or a gate
-  passed by one rule, the helicopter's middle crossing its opening the way
-  it faces, and the clock from the first lift-off; the levels themselves
-  are content, `LEVELS` in `arena.ts`, each known by an `id` that is a name
-  and flown from its `start` pad, home unless it says.
+  helicopter, the trees it has set swaying, the level going if one is, and
+  its clock, a step at a time; `begin`, `abandon`, `guide` (the level the
+  HUD shows the way to the start of), `home`, and `last`, the level last
+  done. It knows nothing of the renderer or the page; what happens in it is
+  told through the `GameEvents` handed in. With nothing going,
+  `src/starts.ts` says when the helicopter has done a level's first step:
+  a full load on a crate's pad, or a start ring or opening flown through;
+  a pad a level ended on starts nothing until the helicopter lifts off.
+  `src/mission.ts` is the level going, or none: `begin` starts it with its
+  first step done, and its steps are done in order (a parcel picked up, a
+  parcel dropped, a ring or an opening flown through, a landing), the
+  loading that fills while the helicopter is landed on the pad it is wanted
+  on (`onPad`, said once), a ring or a gate passed by one rule, `crossed`,
+  the helicopter's middle crossing its opening the way it faces, and the
+  clock from the first step; the levels themselves are content, `LEVELS` in
+  `arena.ts`, each known by an `id` that is a name.
   `src/solids.ts` is what the helicopter cannot enter, the structures'
   blocks, kept, and the level's ring tubes, handed to it as the ground is:
   it is pushed out and knocked back. It also says how far a point is from
@@ -120,11 +128,15 @@ says why. Look at every picture.
   and size in `HELICOPTER`, said once. It is handed a ground, an edge and
   the height of what it can stand on at every point, not the island.
 - `src/main.ts` is the page. It draws the frame, and turns the game's
-  events into words on the screen through `src/hud.ts`: the objective, the
-  arrow and distance to the pad wanted, the loader, the corner button back to
-  the levels, and the card at the end with "Next level", "Fly again" and
-  "Levels". `src/level-list.ts` is the list of levels the game opens on,
-  which holds the game while it is up. There is no game logic here.
+  events into words on the screen through `src/hud.ts`: the hint while
+  flying free, the way to a start when shown it, the objective, the arrow
+  and distance to what is wanted, the loader, the corner button to the
+  panel, and the toast at a level's end, shown for game seconds.
+  `src/panel.ts` is the panel (Esc or the corner button): every level, its
+  best time and where it starts, "Show the way" and "Abandon", holding the
+  game while it is up. `src/scene.ts` draws a crate on the pad of every
+  delivery not going, and a chequered flag at every start. There is no game
+  logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
   fingers as numbers and tested headless, and drawn and fed by the page in
@@ -149,10 +161,12 @@ says why. Look at every picture.
   wants a height above the sea takes the floor from it), what is on the
   island (`content`: the pads, home, the bounds, the ceiling and the
   structures), the level (`state().mission`, `events()`, which takes what
-  the game has told, as lines like `through under the bridge` and
-  `landed 6`, `restart`, and `play`, which flies any level as the list
-  does, locked or not), the levels and the save (`levels`, `save`), what is on the
-  screen (`state().screen`), the trees (`treesNear`, each with its height and
+  the game has told, as lines like `started ring-trial`, `through under the
+bridge` and `landed 6`; `play`, which puts the helicopter at a level's
+  start with nothing begun, `begin`, which begins it at once, `abandon`,
+  `guide` and `home`; and `state().mission`, `guided`, `last` and `blocked`),
+  the levels and the save (`levels`, `save`), what is on the screen
+  (`state().screen`, flying or the panel, and `state().toast`), the trees (`treesNear`, each with its height and
   spread as drawn, and `sway`:
   which are moving and how each leans), the
   camera (`look` parks it, `chase` sends it back), how it is being flown
@@ -223,11 +237,11 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   in `mission.ts`, the steps of each level in `LEVELS`, stepped by
   `game.ts` after the helicopter and told through `GameEvents`; the crate
   and the beacon drawn by `scene.ts` from where it has got to; put into
-  words by `hud.ts`; read and restarted through `debug.ts`; ruled by
-  `checkMission`; flown by the autopilot and by the fuzzer's "wanted pad"
-  and "fly again"; flown through by key and by touch in
-  `smoke/game.spec.ts`, and pictured (`level-loading.png`,
-  `level-carrying.png`, `level-delivered.png`, and on a phone).
+  words by `hud.ts`; read and begun through `debug.ts`; ruled by
+  `checkMission`; flown by the autopilot and by the fuzzer's "wanted pad";
+  flown through by key and by touch in `smoke/free.spec.ts`, and pictured
+  (`level-loading.png`, `level-carrying.png`, `toast.png`, and on a
+  phone).
 - **The structures**, for anything that stands on the island: a block in
   `STRUCTURES` (`arena.ts`), with a name a broken rule says and a kind the
   scene paints by; the trees cleared from round it by the recipe's
@@ -257,13 +271,17 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   and touch in `smoke/rings.spec.ts`; pictured (`rings.png`,
   `rings-valley.png`, `rings-phone.png`).
 - **A level**, for anything a player can finish: its steps in `LEVELS`,
-  its name in players' saves; a tile on the list (`level-list.ts`), its
-  best time kept by `game.ts` through `progress.ts` and ruled by
-  `checkProgress`; flown on to by the fuzzer's "next level" and "pick a
-  level", which comes back with a save; timed by `pace`, flown in turn by
-  `determinism` and `leaks`, and finished by the play-through; its pads
-  pinned in `test/levels.test.ts`; the list pictured (`levels.png`,
-  `levels-phone.png`) and worked in `smoke/levels.spec.ts`.
+  its name in players' saves; begun by its first step through `starts.ts`,
+  its start drawn by `scene.ts` (a crate, or a flag); a row on the panel
+  (`panel.ts`), its best time kept by `game.ts` through `progress.ts` and
+  ruled by `checkProgress`; flown to by the autopilot's `wanted`; begun,
+  shown the way to and abandoned by the fuzzer's "to a start", "show the
+  way" and "abandon", which comes back with a save; timed by `pace`, from
+  home, on its own clock, flown in turn by `determinism` and `leaks`, and
+  finished by the play-through through the panel; its pads pinned in
+  `test/levels.test.ts`; the panel pictured (`panel.png`,
+  `panel-phone.png`) and worked in `smoke/panel.spec.ts`, and its starts
+  in `free.png`, `start-ring.png`, `start-towers.png` and `guided.png`.
 - **The island**, for anything on the land: its recipe in `arena.ts`,
   generated by `island.ts` from `heightfield.ts` and `noise.ts`, once, at
   boot. Its ground, the land and the water over it and the pads' tops, is
@@ -366,8 +384,8 @@ measured; the in-app browser pane pauses when hidden. Control time through
 the API: `pause()`, `seed(n)`, then `step(frames)`, never a timeout; fly
 with `fly()` or real keys, and take a fixed view with `look()`. Never
 write over the player's save: a test's goes in through
-`start(page, { save })`, which flies the first level unless asked to leave
-the list up with `list: true`.
+`start(page, { save })`, which boots flying free at home with nothing
+begun: a test begins a level by doing its first step, or with `begin(id)`.
 
 ## Commits
 

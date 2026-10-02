@@ -3,10 +3,15 @@ import { LEVELS, theIsland } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
-import { DELIVERY, RING, type Level, type Ring } from '../src/mission';
+import { DELIVERY, RING, RINGS, type Gate, type Level, type Ring } from '../src/mission';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 import { DT, newGame } from './helpers';
+
+const RING_TRIAL = LEVELS.find((l) => l.id === 'ring-trial')!;
+const VALLEY = LEVELS.find((l) => l.id === 'up-the-valley')!;
+const COURSE = LEVELS.find((l) => l.id === 'under-and-between')!;
+const startRing = (level: Level) => level.steps[0] as Ring;
 
 describe('the game', () => {
   it('is the island, the one it is handed or else the one island, and the same one to every game', () => {
@@ -26,6 +31,22 @@ describe('the game', () => {
     expect(h.floor).toBeCloseTo(home.z, 4);
     expect(h.landed).toBe(true);
     expect(h.height).toBe(0);
+  });
+
+  it('boots flying free: nothing going, nothing last, nothing guided, nothing loading and no pad blocked', () => {
+    const { game } = newGame();
+    expect(game.mission.level).toBeNull();
+    expect(game.last).toBeNull();
+    expect(game.guided).toBeNull();
+    expect([game.starts.loading, game.starts.blocked]).toEqual([0, -1]);
+    expect([game.mission.next, game.mission.time, game.mission.loading]).toEqual([0, 0, 0]);
+    expect(game.levels).toBe(LEVELS);
+  });
+
+  it('boots with the solids holding the start rings of the two trials and no others', () => {
+    const { game } = newGame();
+    expect(game.solids.rings).toEqual([startRing(RING_TRIAL), startRing(VALLEY)]);
+    expect(game.solids.count).toBe(2);
   });
 
   it('keeps the helicopter inside the island, drawn in by its reach', () => {
@@ -75,139 +96,395 @@ describe('the game', () => {
   });
 });
 
-/**
- * The level being flown, finished: lifted off for `airborne` seconds, then set down on each step's pad in turn and
- * waited on. It is for levels of pads alone.
- */
-function finish(game: Game, airborne = 1) {
+/** `game` stepped `seconds`, nothing held. */
+function wait(game: Game, seconds: number) {
+  for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT);
+}
+
+/** The helicopter set down on `pad`, as a landing on it leaves it, and left there `seconds`. */
+function sitOn(game: Game, pad: number, seconds: number) {
+  const p = game.island.pads[pad];
+  game.helicopter.placeAbove(p.x, p.y, 0, p.yaw);
+  wait(game, seconds);
+}
+
+/** Lifted off and held up `airborne` seconds, so the helicopter has been in the air. */
+function liftOff(game: Game, airborne = 1) {
   for (let f = 0, n = Math.round(airborne / DT); f < n; f++) game.step(DT, { forward: 0, turn: 0, lift: 1 });
-  for (const step of game.mission.level.steps) {
-    if (!('pad' in step)) continue;
-    const pad = game.island.pads[step.pad];
-    game.helicopter.placeAbove(pad.x, pad.y, 0, pad.yaw);
-    for (let f = 0, n = Math.round((DELIVERY.load + 0.1) / DT); f < n; f++) game.step(DT);
-  }
+}
+
+/**
+ * A level of pads done as a player does it from free flight: set down on its pickup pad for the load, lifted off for
+ * `airborne` seconds, then set down on each pad after in turn and waited on. It is for levels of pads alone.
+ */
+function deliver(game: Game, id: string, airborne = 1) {
+  const level = LEVELS.find((l) => l.id === id)!;
+  const pads = level.steps.flatMap((step) => ('pad' in step ? [step.pad] : []));
+  sitOn(game, pads[0], DELIVERY.load + 0.2);
+  liftOff(game, airborne);
+  for (const pad of pads.slice(1)) sitOn(game, pad, DELIVERY.load + 0.2);
+}
+
+/** The helicopter set `back` short of an opening on its axis, its middle at the opening's height, facing it. */
+function before(game: Game, opening: Ring | Gate, back: number) {
+  const [ax, ay] = [Math.cos(opening.yaw), Math.sin(opening.yaw)];
+  game.helicopter.place(opening.x - ax * back, opening.y - ay * back, opening.z - HELICOPTER.size.middle, opening.yaw);
 }
 
 describe('the levels in play', () => {
-  /** A game whose levels' ends are written down as they are told, with its save in memory. */
+  /** A game whose events are written down as they are told, with its save in memory. */
   const played = (json: string | null = null) => {
     const told: string[] = [];
     const store = memoryStore(json);
     const game = new Game({
       random: seeded(1),
       progress: new Progress(store),
-      events: { finished: (id, seconds, best) => told.push(`${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`) },
+      events: {
+        started: (id) => told.push(`started ${id}`),
+        abandoned: (id) => told.push(`abandoned ${id}`),
+        loaded: (pad) => told.push(`loaded ${pad}`),
+        delivered: (pad) => told.push(`delivered ${pad}`),
+        passed: (ring, of) => told.push(`passed ${ring} ${of}`),
+        through: (label) => told.push(`through ${label}`),
+        finished: (id, seconds, best) => told.push(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`),
+      },
     });
     return { game, told, store };
   };
 
-  it('has the levels of the arena, and flies the first unless told another', () => {
-    const { game } = played();
-    expect(game.levels).toBe(LEVELS);
-    expect(game.mission.level.id).toBe('first-delivery');
+  it('begins a delivery by landing on its pickup pad and staying for the load, and tells it started and then loaded', () => {
+    const { game, told } = played();
+    sitOn(game, 4, DELIVERY.load - 0.2);
+    expect(game.mission.level).toBeNull();
+    expect(game.starts.loading).toBeGreaterThan(1);
+    expect(told).toEqual([]);
+    wait(game, 0.4);
+    expect(game.mission.level?.id).toBe('first-delivery');
+    expect(told).toEqual(['started first-delivery', 'loaded 4']);
+    expect([game.mission.next, game.starts.loading]).toEqual([1, 0]);
   });
 
-  it('flies the level it is asked for from the start: home, landed, its first step waiting and the clock at nothing', () => {
+  it('runs the clock from the beginning, and not from a lift-off', () => {
     const { game } = played();
+    sitOn(game, 4, DELIVERY.load + 0.2);
+    expect(game.mission.time).toBeLessThan(0.2);
+    wait(game, 1);
+    expect(game.mission.time).toBeGreaterThan(1);
+    expect(game.helicopter.landed).toBe(true);
+  });
+
+  it('does nothing for a landing on a drop pad, or home, with nothing going', () => {
+    const { game, told } = played();
+    for (const pad of [1, 0, 5, 6]) sitOn(game, pad, 4);
+    expect(game.mission.level).toBeNull();
+    expect(told).toEqual([]);
+  });
+
+  it('goes one level at a time: another level’s crate is landed on and its start ring flown through, and nothing begins', () => {
+    const { game, told } = played();
+    sitOn(game, 4, DELIVERY.load + 0.2);
+    expect(told).toEqual(['started first-delivery', 'loaded 4']);
+    for (const pad of [3, 7, 2]) sitOn(game, pad, DELIVERY.load + 2);
+    const ring = startRing(RING_TRIAL);
+    before(game, ring, 12);
+    for (let f = 0; f < 90; f++) game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+    // it went through the opening, and began nothing
+    const across =
+      (game.helicopter.x - ring.x) * Math.cos(ring.yaw) + (game.helicopter.y - ring.y) * Math.sin(ring.yaw);
+    expect(across).toBeGreaterThan(1);
+    expect(game.mission.level?.id).toBe('first-delivery');
+    expect(game.mission.next).toBe(1);
+    expect(told).toEqual(['started first-delivery', 'loaded 4']);
+  });
+
+  it('begins the ring trial by that same flight through its start ring when nothing is going', () => {
+    const { game, told } = played();
+    before(game, startRing(RING_TRIAL), 12);
+    for (let f = 0; f < 90; f++) game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id).toBe('ring-trial');
+    expect(told).toEqual(['started ring-trial', 'passed 1 6']);
+  });
+
+  it('begins the course by flying between the towers, and tells it through between the towers', () => {
+    const { game, told } = played();
+    before(game, COURSE.steps[0] as Gate, 14);
+    for (let f = 0; f < 90; f++) game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id).toBe('under-and-between');
+    expect(told).toEqual(['started under-and-between', 'through between the towers']);
+  });
+
+  it('begins nothing for a start ring flown through backwards, or flown at and knocked off', () => {
+    const { game, told } = played();
+    const ring = startRing(RING_TRIAL);
+    const [ax, ay] = [Math.cos(ring.yaw), Math.sin(ring.yaw)];
+    game.helicopter.place(ring.x + ax * 12, ring.y + ay * 12, ring.z - HELICOPTER.size.middle, ring.yaw + Math.PI);
+    for (let f = 0; f < 90; f++) game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+    expect(told).toEqual([]);
+    // at the tube a tube's width to the side, and knocked back
+    const side = ring.opening + RING.tube;
+    const h = game.helicopter;
+    h.place(ring.x - ax * 15 - ay * side, ring.y - ay * 15 + ax * side, ring.z - HELICOPTER.size.middle, ring.yaw);
+    let back = false;
+    for (let f = 0; f < 120; f++) {
+      game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+      if (h.vx * ax + h.vy * ay < 0) back = true;
+      expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+    }
+    expect(back).toBe(true);
+    expect(game.mission.level).toBeNull();
+    expect(told).toEqual([]);
+  });
+
+  it('begins a level named at once, wherever the helicopter is, and refuses by name a level it does not have', () => {
+    const { game, told } = played();
+    game.helicopter.placeAbove(-300, 200, 40, 1);
+    game.begin('over-the-water');
+    expect(game.mission.level?.id).toBe('over-the-water');
+    expect(told).toEqual(['started over-the-water', 'loaded 3']);
+    expect([game.mission.next, game.mission.time, game.mission.loading]).toEqual([1, 0, 0]);
+    expect(() => game.begin('lost-in-the-woods')).toThrow(/no such level: lost-in-the-woods/);
+    expect(game.mission.level?.id).toBe('over-the-water');
+  });
+
+  it('puts the guide away when any level begins, by name or by landing, and resets what was loading', () => {
+    const { game } = played();
+    game.guide('mountain-drop');
+    game.begin('first-delivery');
+    expect(game.guided).toBeNull();
+    game.abandon();
+    game.guide('over-the-range');
+    sitOn(game, 3, 0.5);
+    expect(game.starts.loading).toBeGreaterThan(0);
+    game.begin('ring-trial');
+    expect(game.starts.loading).toBe(0);
+    game.abandon();
+    game.guide('over-the-range');
+    liftOff(game, 0.3);
+    sitOn(game, 4, DELIVERY.load + 0.2);
+    expect(game.guided).toBeNull();
+  });
+
+  it('ends a level with its time kept as the best, last set, the end told, and nothing going', () => {
+    const { game, told, store } = played();
+    deliver(game, 'first-delivery');
+    const seconds = game.last!.seconds;
+    expect(game.last).toEqual({ id: 'first-delivery', seconds, best: true });
+    expect(told.at(-1)).toBe(`finished first-delivery ${seconds.toFixed(2)} best`);
+    expect(game.progress.best.get('first-delivery')).toBe(seconds);
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': seconds } });
+    expect(game.mission.level).toBeNull();
+    expect(seconds).toBeGreaterThan(1 + DELIVERY.load);
+  });
+
+  it('keeps the best over a slower run, says it was not, and has the level ready to begin again at once', () => {
+    const { game, told, store } = played();
+    deliver(game, 'first-delivery', 1);
+    const first = game.last!.seconds;
+    liftOff(game, 0.5);
+    deliver(game, 'first-delivery', 4);
+    expect(game.last).toEqual({ id: 'first-delivery', seconds: expect.any(Number) as number, best: false });
+    expect(game.last!.seconds).toBeGreaterThan(first);
+    expect(told.at(-1)).toBe(`finished first-delivery ${game.last!.seconds.toFixed(2)}`);
+    expect(game.progress.best.get('first-delivery')).toBe(first);
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first } });
+    // a faster run lowers it
+    liftOff(game, 0.5);
+    deliver(game, 'first-delivery', 0.2);
+    expect(game.last!.best).toBe(true);
+    expect(game.progress.best.get('first-delivery')).toBeLessThan(first);
+  });
+
+  it('keeps a level that ends at once, as one of a single step would, without a time and without breaking', () => {
+    const one: Level = { id: 'one', name: 'One', kind: 'delivery', steps: [{ kind: 'pickup', pad: 4 }] };
+    const store = memoryStore();
+    const game = new Game({ random: seeded(1), levels: [one], progress: new Progress(store) });
+    game.begin('one');
+    expect(game.mission.level).toBeNull();
+    expect(game.last).toEqual({ id: 'one', seconds: 0, best: false });
+    expect(game.progress.best.size).toBe(0);
+    expect(store.json).toBeNull();
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it('blocks the pad a level ended on, which is the pad it was set down on to end it', () => {
+    const { game, told } = played();
+    deliver(game, 'first-delivery');
+    expect(game.starts.blocked).toBe(1);
+    expect(told.at(-1)).toMatch(/^finished first-delivery/);
+  });
+
+  it('begins no chained level: over the water ends on the pad the mountain drop is loaded from, which begins nothing until it lifts off and lands again', () => {
+    const { game, told } = played();
+    deliver(game, 'over-the-water');
+    expect(game.starts.blocked).toBe(2);
+    expect(told.at(-1)).toMatch(/^finished over-the-water/);
+    // landed there still, a long while: nothing loads and nothing begins
+    wait(game, 6);
+    expect(game.mission.level).toBeNull();
+    expect(game.starts.loading).toBe(0);
+    expect(told.filter((line) => line.startsWith('started'))).toEqual(['started over-the-water']);
+    // up, and down on it again
+    liftOff(game, 0.5);
+    expect(game.starts.blocked).toBe(-1);
+    sitOn(game, 2, DELIVERY.load + 0.2);
+    expect(game.mission.level?.id).toBe('mountain-drop');
+    expect(told.at(-2)).toBe('started mountain-drop');
+  });
+
+  it('abandons a level going, told, with nothing going after, the solids at the start rings, and the clock and place gone', () => {
+    const { game, told } = played();
+    game.begin('up-the-valley');
+    game.abandon();
+    expect(told).toEqual(['started up-the-valley', 'passed 1 9', 'abandoned up-the-valley']);
+    expect(game.mission.level).toBeNull();
+    expect([game.mission.next, game.mission.time, game.mission.loading]).toEqual([0, 0, 0]);
+    expect(game.solids.rings).toEqual([startRing(RING_TRIAL), startRing(VALLEY)]);
+    expect(game.last).toBeNull();
+    expect(game.progress.best.size).toBe(0);
+  });
+
+  it('puts a parcel that was aboard back when the level is abandoned, and keeps no time', () => {
+    const { game } = played();
+    sitOn(game, 4, DELIVERY.load + 0.2);
+    expect(game.mission.carrying).toBe(true);
+    game.abandon();
+    expect(game.mission.carrying).toBe(false);
+    expect(game.mission.waiting).toBe(-1);
+    expect(game.progress.best.size).toBe(0);
+  });
+
+  it('blocks the pad it was abandoned on, so the level abandoned on its own pickup pad does not begin again at once', () => {
+    const { game, told } = played();
+    sitOn(game, 4, DELIVERY.load + 0.2);
+    game.abandon();
+    expect(game.starts.blocked).toBe(4);
+    wait(game, 5);
+    expect(game.mission.level).toBeNull();
+    expect(told).toEqual(['started first-delivery', 'loaded 4', 'abandoned first-delivery']);
+    liftOff(game, 0.5);
+    sitOn(game, 4, DELIVERY.load + 0.2);
+    expect(game.mission.level?.id).toBe('first-delivery');
+  });
+
+  it('abandons nothing with nothing going: nothing told, and what was loading goes on loading', () => {
+    const { game, told } = played();
+    sitOn(game, 4, 1);
+    const loading = game.starts.loading;
+    game.abandon();
+    expect(told).toEqual([]);
+    expect(game.starts.loading).toBe(loading);
+    expect(game.starts.blocked).toBe(-1);
+  });
+
+  it('shows the way to a level, and to none, and refuses by name a level it does not have', () => {
+    const { game } = played();
+    game.guide('ring-trial');
+    expect(game.guided).toBe(RING_TRIAL);
+    game.guide('mountain-drop');
+    expect(game.guided?.id).toBe('mountain-drop');
+    game.guide(null);
+    expect(game.guided).toBeNull();
+    expect(() => game.guide('lost-in-the-woods')).toThrow(/no such level: lost-in-the-woods/);
+    expect(game.guided).toBeNull();
+  });
+
+  it('goes home: landed on the home pad facing as it does, anything going abandoned and told, nothing guided or loading', () => {
+    const { game, told } = played();
+    game.begin('first-delivery');
+    game.guide('ring-trial');
     for (let f = 0; f < 60; f++) game.step(DT, { forward: 1, turn: 0.5, lift: 1 });
-    game.play('over-the-water');
+    game.home();
     const h = game.helicopter;
     const home = game.island.pads[0];
     expect([h.x, h.y, h.yaw, h.landed]).toEqual([home.x, home.y, home.yaw, true]);
-    expect(game.mission.level.id).toBe('over-the-water');
-    expect([game.mission.next, game.mission.loading, game.mission.time, game.mission.started]).toEqual([
-      0,
-      0,
-      0,
-      false,
+    expect(game.mission.level).toBeNull();
+    expect(told.at(-1)).toBe('abandoned first-delivery');
+    expect(game.guided).toBeNull();
+    expect([game.starts.loading, game.starts.blocked]).toEqual([0, -1]);
+    expect(game.solids.rings).toEqual([startRing(RING_TRIAL), startRing(VALLEY)]);
+    // and with nothing going, it tells nothing more
+    const n = told.length;
+    game.home();
+    expect(told).toHaveLength(n);
+  });
+
+  it('holds only the start rings of the trials while nothing is going, and with a delivery going, and no ring of the course', () => {
+    const { game } = played();
+    expect(game.solids.count).toBe(2);
+    for (const id of ['first-delivery', 'over-the-water']) {
+      game.begin(id);
+      expect(game.solids.rings, id).toEqual([startRing(RING_TRIAL), startRing(VALLEY)]);
+      game.abandon();
+    }
+    // the course's own rings are solid while it is going, and its openings, which are no rings, never
+    game.begin('under-and-between');
+    expect(game.solids.rings).toEqual([
+      ...COURSE.steps.filter((s) => s.kind === 'ring'),
+      startRing(RING_TRIAL),
+      startRing(VALLEY),
     ]);
-    const first = LEVELS.find((level) => level.id === 'over-the-water')!.steps[0];
-    expect(game.mission.target).toBe(first.kind === 'pickup' ? first.pad : NaN);
+    game.abandon();
+    expect(game.solids.rings).toEqual([startRing(RING_TRIAL), startRing(VALLEY)]);
   });
 
-  it('refuses by name a level it does not have', () => {
+  it('holds the rings of the level going and every other level’s start ring, up to the capacity: ten for the valley', () => {
     const { game } = played();
-    expect(() => game.play('lost-in-the-woods')).toThrow(/no such level: lost-in-the-woods/);
-    expect(game.mission.level.id).toBe('first-delivery');
+    game.begin('ring-trial');
+    expect(game.solids.rings).toEqual([...RING_TRIAL.steps, startRing(VALLEY)]);
+    game.begin('up-the-valley');
+    expect(game.solids.rings).toEqual([...VALLEY.steps, startRing(RING_TRIAL)]);
+    expect(game.solids.count).toBe(10);
+    expect(game.solids.count).toBeLessThanOrEqual(RINGS.capacity);
   });
 
-  it('knows the level after the one being flown, and that there is none after the last', () => {
-    const { game } = played();
-    expect(game.nextLevel?.id).toBe('ring-trial');
-    game.play('under-and-between');
-    expect(game.nextLevel).toBeUndefined();
-  });
-
-  it('keeps the time of a level done as its best and saves it, tells it, and keeps it over a slower one', () => {
-    const { game, told, store } = played();
-    finish(game, 1);
-    const first = game.mission.time;
-    expect(told).toEqual([`first-delivery ${first.toFixed(2)} best`]);
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first } });
-    game.restart();
-    finish(game, 3);
-    expect(told[1]).toBe(`first-delivery ${game.mission.time.toFixed(2)}`);
-    expect(game.progress.best.get('first-delivery')).toBe(first);
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first } });
-  });
-
-  it('keeps no time for a level never lifted off from, which only a teleport can finish, and writes nothing', () => {
-    const { game, told, store } = played();
-    finish(game, 0);
-    expect(game.mission.done).toBe(true);
-    expect(told).toEqual(['first-delivery 0.00']);
-    expect(game.progress.best.size).toBe(0);
-    expect(store.json).toBeNull();
-  });
-
-  it('lists every level, locked, open or done, with its best time', () => {
-    const { game } = played('{"best": {"first-delivery": 40}}');
-    expect(game.levelList()).toEqual([
-      { id: 'first-delivery', name: 'First delivery', kind: 'delivery', standing: 'done', best: 40 },
-      { id: 'ring-trial', name: 'Ring trial', kind: 'rings', standing: 'open', best: null },
-      { id: 'over-the-water', name: 'Over the water', kind: 'delivery', standing: 'locked', best: null },
-      { id: 'over-the-range', name: 'Over the range', kind: 'delivery', standing: 'locked', best: null },
-      { id: 'up-the-valley', name: 'Up the valley', kind: 'rings', standing: 'locked', best: null },
-      { id: 'mountain-drop', name: 'Mountain drop', kind: 'delivery', standing: 'locked', best: null },
-      { id: 'under-and-between', name: 'Under and between', kind: 'course', standing: 'locked', best: null },
-    ]);
-  });
-
-  it('starts a level on the pad it names, and on home where it names none, and starts it there again', () => {
-    const away: Level = { ...LEVELS[0], id: 'away', start: 7 };
-    const game = new Game({ random: seeded(1), levels: [LEVELS[0], away] });
-    const at = (pad: number) => {
-      const p = game.island.pads[pad];
-      return [p.x, p.y, p.yaw, true];
-    };
+  it('puts the helicopter at the start of a delivery, landed on its pad, which then loads and begins', () => {
+    const { game, told } = played();
+    game.moveToStart('over-the-range');
+    const pad = game.island.pads[7];
     const h = game.helicopter;
-    game.play('away');
-    expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(7));
-    for (let f = 0; f < 60; f++) game.step(DT, { forward: 1, turn: 0.4, lift: 1 });
-    game.restart();
-    expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(7));
-    game.play(LEVELS[0].id);
-    expect([h.x, h.y, h.yaw, h.landed]).toEqual(at(0));
+    expect([h.x, h.y, h.landed]).toEqual([pad.x, pad.y, true]);
+    expect(game.mission.level).toBeNull();
+    expect(told).toEqual([]);
+    wait(game, DELIVERY.load + 0.2);
+    expect(game.mission.level?.id).toBe('over-the-range');
+    expect(told).toEqual(['started over-the-range', 'loaded 7']);
   });
 
-  it('flies each ring trial from its own pad with its rings solid, and a delivery from home with none', () => {
-    const { game } = played();
-    const h = game.helicopter;
-    const on = (pad: number) =>
-      [h.x, h.y, h.landed].join() === [game.island.pads[pad].x, game.island.pads[pad].y, true].join();
-    game.play('ring-trial');
-    expect([on(2), game.solids.count]).toEqual([true, 6]);
-    game.play('up-the-valley');
-    expect([on(7), game.solids.count]).toEqual([true, 9]);
-    game.play('first-delivery');
-    expect([on(0), game.solids.count]).toEqual([true, 0]);
-  });
+  it.each(['ring-trial', 'up-the-valley', 'under-and-between'])(
+    'puts the helicopter 30 back from the opening %s starts with, its middle at the opening’s height, facing it, and flown on it begins',
+    (id) => {
+      const { game, told } = played();
+      game.moveToStart(id);
+      const opening = LEVELS.find((l) => l.id === id)!.steps[0] as Ring | Gate;
+      const h = game.helicopter;
+      const back = (h.x - opening.x) * Math.cos(opening.yaw) + (h.y - opening.y) * Math.sin(opening.yaw);
+      const across = -(h.x - opening.x) * Math.sin(opening.yaw) + (h.y - opening.y) * Math.cos(opening.yaw);
+      expect(back).toBeCloseTo(-30, 6);
+      expect(Math.abs(across)).toBeLessThan(1e-9);
+      expect(h.z + HELICOPTER.size.middle).toBeCloseTo(opening.z, 6);
+      expect(h.yaw).toBeCloseTo(opening.yaw, 9);
+      expect(game.mission.level).toBeNull();
+      for (let f = 0; f < 240 && !game.mission.level; f++) game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+      expect(game.mission.level?.id).toBe(id);
+      expect(told[0]).toBe(`started ${id}`);
+    },
+  );
 
+  it('abandons what is going, told, when the helicopter is put at a start, and blocks nothing there', () => {
+    const { game, told } = played();
+    game.begin('first-delivery');
+    game.moveToStart('first-delivery');
+    expect(told.at(-1)).toBe('abandoned first-delivery');
+    expect(game.mission.level).toBeNull();
+    expect(game.starts.blocked).toBe(-1);
+    expect(() => game.moveToStart('lost-in-the-woods')).toThrow(/no such level: lost-in-the-woods/);
+  });
+});
+
+describe('the helicopter and the rings', () => {
   it('knocks the helicopter back off a ring it flies into, and never lets it inside', () => {
-    const { game } = played();
-    game.play('ring-trial');
-    const ring = game.mission.current as Ring;
+    const { game } = newGame();
+    const ring = startRing(RING_TRIAL);
     const h = game.helicopter;
     // fifteen short of the ring on its axis, a tube's width to the side, so it flies straight at the tube
     const side = ring.opening + RING.tube;
@@ -226,13 +503,12 @@ describe('the levels in play', () => {
     }
     expect(into, 'it got up to speed').toBeGreaterThan(10);
     expect(back, 'and was knocked back').toBe(true);
-    expect(game.mission.next, 'and did not pass the ring').toBe(0);
+    expect(game.mission.level, 'and did not pass the ring').toBeNull();
   });
 
   it('never knocks the helicopter faster than it can fly, struck at full speed on any part of a tube', () => {
-    const { game } = played();
-    game.play('ring-trial');
-    const ring = game.mission.current as Ring;
+    const { game } = newGame();
+    const ring = startRing(RING_TRIAL);
     const h = game.helicopter;
     for (let k = 0; k < 72; k++) {
       // at full speed along the ring's axis, from just behind it, square on to its tube and glancing off it 3 inside
@@ -256,9 +532,8 @@ describe('the levels in play', () => {
   });
 
   it('pushes the helicopter out of a ring it is put inside', () => {
-    const { game } = played();
-    game.play('ring-trial');
-    const ring = game.mission.current as Ring;
+    const { game } = newGame();
+    const ring = startRing(RING_TRIAL);
     // its middle on the top of the tube's centre line, as a careless teleport would put it
     game.helicopter.place(ring.x, ring.y, ring.z + ring.opening + RING.tube - HELICOPTER.size.middle, 0);
     expect(checkInvariants(game)).toEqual([]);
@@ -267,7 +542,7 @@ describe('the levels in play', () => {
   it.each(['the bridge', 'the west tower', 'the east tower'])(
     'rests on the top of %s let down onto it, never inside it and never landed, and pushed on, slides off its edge',
     (name) => {
-      const { game } = played();
+      const { game } = newGame();
       const block = game.solids.blocks.find((b) => b.name === name)!;
       const h = game.helicopter;
       const { middle, rotorRadius } = HELICOPTER.size;
@@ -300,7 +575,7 @@ describe('the levels in play', () => {
 
   it('keeps its save in memory unless handed a store, so a game run without a page writes nowhere', () => {
     const game = new Game({ random: seeded(1) });
-    finish(game);
+    deliver(game, 'first-delivery');
     expect(game.progress.best.size).toBe(1);
     expect(new Game({ random: seeded(1) }).progress.best.size).toBe(0);
   });

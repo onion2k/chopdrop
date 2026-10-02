@@ -20,7 +20,9 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
-import { HOVER_LIFT } from '../src/helicopter';
+import { LEVELS } from '../src/arena';
+import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import type { Ring } from '../src/mission';
 import { WOOD, standardView, start, watch } from './game';
 import { moved as hasMoved, type Figures } from './judging';
 
@@ -76,6 +78,23 @@ test('boots, draws and downloads within budget, and as it did before', async ({ 
   const washMs = Math.round(washFrame * 1000) / 1000;
   info.annotations.push({ type: 'perf-downwash', description: `${washMs} ms, not held to the baseline or the budget` });
   console.log(`perf: downwash view frame ${washMs} ms (not held)`);
+  // a start: the trial's first ring with its flag, the other start in the distance and crates on pads, as a player sees
+  // them from the chase camera; the frame the free-roam marks add to, told and not held
+  const trial = LEVELS.find((l) => l.id === 'ring-trial')!.steps[0] as Ring;
+  const startFrame = await page.evaluate(
+    async ([r, middle]) => {
+      const g = window.game!;
+      const [x, y] = [r.x - Math.cos(r.yaw) * 45, r.y - Math.sin(r.yaw) * 45];
+      g.teleport(x, y, r.z - middle - g.floorAt(x, y), r.yaw);
+      g.chase();
+      g.step(1);
+      return g.measureFrame(50);
+    },
+    [trial, HELICOPTER.size.middle] as const,
+  );
+  const startMs = Math.round(startFrame * 1000) / 1000;
+  info.annotations.push({ type: 'perf-start', description: `${startMs} ms, not held to the baseline or the budget` });
+  console.log(`perf: start view frame ${startMs} ms (not held)`);
   const now: Figures = { bootMs: Math.round(boot), frameMs: Math.round(frame * 1000) / 1000, bundleBytes: bundle };
   info.annotations.push({ type: 'perf', description: JSON.stringify(now) });
   console.log(

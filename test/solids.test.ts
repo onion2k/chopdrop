@@ -223,3 +223,17 @@ describe('the solids, as blocks', () => {
     expect(new Solids({ middle: MIDDLE, radius: RADIUS }).distanceAt(0, 0, 0)).toBe(Infinity);
   });
 });
+
+describe('the rings the solids hold', () => {
+  it('are told back, in order, as the ones set, so what is solid can be asked and gone round', () => {
+    const s = new Solids({ middle: MIDDLE, radius: RADIUS });
+    expect(s.rings).toEqual([]);
+    const second: Ring = { ...RING_AT, x: 40 };
+    s.set([RING_AT, second]);
+    expect(s.rings).toEqual([RING_AT, second]);
+    expect(s.rings[0]).toBe(RING_AT);
+    s.set([second]);
+    expect(s.rings).toEqual([second]);
+    expect(s.count).toBe(1);
+  });
+});

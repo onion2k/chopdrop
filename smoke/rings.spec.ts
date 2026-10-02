@@ -1,11 +1,12 @@
 /**
- * The ring trials in the page, flown by the keys and by touch as a player flies them: a ring passed through its
- * opening, one missed and gone back for, one struck and knocked back off, the words and the arrow for the ring wanted,
- * and the clock running from the first lift-off and stopping at the last ring. The helicopter is set before each ring
- * through the test API, a short way off; what it does from there is the controls'.
+ * The ring trials in the page, flown by the keys and by touch as a player flies them: the trial begun by flying through
+ * its first ring, a ring passed through its opening, one missed and gone back for, one struck and knocked back off, the
+ * words and the arrow for the ring wanted, and the clock running from the first ring and stopping at the last. The
+ * helicopter is set before each ring through the test API, a short way off; what it does from there is the controls'.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import { TOAST } from '../src/hud';
 import type { Ring } from '../src/mission';
 import { fingers, finish, leverTravel, start, watch } from './game';
 
@@ -33,7 +34,7 @@ async function along(page: Page, ring: Ring) {
   return (x - ring.x) * Math.cos(ring.yaw) + (y - ring.y) * Math.sin(ring.yaw);
 }
 
-test('a ring trial by the keys: one passed, one missed and gone back for, one struck, and the clock', async ({
+test('a ring trial by the keys: begun by its first ring, one missed and gone back for, one struck, and the clock', async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -41,20 +42,23 @@ test('a ring trial by the keys: one passed, one missed and gone back for, one st
   await start(page, { seed: 11, paused: true });
   await page.evaluate(() => window.game!.play('ring-trial'));
   await step(page, 1);
+  // put at the start, nothing begun: the hint, no clock, the first ring's flag drawn and no other ring solid
+  expect((await state(page)).mission.level).toBeNull();
+  await expect(page.locator('#hud .hint')).toBeVisible();
+  // the helicopter sinks with no key held, so the wait before it is flown at is a frame and not a second
+  expect((await state(page)).mission.level).toBeNull();
+
+  // the first ring flown through the way it faces, thirty back with W held: that begins the trial
+  await page.keyboard.down('w');
+  for (let f = 0; f < 240 && !(await state(page)).mission.level; f += 5) await step(page, 5);
+  await page.keyboard.up('w');
+  expect(await page.evaluate(() => window.game!.events())).toEqual(['started ring-trial', 'passed 1 6']);
   const rings = await ringsOf(page);
   expect(rings).toHaveLength(6);
-  await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 1 of 6');
-  // the clock waits for the first lift-off, on the pad
-  await step(page, 60);
-  await expect(page.locator('#hud .clock')).toHaveText('0:00');
-
-  // the first: lined up fifteen short of it, W held, and through
-  await before(page, rings[0], 15);
-  await page.keyboard.down('w');
-  await step(page, 100);
-  await page.keyboard.up('w');
-  expect(await page.evaluate(() => window.game!.events())).toEqual(['passed 1 6']);
   await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 2 of 6');
+  await expect(page.locator('#hud .hint')).toBeHidden();
+  await expect(page.locator('#hud .clock')).toHaveText('0:00');
+  await step(page, 60);
   await expect(page.locator('#hud .clock')).toHaveText(/^0:0[1-9]$/);
 
   // the second, missed: flown past it beside its rim, and still the one wanted, the arrow turned back to it
@@ -95,26 +99,31 @@ test('a ring trial by the keys: one passed, one missed and gone back for, one st
   expect(furthest, 'and never through it').toBeLessThan(0);
   expect((await state(page)).mission.next).toBe(2);
 
-  // the rest flown, and the clock stops at the last
+  // the rest flown, and the clock stops at the last, the toast telling the time it stopped at
   await finish(page);
   const end = await state(page);
-  expect(end.screen).toBe('card');
-  await expect(page.locator('#hud .card h2')).toHaveText('Trial complete!');
+  expect([end.screen, end.mission.level]).toEqual(['flying', null]);
+  await expect(page.locator('#hud .toast h2')).toHaveText('Trial complete!');
+  expect(end.last).toMatchObject({ id: 'ring-trial', best: true });
+  // the bar keeps quiet under the toast, and the hint is back once its game seconds are past
+  await expect(page.locator('#hud .hint')).toBeHidden();
   await step(page, 120);
-  expect((await state(page)).mission.time).toBe(end.mission.time);
+  expect((await state(page)).last).toEqual(end.last);
+  await expect(page.locator('#hud .hint')).toBeHidden();
+  await step(page, Math.ceil(TOAST.seconds * 60));
+  await expect(page.locator('#hud .hint')).toBeVisible();
   expect(problems).toEqual([]);
 });
 
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('a ring flown through by touch: the lever at its stop and the stick pushed', async ({ page }) => {
+  test('the first ring flown through by touch, which begins the trial: the lever at its stop and the stick pushed', async ({
+    page,
+  }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await page.evaluate(() => window.game!.play('up-the-valley'));
-    await step(page, 1);
-    const [first] = await ringsOf(page);
-    await before(page, first, 15);
     await step(page, 1);
     const travel = await leverTravel(page);
     const hand = await fingers(page);
@@ -124,10 +133,10 @@ test.describe('on a phone', () => {
     expect((await state(page)).input.lever).toBe(HOVER_LIFT);
     await hand.down(1, 100, 690);
     await hand.move(1, 100, 610);
-    await step(page, 100);
+    for (let f = 0; f < 300 && !(await state(page)).mission.level; f += 5) await step(page, 5);
     await hand.up(1);
     await hand.up(2);
-    expect(await page.evaluate(() => window.game!.events())).toEqual(['passed 1 9']);
+    expect(await page.evaluate(() => window.game!.events())).toEqual(['started up-the-valley', 'passed 1 9']);
     await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 2 of 9');
     expect(problems).toEqual([]);
   });

@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { WATCH, grew, leakRun, sizes, trouble } from '../scripts/leaks';
 import { LEVELS } from '../src/arena';
+import { RINGS } from '../src/mission';
 import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
 import { DT, newGame, thickestWood } from './helpers';
@@ -14,12 +15,18 @@ describe('what must stay bounded', () => {
   it('reads the sizes off a game, and has a ceiling for every one', () => {
     const { game } = newGame();
     const now = sizes(game);
-    for (const key of ['trees moving', 'best times kept', 'heap MB']) {
+    for (const key of ['trees moving', 'best times kept', 'rings solid', 'heap MB']) {
       expect(Object.keys(now), `${key} measured`).toContain(key);
       expect(Number.isFinite(now[key])).toBe(true);
       expect(Object.keys(WATCH), `a ceiling for ${key}`).toContain(key);
     }
     expect(WATCH['trees moving']!.ceiling).toBe(SWAY.capacity);
+    // the rings the solids hold are the two start rings at rest, and there is room for no more than a level may have
+    expect(now['rings solid']).toBe(2);
+    expect(WATCH['rings solid']!.ceiling).toBe(RINGS.capacity);
+    game.begin('up-the-valley');
+    expect(sizes(game)['rings solid']).toBe(10);
+    game.abandon();
     // hovering low over a wood, the trees moving are counted
     const wood = thickestWood();
     game.helicopter.placeAbove(wood.x, wood.y, 4, 0);
@@ -45,7 +52,7 @@ describe('what must stay bounded', () => {
     expect(trouble({ 'heap MB': [10, 40, 70, 100, 130, 160, 190, 220, 250] }).join('\n')).toMatch(/grew all the way/);
   });
 
-  it('plays a short game through, sampling once a game minute', () => {
+  it('plays a short game through, the levels in turn from home, sampling once a game minute', () => {
     const run = leakRun({ seed: 1, minutes: 2 });
     expect(run.problems).toEqual([]);
     expect(run.samples['trees moving']).toHaveLength(2);

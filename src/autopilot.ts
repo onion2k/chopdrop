@@ -2,11 +2,14 @@
  * A pilot that flies the level as a careful player would: up clear of the
  * highest ground between it and the pad that is wanted, turned toward it,
  * across at speed, braked to arrive slowly over it, down onto it, and still
- * while the parcel loads. It reads only what a player can see (where the
- * helicopter is and the pad that is wanted) and asks only for what a player
- * can ask for, through the same `Controls`. It draws on no chance and keeps
- * no memory beyond the game's, so the same game flown by it is flown the
- * same way twice.
+ * while the parcel loads. With a level going it flies that level; with nothing
+ * going, and a level told to it by name, it flies from wherever it is to that
+ * level's start, doing its first step as if it were the level's own, and then
+ * on through the level. It reads only what a player can see (where the
+ * helicopter is, and the pad or the opening that is wanted) and asks only for
+ * what a player can ask for, through the same `Controls`. It draws on no
+ * chance and keeps no memory beyond the game's and the level it was told, so
+ * the same game flown by it is flown the same way twice.
  *
  * The gates play the game through it: the pace of a level, the same game
  * twice, nothing kept for ever over a long play, and the play-through in the
@@ -14,7 +17,7 @@
  */
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
-import { RING, onPad, type Gate, type Ring } from './mission';
+import { RING, onPad, type Gate, type Level, type Ring } from './mission';
 
 /** How it flies. Distances are world units, speeds a second. */
 export const PILOT = {
@@ -53,26 +56,51 @@ export class Autopilot {
   /** The controls it asks for, written in place each step. */
   private readonly controls: Controls = { forward: 0, turn: 0, lift: 0 };
 
+  /** The level it is told to do while nothing is going, found once when it is told so that driving makes nothing. */
+  private told: Level | null = null;
+
   constructor(readonly game: Game) {}
+
+  /** The name of the level it will fly to and do while nothing is going, or null for none; a name the game does not have is refused. */
+  get wanted(): string | null {
+    return this.told?.id ?? null;
+  }
+
+  set wanted(id: string | null) {
+    if (id === null) {
+      this.told = null;
+      return;
+    }
+    const level = this.game.levels.find((l) => l.id === id);
+    if (!level) throw new Error(`no such level: ${id}`);
+    this.told = level;
+  }
 
   /** One step of the game, flown by it. */
   step(dt: number): void {
     this.game.step(dt, this.drive());
   }
 
-  /** What it would ask for now, from where the helicopter is and the pad that is wanted. Nothing is made. */
+  /**
+   * What it would ask for now, from where the helicopter is and the step that is wanted: the step of the level going, or
+   * with nothing going the first step of the level it is told, which is flown as the level's own. Nothing is made.
+   */
   drive(): Controls {
     const c = this.controls;
-    const { mission, helicopter: h, island } = this.game;
+    const { mission, helicopter: h, island, starts } = this.game;
     c.forward = 0;
     c.turn = 0;
     c.lift = 0;
-    const step = mission.current;
+    const step = mission.current ?? this.told?.steps[0];
     if (!step) return c;
     if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
-    const pad = island.pads[mission.target];
-    // on the pad that is wanted: still, while the parcel loads
-    if (onPad(h, pad)) return c;
+    const pad = island.pads[step.pad];
+    // on the pad that is wanted: still, while the parcel loads; unless a level has just ended on it, which loads
+    // nothing until the helicopter has lifted off, so up it goes, and comes down on it again
+    if (onPad(h, pad)) {
+      if (!mission.level && starts.blocked === step.pad) c.lift = 1;
+      return c;
+    }
 
     let dx = pad.x - h.x,
       dy = pad.y - h.y;
@@ -165,7 +193,7 @@ export class Autopilot {
 
   /**
    * Whether something is in the way to (tx, ty) at the height `want`, and if so where to go instead and how high,
-   * written into `via`. A ring other than `wanted`: caught in it, inside its opening or under, over or beside it within
+   * written into `via`. A ring that is solid now (those of the level going, and every start ring) other than `wanted`: caught in it, inside its opening or under, over or beside it within
    * its tube's reach, out along its axis the side the goal is, holding its height so as not to climb or sink into it;
    * and where the way would cross its face near enough its opening for the rotor to touch, past its rim instead, on the
    * side the way was nearer. A block: a low one, as the deck is, gone over, unless what is wanted is under it, and from
@@ -174,8 +202,8 @@ export class Autopilot {
   private detour(wanted: Ring | Gate | null, tx: number, ty: number, want: number): boolean {
     const h = this.game.helicopter;
     const { middle, rotorRadius } = HELICOPTER.size;
-    for (const o of this.game.mission.level.steps) {
-      if (o.kind !== 'ring' || o === wanted) continue;
+    for (const o of this.game.solids.rings) {
+      if (o === wanted) continue;
       const ax = Math.cos(o.yaw),
         ay = Math.sin(o.yaw);
       const from = (h.x - o.x) * ax + (h.y - o.y) * ay;

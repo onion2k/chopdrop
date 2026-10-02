@@ -1,18 +1,15 @@
 /**
- * The words on the screen while a level is flown: what is wanted, at which
- * pad or which ring of how many, an arrow turned toward it from where the
- * camera looks and how far off it is, the clock from the first lift-off, the
- * loader filling while the parcel is loaded or unloaded, a button in the
- * corner back to the list of levels, and the card at the end with the
- * time, the best time on the level, and the ways on: the next level, the same
- * one again, or the list. It reads where the game has got to and is told the
- * end by the game's event; it writes to the page only when a word or a figure
- * on it changes. Without it a player would not know where to go, nor that
- * they had got there.
+ * The words on the screen: flying free, a hint that a crate is to be landed on or a start flown; shown the way, an
+ * arrow turned toward the start of a level and how far off it is; and with a level going, what is wanted, at which pad or
+ * which ring of how many, the arrow and distance to it and the clock from the level's beginning. The loader fills while
+ * a parcel is loaded or unloaded, a button in the corner opens the panel, and a toast under the bar tells a level done
+ * and goes after a few seconds of game time. It reads where the game has got to and is told the end by the game's
+ * event; it writes to the page only when a word or a figure on it changes. Without it a player would not know where to
+ * go, nor that they had got there.
  */
 import type { Point } from './chase';
 import type { Game } from './game';
-import { DELIVERY, type LevelKind } from './mission';
+import { DELIVERY, type Level, type LevelKind, type Step } from './mission';
 
 /** How far round the arrow is turned, in degrees clockwise, to point from `from` toward `to` as seen along the camera. */
 export function pointer(
@@ -35,25 +32,91 @@ export function clock(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** How finely the loader is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
-const LOADER_STEPS = 40;
+/** The pads of the island as the words and the arrow need them: where each is, and what it is called. */
+export interface PadWords {
+  x: number;
+  y: number;
+  site: string;
+}
 
-/** What the card says a level of each kind ends with. */
+/** The step a level begins with, which is where it starts. */
+function firstOf(level: { steps: readonly Step[] }): Step {
+  return level.steps[0];
+}
+
+/**
+ * Where a level starts, as the panel and the HUD put it: a pickup, "Land on the meadow pad"; a ring, "Fly through the
+ * first ring, by the lakeside pad", the pad being the one nearest the ring; an opening, "Fly between the towers". One
+ * function, so what the panel says and what the bar says are the same words.
+ */
+export function startWords(level: { steps: readonly Step[] }, pads: readonly PadWords[]): string {
+  const first = firstOf(level);
+  if (first.kind === 'gate') return `Fly ${first.label}`;
+  if (first.kind === 'ring') {
+    let site = '';
+    let nearest = Infinity;
+    for (const pad of pads) {
+      const d = Math.hypot(pad.x - first.x, pad.y - first.y);
+      if (d < nearest) {
+        nearest = d;
+        site = pad.site;
+      }
+    }
+    return `Fly through the first ring, by the ${site} pad`;
+  }
+  return `Land on the ${pads[first.pad].site} pad`;
+}
+
+/** Where the arrow points to start a level: the pad of a pickup, or the middle of its first ring or opening. */
+export function startPoint(level: { steps: readonly Step[] }, pads: readonly PadWords[]): { x: number; y: number } {
+  const first = firstOf(level);
+  const at = first.kind === 'ring' || first.kind === 'gate' ? first : pads[first.pad];
+  return { x: at.x, y: at.y };
+}
+
+/**
+ * What the bar shows: the hint alone, flying free; the way to a start; or the level going. A level going outranks a
+ * guide. Under a toast with nothing going and nothing guided it shows nothing, so the hint is not stacked over the
+ * words that tell a level done; a level's words and a guide are never hidden.
+ */
+export function barMode(going: boolean, guided: boolean, toast = false): 'free' | 'guided' | 'going' | 'quiet' {
+  return going ? 'going' : guided ? 'guided' : toast ? 'quiet' : 'free';
+}
+
+/** How long the toast is shown, in seconds of game time, so the game held behind the panel holds it too. */
+export const TOAST = { seconds: 3 };
+
+/** Whether a toast told at game time `from` is still shown at `now`. */
+export function toastShown(from: number, now: number): boolean {
+  return now >= from && now - from < TOAST.seconds;
+}
+
+/** What the toast says a level of each kind ends with. */
 const DONE: Record<LevelKind, string> = {
   delivery: 'Delivered!',
   rings: 'Trial complete!',
   course: 'Course complete!',
 };
 
-/** What the HUD's buttons do, which is the page's to say: the level again, the next one, and the list of levels. */
+/** The toast's words, as the test API reads them: the title by the kind of level, the time, and "New best" when it is one. */
+export function toastWords(kind: LevelKind, seconds: number, best: boolean): string {
+  return `${DONE[kind]} ${clock(seconds)}${best ? ' ★ New best' : ''}`;
+}
+
+/** The hint in the bar, flying free. */
+const HINT = 'Land on a crate or fly a start';
+
+/** How finely the loader is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
+const LOADER_STEPS = 40;
+
+/** What the HUD's one button does, which is the page's to say: open the panel. */
 export interface HudActions {
-  again: () => void;
-  next: () => void;
-  levels: () => void;
+  panel: () => void;
 }
 
 export class Hud {
   private readonly root: HTMLElement;
+  private readonly bar: HTMLElement;
   private readonly arrow: SVGElement;
   private readonly goal: HTMLElement;
   private readonly far: HTMLElement;
@@ -61,15 +124,33 @@ export class Hud {
   private readonly loader: HTMLElement;
   private readonly fill: SVGCircleElement;
   private readonly loaderWords: HTMLElement;
-  private readonly card: HTMLElement;
+  private readonly toastBox: HTMLElement;
   private readonly title: HTMLElement;
   private readonly time: HTMLElement;
+  private readonly sep: HTMLElement;
   private readonly best: HTMLElement;
-  private readonly next: HTMLButtonElement;
-  private readonly again: HTMLButtonElement;
   /** What is on the page now, so nothing is written that has not changed. */
-  private shown = { goal: '', far: '', clock: '', turn: NaN, loader: -1, loaderWords: '', done: false };
-  /** Whether the list of levels is up over it: it is hidden, and its keys are the list's. */
+  private shown = {
+    mode: 'free' as 'free' | 'guided' | 'going' | 'quiet',
+    goal: '',
+    far: -1,
+    clock: -1,
+    turn: NaN,
+    loader: -1,
+    loaderWords: '',
+    toast: false,
+  };
+  /** The level the way is shown to, and the point it starts at, worked out once when it changes and not every frame. */
+  private guide: Level | null = null;
+  private guideAt = { x: 0, y: 0 };
+  private guideWords = '';
+  /** The step the words were made for, and the words: made when the step changes and not every frame. */
+  private stepFor: Step | null = null;
+  private stepWords = '';
+  /** The game time the toast was told at, and its words while it is shown. */
+  private toldAt = -Infinity;
+  private words: string | null = null;
+  /** Whether the panel is up over it: it is hidden, and its keys are the panel's. */
   private away = false;
 
   constructor(actions: HudActions) {
@@ -79,15 +160,13 @@ export class Hud {
     this.root.innerHTML = `
       <button type="button" class="to-levels" aria-label="Levels" title="Levels (Esc)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="7" height="7" rx="2" /><rect x="11" y="2" width="7" height="7" rx="2" /><rect x="2" y="11" width="7" height="7" rx="2" /><rect x="11" y="11" width="7" height="7" rx="2" /></svg></button>
       <div class="top">
-        <div class="bar"><svg class="arrow" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0,-11 L8,7 L0,3 L-8,7 Z" /></svg><span class="goal"></span><span class="far"></span><span class="clock"></span></div>
+        <div class="bar" data-mode="free"><span class="hint"></span><svg class="arrow" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0,-11 L8,7 L0,3 L-8,7 Z" /></svg><span class="goal"></span><span class="far"></span><span class="clock"></span></div>
         <div class="loader" hidden><svg viewBox="-15 -15 30 30" aria-hidden="true"><circle class="track" r="11" /><circle class="fill" r="11" transform="rotate(-90)" /></svg><span class="what"></span></div>
-      </div>
-      <div class="done" hidden><div class="card"><h2></h2><div class="time"></div><div class="best"></div>
-        <div class="actions"><button type="button" class="next"></button></div>
-        <div class="actions"><button type="button" class="again">Fly again</button><button type="button" class="list">Levels</button></div>
-      </div></div>`;
+        <div class="toast" hidden><h2></h2><div class="t"><span class="time"></span><span class="sep"></span><span class="b"></span></div></div>
+      </div>`;
     document.body.append(this.root);
     const find = <T extends Element>(selector: string) => this.root.querySelector(selector) as T;
+    this.bar = find<HTMLElement>('.bar');
     this.arrow = find<SVGElement>('.arrow');
     this.goal = find<HTMLElement>('.goal');
     this.far = find<HTMLElement>('.far');
@@ -95,28 +174,21 @@ export class Hud {
     this.loader = find<HTMLElement>('.loader');
     this.fill = find<SVGCircleElement>('.fill');
     this.loaderWords = find<HTMLElement>('.what');
-    this.card = find<HTMLElement>('.done');
-    this.title = find<HTMLElement>('.card h2');
-    this.time = find<HTMLElement>('.time');
-    this.best = find<HTMLElement>('.card .best');
-    this.next = find<HTMLButtonElement>('.next');
-    this.again = find<HTMLButtonElement>('.again');
+    this.toastBox = find<HTMLElement>('.toast');
+    this.title = find<HTMLElement>('.toast h2');
+    this.time = find<HTMLElement>('.toast .time');
+    this.sep = find<HTMLElement>('.toast .sep');
+    this.best = find<HTMLElement>('.toast .b');
+    find<HTMLElement>('.hint').textContent = HINT;
     const circle = 2 * Math.PI * 11;
     this.fill.style.strokeDasharray = `0 ${circle}`;
-    this.next.addEventListener('click', actions.next);
-    this.again.addEventListener('click', actions.again);
-    find<HTMLButtonElement>('.list').addEventListener('click', actions.levels);
-    find<HTMLButtonElement>('.to-levels').addEventListener('click', actions.levels);
+    find<HTMLButtonElement>('.to-levels').addEventListener('click', actions.panel);
     addEventListener('keydown', (e) => {
-      // a key the list has already acted on, or one pressed while the list is up, is the list's
+      // a key the panel has already acted on, or one pressed while the panel is up, is the panel's
       if (e.defaultPrevented || this.away || this.root.hidden) return;
       if (e.key === 'Escape') {
         e.preventDefault();
-        actions.levels();
-      } else if (e.key === 'Enter' && this.shown.done) {
-        // the card's first way on: the next level, or the same one again after the last
-        e.preventDefault();
-        (this.next.hidden ? actions.again : actions.next)();
+        actions.panel();
       }
     });
   }
@@ -126,44 +198,45 @@ export class Hud {
     this.root.hidden = false;
   }
 
-  /** Hidden while the list of levels is up over it, and shown again when it goes. */
+  /** Hidden while the panel is up over it, and shown again when it goes. */
   set listing(on: boolean) {
     this.away = on;
     this.root.classList.toggle('away', on);
   }
 
-  /** Whether the card is up: the level is done. */
-  get ended(): boolean {
-    return this.shown.done;
+  /** The toast's words while it is shown, or null. */
+  get toast(): string | null {
+    return this.words;
   }
 
-  /** The words for where the level has got to, written only where they have changed. */
+  /**
+   * The words for where the game has got to, written only where they have changed: the hint with nothing going; the way
+   * to a start with a level guided to; and with a level going, what is wanted and the clock. The toast goes by game time.
+   */
   draw(game: Game, camera: { position: Point; target: Point }): void {
-    const d = game.mission;
-    const step = d.current;
-    const goal = d.goal;
-    if (this.away || this.shown.done || !step || !goal) return;
-    const h = game.helicopter;
-    const words =
-      step.kind === 'ring'
-        ? `Fly through ring ${d.ringNumber} of ${d.ringCount}`
-        : step.kind === 'gate'
-          ? `Fly ${step.label}`
-          : step.kind === 'land'
-            ? `Land on the ${game.island.pads[step.pad].site} pad`
-            : step.kind === 'pickup'
-              ? `Pick up the parcel at the ${game.island.pads[step.pad].site} pad`
-              : `Deliver it to the ${game.island.pads[step.pad].site} pad`;
-    const far = `${Math.round(Math.hypot(goal.x - h.x, goal.y - h.y))} m`;
-    const time = clock(d.time);
-    const turn = pointer(camera, h, goal);
-    const loader = d.loading > 0 ? Math.round((d.loading / DELIVERY.load) * LOADER_STEPS) : -1;
-    const loaderWords = step.kind === 'pickup' ? 'Loading the parcel' : 'Unloading the parcel';
+    if (this.away) return;
     const s = this.shown;
-    if (words !== s.goal) this.goal.textContent = s.goal = words;
-    if (far !== s.far) this.far.textContent = s.far = far;
-    if (time !== s.clock) this.clock.textContent = s.clock = time;
-    if (turn !== s.turn) this.arrow.style.transform = `rotate(${(s.turn = turn)}deg)`;
+    const d = game.mission;
+    const on = this.words !== null && toastShown(this.toldAt, game.t);
+    if (on !== s.toast) {
+      this.toastBox.hidden = !on;
+      s.toast = on;
+      if (!on) this.words = null;
+    }
+    const step = d.current;
+    const mode = barMode(step !== undefined, game.guided !== null, on);
+    if (mode !== s.mode) {
+      this.bar.dataset.mode = s.mode = mode;
+      // the words for the new mode are written afresh below
+      s.goal = '';
+      s.far = -1;
+      s.clock = -1;
+      s.turn = NaN;
+    }
+    // the loader fills while the parcel of a level going is loaded or unloaded, or while a start's crate is loaded
+    const loading = step ? d.loading : game.starts.loading;
+    const loader = loading > 0 ? Math.round((loading / DELIVERY.load) * LOADER_STEPS) : -1;
+    const loaderWords = step && step.kind !== 'pickup' ? 'Unloading the parcel' : 'Loading the parcel';
     if (loader !== s.loader) {
       this.loader.hidden = loader < 0;
       if (loader >= 0) {
@@ -173,32 +246,79 @@ export class Hud {
       s.loader = loader;
     }
     if (loaderWords !== s.loaderWords) this.loaderWords.textContent = s.loaderWords = loaderWords;
+    if (mode === 'free' || mode === 'quiet') return;
+
+    const h = game.helicopter;
+    let to: { x: number; y: number };
+    let words: string;
+    if (step) {
+      const goal = d.goal!;
+      to = goal;
+      // the words are made when the step changes and not on every frame
+      if (step !== this.stepFor) {
+        this.stepFor = step;
+        this.stepWords =
+          step.kind === 'ring'
+            ? `Fly through ring ${d.ringNumber} of ${d.ringCount}`
+            : step.kind === 'gate'
+              ? `Fly ${step.label}`
+              : step.kind === 'land'
+                ? `Land on the ${game.island.pads[step.pad].site} pad`
+                : step.kind === 'pickup'
+                  ? `Pick up the parcel at the ${game.island.pads[step.pad].site} pad`
+                  : `Deliver it to the ${game.island.pads[step.pad].site} pad`;
+      }
+      words = this.stepWords;
+      const time = Math.floor(d.time);
+      if (time !== s.clock) this.clock.textContent = clock((s.clock = time));
+    } else {
+      // shown the way: the point is worked out once for the level, since the game does not change it
+      if (game.guided !== this.guide) {
+        this.guide = game.guided;
+        this.guideAt = startPoint(game.guided!, game.island.pads);
+        this.guideWords = `To the start · ${game.guided!.name}`;
+      }
+      to = this.guideAt;
+      words = this.guideWords;
+    }
+    const far = Math.round(Math.hypot(to.x - h.x, to.y - h.y));
+    const turn = pointer(camera, h, to);
+    if (words !== s.goal) this.goal.textContent = s.goal = words;
+    if (far !== s.far) this.far.textContent = `${(s.far = far)} m`;
+    if (turn !== s.turn) this.arrow.style.transform = `rotate(${(s.turn = turn)}deg)`;
   }
 
   /**
-   * The end, as the game tells it: the card, with what kind of level it was, the time it took, the best time on it
-   * (null if none is kept, which only a level never lifted off from has) and whether this is it, and the next level's
-   * name, or null after the last.
+   * The end, as the game tells it, at game time `now`: the toast, with the title by the kind of level, the time it took
+   * and, if this is the best time on it yet, "New best". It is shown for `TOAST.seconds` of game time from `now`.
    */
-  finished(kind: LevelKind, seconds: number, best: number | null, isBest: boolean, next: string | null): void {
+  finished(kind: LevelKind, seconds: number, isBest: boolean, now: number): void {
     this.title.textContent = DONE[kind];
-    this.time.textContent = `in ${clock(seconds)}`;
-    this.best.hidden = best === null;
-    this.best.textContent = isBest ? '★ New best' : `Best ${clock(best ?? 0)}`;
-    this.next.hidden = next === null;
-    this.next.textContent = `Next level: ${next ?? ''}`;
-    this.card.hidden = false;
-    this.loader.hidden = true;
-    this.root.classList.add('ended');
-    this.shown.done = true;
-    (next === null ? this.again : this.next).focus({ preventScroll: true });
+    this.time.textContent = clock(seconds);
+    this.sep.textContent = isBest ? ' · ' : '';
+    this.best.textContent = isBest ? '★ New best' : '';
+    this.toastBox.hidden = false;
+    this.shown.toast = true;
+    this.toldAt = now;
+    this.words = toastWords(kind, seconds, isBest);
   }
 
-  /** A level flown from the start: the card put away, and everything written afresh on the next draw. */
+  /** The toast put away and everything written afresh on the next draw, as when the helicopter is put somewhere new. */
   fly(): void {
-    this.card.hidden = true;
-    this.root.classList.remove('ended');
-    this.shown = { goal: '', far: '', clock: '', turn: NaN, loader: -1, loaderWords: '', done: false };
+    this.toastBox.hidden = true;
+    this.words = null;
+    this.toldAt = -Infinity;
+    this.guide = null;
+    this.shown = {
+      mode: this.shown.mode,
+      goal: '',
+      far: -1,
+      clock: -1,
+      turn: NaN,
+      loader: -1,
+      loaderWords: '',
+      toast: false,
+    };
     this.loader.hidden = true;
   }
 }

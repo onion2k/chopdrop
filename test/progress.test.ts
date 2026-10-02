@@ -6,7 +6,6 @@
 import { describe, expect, it } from 'vitest';
 import { KEY, Progress, SAVE, memoryStore } from '../src/progress';
 
-const IDS = ['first-delivery', 'over-the-water', 'over-the-range', 'mountain-drop'];
 const saved = (best: Record<string, unknown>) => memoryStore(JSON.stringify({ best }));
 
 describe('progress', () => {
@@ -14,12 +13,16 @@ describe('progress', () => {
     expect(KEY).toBe('chopdrop-save-v1');
   });
 
-  it('starts with no times kept, the first level open and the rest locked', () => {
+  it('starts with no times kept and a save nothing refused', () => {
     const p = new Progress(memoryStore());
     expect(p.best.size).toBe(0);
-    expect(IDS.map((_, i) => p.standing(IDS, i))).toEqual(['open', 'locked', 'locked', 'locked']);
-    expect(p.pick(IDS)).toBe(0);
     expect(p.refused).toBeNull();
+  });
+
+  it('keeps no notion of which levels are open: every level is open, and nothing is worked out from the times', () => {
+    const p = new Progress(memoryStore());
+    expect('standing' in p).toBe(false);
+    expect('pick' in p).toBe(false);
   });
 
   it('keeps a level done, says when it is the best yet, and only ever lowers it', () => {
@@ -29,19 +32,6 @@ describe('progress', () => {
     expect(p.best.get('first-delivery')).toBe(41.5);
     expect(p.record('first-delivery', 39.25)).toBe(true);
     expect(p.best.get('first-delivery')).toBe(39.25);
-  });
-
-  it('opens a level once the one before it is done, and offers the first open one not yet done', () => {
-    const p = new Progress(saved({ 'first-delivery': 40, 'over-the-water': 70 }));
-    expect(IDS.map((_, i) => p.standing(IDS, i))).toEqual(['done', 'done', 'open', 'locked']);
-    expect(p.pick(IDS)).toBe(2);
-    // a level slotted into the list later, after one that is done, is open by the same rule, and the rest stand
-    const slotted = ['first-delivery', 'ring-trial', 'over-the-water', 'over-the-range'];
-    expect(slotted.map((_, i) => p.standing(slotted, i))).toEqual(['done', 'open', 'done', 'open']);
-    expect(p.pick(slotted)).toBe(1);
-    // and every one done offers the first again
-    for (const id of IDS) p.record(id, 50);
-    expect(p.pick(IDS)).toBe(0);
   });
 
   it('writes what it keeps to its store, and reads it back the same', () => {

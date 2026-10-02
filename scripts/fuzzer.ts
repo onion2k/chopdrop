@@ -5,8 +5,8 @@
  * climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
  * hill, down onto a pad and low over a wood, bowing its trees, onto the
- * pad the parcel is wanted at and waiting there, flying the level again, on
- * to the next, or any other the list of levels lets a player pick, flying
+ * pad the parcel is wanted at and waiting there, down onto a level's start or
+ * through it, being shown the way to one, giving up the level going, flying
  * at a ring from any side and through one in its turn — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
@@ -14,8 +14,8 @@
  * The island is big and tall, so the monkey is put where the action is
  * rather than left to find it: heights are asked for above the ground
  * under it, and the runs start near what they run at. It comes back as a
- * player does, with a save in which the first few levels are done, so the
- * list lets it pick from as many levels as chance gives it.
+ * player does, with a save in which some levels are done, as chance has it,
+ * and starts flying free from home, with nothing going.
  *
  * Only what a player could do. A monkey that did what no player can would
  * find bugs no player will. A new thing a player can do gets an action here.
@@ -24,6 +24,7 @@
  * --seed N` does, and prints what was done before it went wrong.
  */
 import { Game } from '../src/game';
+import type { Step } from '../src/mission';
 import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
@@ -57,9 +58,8 @@ export interface FuzzResult {
 }
 
 /**
- * Play `frames` frames of the game at random from `seed`; from the level named `level`, if given, as a player who has
- * done every level picks it from the list, so a level late in the list, which a player reaches only after the rest,
- * is played as long as the first.
+ * Play `frames` frames of the game at random from `seed`, flying free from home; with the level named `level` begun at
+ * once, if given, so a level a player reaches only after flying to it is played as long as the first.
  */
 export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
   // the monkey's own chance, apart from the game's, so what it decides does not shift what the game does
@@ -78,16 +78,17 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
   });
 
   try {
-    // a player back for another go, with the first few levels done, as many as chance says, none or all: all, where a
-    // level is asked for, so it is open
+    // a player back for another go, with some levels done, any of them as chance says, none or all
     if (level !== undefined && !LEVELS.some((l) => l.id === level)) throw new Error(`there is no level "${level}"`);
-    const chance = Math.floor(random() * (LEVELS.length + 1));
-    const flown = level === undefined ? chance : LEVELS.length;
-    const save = { best: Object.fromEntries(LEVELS.slice(0, flown).map((level, k) => [level.id, 40 + 20 * k])) };
+    const save = {
+      best: Object.fromEntries(LEVELS.flatMap((l, k) => (random() < 0.5 ? [[l.id, 40 + 20 * k]] : []))),
+    };
     const game = new Game({
       random: seeded(seed),
       progress: new Progress(memoryStore(JSON.stringify(save))),
       events: {
+        started: (id) => count(happened, `started ${id}`),
+        abandoned: () => count(happened, 'abandoned'),
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
         passed: () => count(happened, 'passed a ring'),
@@ -97,19 +98,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       },
     });
     const heli = game.helicopter;
-    /** A level picked from the list: the one it offers, flown by Enter as most players do, or else any not locked. */
-    const pick = () => {
-      const ids = game.levels.map((level) => level.id);
-      const open = game.levelList().filter((level) => level.standing !== 'locked');
-      game.play(random() < 0.5 ? ids[game.progress.pick(ids)] : open[Math.floor(random() * open.length)].id);
-      count(happened, `flew ${game.mission.level.id}`);
-    };
-    // the game opens on the list, so the first thing a player does is pick from it
-    if (level === undefined) pick();
-    else {
-      game.play(level);
-      count(happened, `flew ${level}`);
-    }
+    // the game opens flying free, so a level is begun only where one is asked for
+    if (level !== undefined) game.begin(level);
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
     const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
     rig.snap(heli);
@@ -159,11 +149,10 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         );
       });
     /**
-     * Over the pad wanted, down onto it, and waiting there as long as a player does, or not quite; whether a pad is
-     * wanted.
+     * Over the pad `target`, down onto it, and waiting there as long as a player does, or not quite, or for `stay` more
+     * frames for a load that must be waited out; whether there was a pad.
      */
-    const downOnWantedPad = (): boolean => {
-      const target = game.mission.target;
+    const downOnPad = (target: number, stay = 0): boolean => {
       if (target < 0) return false;
       const pad = pads[target];
       const spread = pad.radius * 0.5;
@@ -174,16 +163,17 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         between(-Math.PI, Math.PI),
       );
       controls = { forward: 0, turn: 0, lift: -1 };
-      hold.busy = framesToLand() + Math.floor(between(30, 150));
+      hold.busy = framesToLand() + stay + Math.floor(between(30, 150));
       return true;
     };
+    /** Over the pad wanted, down onto it, and waiting there; whether a pad is wanted. */
+    const downOnWantedPad = (): boolean => downOnPad(game.mission.target);
     /**
-     * Lined up on the ring or the opening wanted, before it on its axis, at its height and a little off its middle, and
-     * flown at it, as a player who has it right does; whether there was one to line up on. From rest it covers 18 in
+     * Lined up on `step` if it is a ring or an opening, before it on its axis, at its height and a little off its middle,
+     * and flown at it, as a player who has it right does; whether it was one to line up on. From rest it covers 18 in
      * a second and a half and 44 in two and a half: through, and on past it.
      */
-    const lineUp = (): boolean => {
-      const step = game.mission.current;
+    const lineUpOn = (step: Step | undefined): boolean => {
       if (step?.kind !== 'ring' && step?.kind !== 'gate') return false;
       const back = between(10, 25);
       const ax = Math.cos(step.yaw),
@@ -203,6 +193,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       hold.at = game.mission.next;
       return true;
     };
+    /** Lined up on the ring or the opening wanted. */
+    const lineUp = (): boolean => lineUpOn(game.mission.current);
     /** Everything a player can make happen, each as often as it is weighted. */
     const actions: { name: string; weight: number; places?: boolean; go: () => void }[] = [
       {
@@ -364,9 +356,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         places: true,
         weight: 2,
         go() {
-          // at one of the level's rings from any side, any height near it and any speed, as a player who has misjudged
-          // one does: knocked off its tube, through it the wrong way, or round it
-          const rings = game.mission.level.steps.filter((step) => step.kind === 'ring');
+          // at one of the rings that are solid (the level going's, and every start) from any side, any height near it and
+          // any speed, as a player who has misjudged one does: knocked off its tube, through it the wrong way, or round it
+          const rings = game.solids.rings;
           if (!rings.length) return;
           const ring = rings[Math.floor(random() * rings.length)];
           const round = between(-Math.PI, Math.PI);
@@ -455,31 +447,38 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         },
       },
       {
-        name: 'fly again',
+        name: 'to a start',
         places: true,
-        weight: 1,
+        weight: 4,
         go() {
-          // the card's button, which is only there once the level is done
-          if (game.mission.done) game.restart();
+          // at a level's start, whether or not one is going, since nothing may begin while one is: down onto a pickup
+          // pad for as long as the load takes, or lined up on the first ring or opening and flown through it
+          // the first of a run goes to the level its seed names, in turn, so that the seeds between them reach every
+          // start; those after are at random
+          const at = timesDone('to a start') === 0 ? seed % LEVELS.length : Math.floor(random() * LEVELS.length);
+          const start = LEVELS[at].steps[0];
+          if (start.kind === 'pickup') downOnPad(start.pad, 90);
+          else {
+            lineUpOn(start);
+            hold.run = random() < 0.5;
+          }
         },
       },
       {
-        name: 'next level',
-        places: true,
+        name: 'show the way',
         weight: 1,
         go() {
-          // the card's way on, there once the level is done and while there is a level after it
-          const after = game.nextLevel;
-          if (game.mission.done && after) game.play(after.id);
+          // the panel's "Show the way", to any level or to none
+          const at = Math.floor(random() * (LEVELS.length + 1));
+          game.guide(at < LEVELS.length ? LEVELS[at].id : null);
         },
       },
       {
-        name: 'pick a level',
-        places: true,
+        name: 'abandon',
         weight: 1,
         go() {
-          // the list, brought up mid-flight or from the card, and a level on it flown from the start
-          pick();
+          // the panel's "Abandon", whether or not a level is going
+          game.abandon();
         },
       },
       {

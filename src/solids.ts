@@ -1,7 +1,7 @@
 /**
  * What the helicopter cannot fly into: the blocks that stand on the island
  * in every level, the bridge's deck and the towers, and the tube of every
- * ring in the level being flown, a torus about its opening. The helicopter is
+ * ring that is drawn, a torus about its opening. The helicopter is
  * a ball for this, the rotor's reach about its middle, which is rough but
  * fair: what a player sees strike a ring or a tower is the rotor. A ball that
  * has run into one is pushed back out to just touching it, and the speed it
@@ -9,8 +9,8 @@
  * and is never left inside. Without it a ring or a tower would be a picture
  * the helicopter flew through.
  *
- * The blocks are handed in once and kept; the rings are the level's, set when
- * a level is flown, into room made once for as many as a level may have.
+ * The blocks are handed in once and kept; the rings are the ones drawn, set
+ * when a level begins or ends, into room made once for as many as there may be.
  */
 import { RING, RINGS, type Ring } from './mission';
 
@@ -54,8 +54,8 @@ export interface Size {
 }
 
 export class Solids {
-  /** The rings, as many as there are of them and room for no more, written over when a level is flown. */
-  private readonly rings: Ring[] = [];
+  /** The rings, as many as there are of them and room for no more, written over when a level begins or ends. */
+  private readonly held: Ring[] = [];
   /** Whether the last body pushed touched anything: for the fuzzer to count the knocks it has made. */
   touched = false;
 
@@ -67,15 +67,20 @@ export class Solids {
 
   /** How many rings there are. */
   get count(): number {
-    return this.rings.length;
+    return this.held.length;
   }
 
-  /** The rings of the level being flown; more than a level may have is refused. The blocks stay. */
+  /** The rings that are solid now, in the order they were set: what the pilot goes round. Not to be written to. */
+  get rings(): readonly Ring[] {
+    return this.held;
+  }
+
+  /** The rings that are solid now, those of the level going and every start ring; more than the room made is refused. The blocks stay. */
   set(rings: readonly Ring[]): void {
     if (rings.length > RINGS.capacity)
       throw new Error(`${rings.length} rings, and there is room for ${RINGS.capacity}`);
-    this.rings.length = 0;
-    for (const ring of rings) this.rings.push(ring);
+    this.held.length = 0;
+    for (const ring of rings) this.held.push(ring);
   }
 
   /**
@@ -84,7 +89,7 @@ export class Solids {
    */
   collide(body: Body): boolean {
     let touched = false;
-    for (const ring of this.rings) touched = this.knock(body, this.fromTube(ring, body)) || touched;
+    for (const ring of this.held) touched = this.knock(body, this.fromTube(ring, body)) || touched;
     for (const block of this.blocks) touched = this.knock(body, this.fromBlock(block, body)) || touched;
     this.touched = touched;
     return touched;
@@ -97,9 +102,9 @@ export class Solids {
   inside(body: Readonly<Body>): { depth: number; what: string } {
     let depth = 0,
       what = '';
-    this.rings.forEach((ring, k) => {
+    this.held.forEach((ring, k) => {
       const deep = -this.fromTube(ring, body).gap;
-      if (deep > depth) [depth, what] = [deep, `ring ${k + 1} of ${this.rings.length}`];
+      if (deep > depth) [depth, what] = [deep, `ring ${k + 1} of ${this.held.length}`];
     });
     for (const block of this.blocks) {
       const deep = -this.fromBlock(block, body).gap;

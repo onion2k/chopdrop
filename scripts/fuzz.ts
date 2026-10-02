@@ -5,7 +5,7 @@
  *   npm run fuzz -- --seeds 1-50 --frames 10000
  *   npm run fuzz -- --seed 17            one seed again, with what was done before it went wrong
  *   npm run fuzz -- --level under-and-between
- *                                        every seed starting on one level, picked as by a player who has done them all
+ *                                        every seed with one level begun at once, in place of flying free from home
  *
  * Fails, and says how to play the failure again, if any seed breaks a rule
  * or throws. Says how much of each thing was done and happened, so a monkey

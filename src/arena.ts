@@ -349,21 +349,20 @@ function delivery(id: string, name: string, pickup: number, drop: number): Level
 }
 
 /**
- * A level that is a run of rings to fly through, from the pad `start`, whose middle is at `from`: each ring at its
- * middle `[x, y, z]`, an `opening` wide, facing the way from the ring before it, and the first the way from the pad,
- * so that it is flown straight into. `from` is said here so that the levels can be read without building the island;
- * a test holds it to the pad.
+ * A level that is a run of rings to fly through, the first of them where it begins: each ring at its middle
+ * `[x, y, z]`, an `opening` wide, facing the way from the ring before it, and the first the way from the point `from`,
+ * a pad beside it, so that it is flown straight into. `from` is said here so that the levels can be read without
+ * building the island; a test holds it to the pad.
  */
 function trial(
   id: string,
   name: string,
-  start: number,
   from: readonly [number, number],
   opening: number,
   middles: readonly (readonly [number, number, number])[],
 ): Level {
   const steps = middles.map((middle, k) => ringFrom(k ? middles[k - 1] : from, middle, opening));
-  return { id, name, kind: 'rings', start, steps };
+  return { id, name, kind: 'rings', steps };
 }
 
 /** A ring of `opening` with its middle at [x, y, z], facing the way from `from`, so that it is flown straight into. */
@@ -389,6 +388,8 @@ const BETWEEN_THE_TOWERS: Gate = (() => {
     width: Math.hypot(west.x - east.x, west.y - east.y) - west.width,
     height: top - ground,
     label: 'between the towers',
+    // a flag on each tower's top middle, since the course begins between them
+    flags: [west, east].map((tower) => ({ x: tower.x, y: tower.y, z: tower.z + tower.height })),
   };
 })();
 
@@ -413,7 +414,7 @@ const UNDER_THE_BRIDGE: Gate = (() => {
 })();
 
 /**
- * The course: from the shoulder pad between the towers, up the river into the gorge and under the bridge, out past
+ * The course: begun by flying between the towers, then up the river into the gorge and under the bridge, out past
  * the spring and round through three rings of 8 over the eastern hills, and back down onto the shoulder pad. The rings
  * were found by the script that found the trials', to their rules, clear of the towers and the bridge.
  */
@@ -430,30 +431,31 @@ function course(): Level {
     id: 'under-and-between',
     name: 'Under and between',
     kind: 'course',
-    start: 6,
     steps: [BETWEEN_THE_TOWERS, UNDER_THE_BRIDGE, ...rings, { kind: 'land', pad: 6 }],
   };
 }
 
 /**
- * The levels, in order, each pad held by a test to what it is. The deliveries are flown from home: the first a
- * short one with a climb at the end, from the meadow pad 187 inland of home to the hilltop pad 187 beyond it; then 646
- * from the river mouth to the lakeside pad, across a lake; 501 from the northern meadow pad over the range, its peaks
- * past 140, to the beach; and 392 from the lakeside pad up a river valley to the shoulder pad, 79 up the mountain.
+ * The levels, in order, each pad held by a test to what it is. None is flown from a place of its own: a level begins
+ * where its first step is. The deliveries begin on their pickup pads: the first a short one with a climb at the end,
+ * from the meadow pad 187 inland of home to the hilltop pad 187 beyond it; then 646 from the river mouth to the
+ * lakeside pad, across a lake; 501 from the northern meadow pad over the range, its peaks past 140, to the beach; and
+ * 392 from the lakeside pad up a river valley to the shoulder pad, 79 up the mountain.
  *
- * The ring trials are flown from a pad beside their course. The first, from the lakeside pad, is six rings of 10 in a
- * circuit of 365 over the meadow, west and round the meadow pad and back east. The second, from that meadow pad, is
- * nine rings of 8 up the river that falls from the gorge, 454 of them, climbing from 37 up to 107 and turning with
- * the water. They were found by a script that held every ring clear of the trees and 8 over the ground under it, and
- * every run between rings 10 over the ground and the treetops; the tests hold them to it still.
+ * The ring trials begin at their first ring, which is drawn as a start. The first, with its ring facing from the
+ * lakeside pad, is six rings of 10 in a circuit of 365 over the meadow, west and round the meadow pad and back east.
+ * The second, with its ring facing from that meadow pad, is nine rings of 8 up the river that falls from the gorge, 454
+ * of them, climbing from 37 up to 107 and turning with the water. They were found by a script that held every ring
+ * clear of the trees and 8 over the ground under it, and every run between rings 10 over the ground and the
+ * treetops; the tests hold them to it still.
  *
- * The course, last for now, is flown from the shoulder pad and ends on it: between the towers, under the bridge and
- * through three rings, as `course` says, its clock stopping as the skids touch. It opens by the same rule as the rest,
- * the level before it done, so it goes eighth when the search is slotted in before it.
+ * The course, last for now, begins by flying between the towers and ends on the shoulder pad: between the towers,
+ * under the bridge and through three rings, as `course` says, its clock stopping as the skids touch. Nothing is
+ * locked, so it is open from the first.
  */
 export const LEVELS: readonly Level[] = [
   delivery('first-delivery', 'First delivery', 4, 1),
-  trial('ring-trial', 'Ring trial', 2, [201, -15], 10, [
+  trial('ring-trial', 'Ring trial', [201, -15], 10, [
     [140, -10, 42],
     [95, -40, 43.5],
     [40, -20, 40],
@@ -463,7 +465,7 @@ export const LEVELS: readonly Level[] = [
   ]),
   delivery('over-the-water', 'Over the water', 3, 2),
   delivery('over-the-range', 'Over the range', 7, 5),
-  trial('up-the-valley', 'Up the valley', 7, [69, 69], 8, [
+  trial('up-the-valley', 'Up the valley', [69, 69], 8, [
     [39, 41, 37.5],
     [-23, 47, 43],
     [-55, 80, 42.5],

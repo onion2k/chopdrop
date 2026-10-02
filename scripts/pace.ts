@@ -1,7 +1,9 @@
 /**
  * How the game paces, played by the autopilot: how many game minutes it
- * takes to fly each level to its end, over a few seeds, each held to a
- * baseline both ways. Quicker is as much a change as slower: a parcel that
+ * takes to fly each level to its end, from home, told the level by name and
+ * flying to its start first, over a few seeds, each held to a baseline both
+ * ways. The figure is the level's own clock, from its first step done to its
+ * end, and not the flight to its start. Quicker is as much a change as slower: a parcel that
  * loads itself is a bug the same as one that never will, and a level made
  * shorter than it was is a level changed.
  *
@@ -30,20 +32,23 @@ export const TOLERANCE = 0.02;
 export interface PaceRun {
   level: string;
   seed: number;
-  /** Game minutes to fly the level to its end, or the cap if it never got there. */
+  /** Game minutes on the level's own clock, or the cap if it never got there. */
   minutes: number;
   finished: boolean;
 }
 
-/** One game from a seed, the level named `level` flown until it is done or the time is up. */
+/**
+ * One game from a seed, from home, the autopilot told the level named `level`: it flies to the level's start and does it,
+ * until the game says that level is done or the time is up. The minutes are the level's own clock.
+ */
 export function paceRun(level: string, seed: number, capMinutes = CHECK.capMinutes): PaceRun {
   const game = new Game({ random: seeded(seed) });
-  game.play(level);
   const pilot = new Autopilot(game);
+  pilot.wanted = level;
   const frames = capMinutes * 3600;
   for (let f = 0; f < frames; f++) {
     pilot.step(DT);
-    if (game.mission.done) return { level, seed, minutes: round(game.t / 60), finished: true };
+    if (game.last?.id === level) return { level, seed, minutes: round(game.last.seconds / 60), finished: true };
   }
   return { level, seed, minutes: capMinutes, finished: false };
 }

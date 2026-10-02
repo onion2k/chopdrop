@@ -1,12 +1,14 @@
 /**
  * A level as it is flown: a list of steps done in order, and the time from
- * the first lift-off to the last step kept. A parcel is picked up by landing
- * on its pad and staying while it is loaded, and set down on another the same
- * way; a ring or an opening is passed by flying the helicopter's middle
- * through it the way it faces, in its turn; and a landing is done as the
- * skids touch the pad. What happens is told through the events it
- * is handed; how it is drawn and put into words is the page's. Without it
- * there is nothing on the island to do.
+ * the level's beginning to the last step kept. A level begins with its first
+ * step already done, since doing that step is what began it; the rest are
+ * done here. A parcel is picked up by landing on its pad and staying while it
+ * is loaded, and set down on another the same way; a ring or an opening is
+ * passed by flying the helicopter's middle through it the way it faces, in
+ * its turn; and a landing is done as the skids touch the pad. With nothing
+ * going there is nothing to do, and the mission reads as nothing. What
+ * happens is told through the events it is handed; how it is drawn and put
+ * into words is the page's. Without it there is nothing on the island to do.
  */
 import { HELICOPTER } from './helicopter';
 import type { Pad } from './island';
@@ -48,7 +50,9 @@ export interface Ring {
 /**
  * An opening to fly through, under something or between things, square to the ground with its middle at (x, y, z) and
  * facing `yaw`, `width` across and `height` from its foot to its top; `label` is where it is, as the words say it:
- * "under the bridge".
+ * "under the bridge". `flags`, where there are any, are where the chequered flags that mark it as a start stand, each at
+ * the foot of its pole: the opening is a start only if it is a level's first step, and it is the level's content that
+ * says where its flags go, since an opening between two towers has no top of its own to stand one on.
  */
 export interface Gate {
   kind: 'gate';
@@ -59,6 +63,7 @@ export interface Gate {
   width: number;
   height: number;
   label: string;
+  flags?: readonly { x: number; y: number; z: number }[];
 }
 
 /**
@@ -79,9 +84,8 @@ export interface Level {
   id: string;
   name: string;
   kind: LevelKind;
+  /** What it asks for, in order. Its first step is where it begins: the helicopter doing that step is what starts it. */
   steps: readonly Step[];
-  /** The pad it is flown from, by its place in the island's list: home, unless it names another beside its course. */
-  start?: number;
 }
 
 /** A point in the world. */
@@ -92,11 +96,13 @@ export interface Point3 {
 }
 
 /**
- * What a mission tells as it happens: a parcel loaded on a pad, one delivered to a pad, a ring passed (which of how
- * many, counting from one), an opening flown through (by where it is), a pad landed on, and the level done, with its
- * time.
+ * What a mission tells as it happens: a level begun or abandoned, by its name; a parcel loaded on a pad, one
+ * delivered to a pad, a ring passed (which of how many, counting from one), an opening flown through (by where it is),
+ * a pad landed on, and the level done, with its time.
  */
 export interface MissionEvents {
+  started?(id: string): void;
+  abandoned?(id: string): void;
   loaded?(pad: number): void;
   delivered?(pad: number): void;
   passed?(ring: number, of: number): void;
@@ -146,14 +152,14 @@ export function crossed(opening: Ring | Gate, from: Readonly<Point3>, to: Readon
 }
 
 export class Mission {
-  /** The step being done, by its place in the level's list; the list's length once the level is done. */
+  /** The step being done, by its place in the level's list; 0 with nothing going, and never 0 with a level going. */
   next = 0;
   /** How long the parcel has been loading or unloading: the seconds the helicopter has been landed on the pad it is wanted on, which start again if it lifts. */
   loading = 0;
-  /** The seconds since the helicopter first lifted off, until the last step is done; then the time it took. */
+  /** The seconds since the level began, while it is going; 0 with nothing going. */
   time = 0;
-  /** Whether the helicopter has lifted off since the start: the clock waits for it. */
-  started = false;
+  /** The level going, or null with nothing going. */
+  private flying: Level | null = null;
   /** Where the step being done wants the helicopter, written in place by `goal`, so reading it each frame makes nothing. */
   private readonly wanted: Point3 = { x: 0, y: 0, z: 0 };
   /** Where the helicopter's middle was at the last step, which a ring is passed by moving from; none until it has been seen. */
@@ -164,26 +170,20 @@ export class Mission {
 
   constructor(
     readonly pads: readonly Pad[],
-    private flying: Level,
     private readonly events: MissionEvents = {},
   ) {}
 
-  /** The level being flown. */
-  get level(): Level {
+  /** The level going, or null when nothing is. */
+  get level(): Level | null {
     return this.flying;
   }
 
-  /** Whether every step is done. */
-  get done(): boolean {
-    return this.next >= this.flying.steps.length;
-  }
-
-  /** The step being done, or undefined once they all are. */
+  /** The step being done, or undefined with nothing going. */
   get current(): Step | undefined {
-    return this.flying.steps[this.next];
+    return this.flying?.steps[this.next];
   }
 
-  /** The pad the helicopter is wanted on now, or −1 for a ring or an opening, and once the level is done. */
+  /** The pad the helicopter is wanted on now, or −1 for a ring or an opening, and with nothing going. */
   get target(): number {
     const s = this.current;
     return s && s.kind !== 'ring' && s.kind !== 'gate' ? s.pad : -1;
@@ -191,7 +191,7 @@ export class Mission {
 
   /**
    * Where the step being done wants the helicopter, for the arrow and the pilot: the top of its pad, or the middle of
-   * its ring or its opening; null once all are done.
+   * its ring or its opening; null with nothing going.
    */
   get goal(): Readonly<Point3> | null {
     const s = this.current;
@@ -203,18 +203,19 @@ export class Mission {
     return this.wanted;
   }
 
-  /** Which ring is wanted, counting from one; 0 where the step is not a ring. */
+  /** Which ring is wanted, counting from one; 0 where the step is not a ring, and with nothing going. */
   get ringNumber(): number {
     return this.current?.kind === 'ring' ? this.ringsTo(this.next) : 0;
   }
 
-  /** How many rings the level has. */
+  /** How many rings the level going has; 0 with nothing going. */
   get ringCount(): number {
-    return this.ringsTo(this.flying.steps.length - 1);
+    return this.flying ? this.ringsTo(this.flying.steps.length - 1) : 0;
   }
 
   /** Whether a parcel is aboard: one picked up and not yet set down. */
   get carrying(): boolean {
+    if (!this.flying) return false;
     let aboard = 0;
     for (let k = 0; k < this.next; k++) {
       const kind = this.flying.steps[k].kind;
@@ -226,9 +227,10 @@ export class Mission {
 
   /**
    * The pad a parcel stands on, as it is drawn: the one waiting to be picked up next, or else the last one delivered;
-   * −1 where there is none.
+   * −1 where there is none, and with nothing going.
    */
   get waiting(): number {
+    if (!this.flying) return -1;
     const { steps } = this.flying;
     if (this.current?.kind === 'pickup') return this.current.pad;
     for (let k = this.next - 1; k >= 0; k--) {
@@ -238,12 +240,36 @@ export class Mission {
     return -1;
   }
 
-  /** One step of `dt` seconds, with the helicopter where it is now. */
+  /**
+   * `level` made the one going, its first step already done: the clock and the loading at nothing, and told started
+   * and then that first step's own event. A level already going is abandoned, and told, first. One whose only step is
+   * its first is finished at once.
+   */
+  begin(level: Level): void {
+    this.abandon();
+    this.flying = level;
+    this.next = 1;
+    this.loading = 0;
+    this.time = 0;
+    this.seen = false;
+    this.events.started?.(level.id);
+    this.tell(level.steps[0]);
+    if (this.next >= level.steps.length) this.finish();
+  }
+
+  /** Nothing going: told, if a level was. The parcel aboard is put back by there being no level for it to be aboard in. */
+  abandon(): void {
+    const level = this.flying;
+    if (!level) return;
+    this.clear();
+    this.events.abandoned?.(level.id);
+  }
+
+  /** One step of `dt` seconds, with the helicopter where it is now; nothing to do with nothing going. */
   step(dt: number, h: Readonly<Lander>): void {
     const s = this.current;
     if (!s) return;
-    if (!h.landed) this.started = true;
-    if (this.started) this.time += dt;
+    this.time += dt;
     if (s.kind === 'ring' || s.kind === 'gate') {
       if (this.through(s, h)) this.stepDone(s);
       return;
@@ -264,19 +290,41 @@ export class Mission {
     this.stepDone(s);
   }
 
-  /** The step `s` done: the next wanted, and told. */
+  /** The step `s` done: the next wanted, and told; and if it was the last, the level finished. */
   private stepDone(s: Step): void {
     this.next++;
+    this.tell(s);
+    if (this.next >= this.flying!.steps.length) this.finish();
+  }
+
+  /** The step `s` told as done, the ring counted as the one just passed. */
+  private tell(s: Step): void {
     if (s.kind === 'pickup') this.events.loaded?.(s.pad);
     else if (s.kind === 'drop') this.events.delivered?.(s.pad);
     else if (s.kind === 'land') this.events.landed?.(s.pad);
     else if (s.kind === 'gate') this.events.through?.(s.label);
     else this.events.passed?.(this.ringsTo(this.next - 1), this.ringCount);
-    if (this.done) this.events.finished?.(this.time);
+  }
+
+  /** The last step done: the time told while the level is still the one going, so the end can ask which it was, and then nothing going. */
+  private finish(): void {
+    const seconds = this.time;
+    this.events.finished?.(seconds);
+    this.clear();
+  }
+
+  /** Nothing going, and nothing left over of the level that was. */
+  private clear(): void {
+    this.flying = null;
+    this.next = 0;
+    this.loading = 0;
+    this.time = 0;
+    this.seen = false;
   }
 
   /** How many of the level's steps up to and including the one at `k` are rings. */
   private ringsTo(k: number): number {
+    if (!this.flying) return 0;
     const { steps } = this.flying;
     let n = 0;
     for (let j = 0; j <= k && j < steps.length; j++) if (steps[j].kind === 'ring') n++;
@@ -304,20 +352,5 @@ export class Mission {
     this.was.y = h.y;
     this.was.z = h.z + HELICOPTER.size.middle;
     this.seen = true;
-  }
-
-  /** `level` flown from the start. */
-  play(level: Level): void {
-    this.flying = level;
-    this.reset();
-  }
-
-  /** Back to the start: the first step waiting, nothing loading and the clock waiting. */
-  reset(): void {
-    this.next = 0;
-    this.loading = 0;
-    this.time = 0;
-    this.started = false;
-    this.seen = false;
   }
 }

@@ -4,7 +4,8 @@
  * page — checked for the things that would make it plainly broken: an
  * error, a black screen, a clock the tests cannot stop and step, keys that
  * do not fly the helicopter, a camera that loses it. Each thing a player can
- * do or keep gets a test here as it is built.
+ * do or keep gets a test here as it is built. The game opens flying free, with nothing going: the levels, the toast and
+ * the panel are `free.spec.ts`'s and `panel.spec.ts`'s.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
@@ -226,82 +227,6 @@ test('the trees bow as it comes down into a wood, stand once it lands, and bow a
   await page.keyboard.up('Space');
   expect((await heli()).height).toBeGreaterThan(DOWNWASH.depth);
   expect(left, 'every tree stood up again and let go').toBe(0);
-  expect(problems).toEqual([]);
-});
-
-test('the first level: picked up and delivered by key, and flown again by the button and by Enter', async ({
-  page,
-}) => {
-  // set over each pad by the test, and landed on it by Shift and the waiting a player does
-  const problems = watch(page);
-  await start(page, { seed: 11, paused: true });
-  const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
-  const state = () => page.evaluate(() => window.game!.state());
-  const pads = await page.evaluate(() => window.game!.content().pads);
-  const [pickup, drop] = (await state()).mission.steps.map((step) => ('pad' in step ? step.pad : -1));
-  await step(1);
-  await expect(page.locator('#hud .goal')).toHaveText('Pick up the parcel at the meadow pad');
-  await expect(page.locator('#hud .far')).toHaveText(/^\d+ m$/);
-  /** Over a pad, ten up, and down onto it with Shift held until the skids touch. */
-  const landOn = async (pad: number) => {
-    await page.evaluate((p) => window.game!.teleport(p.x, p.y, 10, 0), pads[pad]);
-    await page.keyboard.down('Shift');
-    for (let f = 0; f < 300 && !(await state()).helicopter.landed; f += 10) await step(10);
-    await page.keyboard.up('Shift');
-    expect((await state()).helicopter.landed, `landed on pad ${pad}`).toBe(true);
-  };
-
-  // the right pad, waited on: loaded, and told
-  await landOn(pickup);
-  await step(100);
-  let s = await state();
-  expect(s.mission.carrying).toBe(true);
-  expect(await page.evaluate(() => window.game!.events())).toEqual([`loaded ${pickup}`]);
-  await expect(page.locator('#hud .goal')).toHaveText('Deliver it to the hilltop pad');
-
-  // lifted off before the loading is done: it empties, and the wait begins again
-  await landOn(drop);
-  await step(45);
-  expect((await state()).mission.loading).toBeGreaterThan(0.5);
-  await expect(page.locator('#hud .loader')).toBeVisible();
-  await page.keyboard.down('Space');
-  await step(20);
-  await page.keyboard.up('Space');
-  expect((await state()).mission.loading).toBe(0);
-  await expect(page.locator('#hud .loader')).toBeHidden();
-  await page.keyboard.down('Shift');
-  for (let f = 0; f < 300 && !(await state()).helicopter.landed; f += 10) await step(10);
-  await page.keyboard.up('Shift');
-  await step(100);
-  s = await state();
-  expect(s.mission.done).toBe(true);
-  const told = await page.evaluate(() => window.game!.events());
-  expect(told).toHaveLength(2);
-  expect(told[0]).toBe(`delivered ${drop}`);
-  expect(told[1]).toMatch(/^finished first-delivery \d+\.\d\d best$/);
-  await expect(page.locator('#hud .card h2')).toHaveText('Delivered!');
-  await expect(page.locator('#hud .time')).toHaveText(/^in \d+:\d\d$/);
-
-  // flown again by the button: home, landed, the parcel waiting
-  await page.locator('#hud .card .again').click();
-  await step(1);
-  s = await state();
-  expect(s.mission).toMatchObject({ next: 0, loading: 0, time: 0, started: false });
-  expect(s.helicopter.landed).toBe(true);
-  expect([s.helicopter.x, s.helicopter.y]).toEqual([pads[0].x, pads[0].y]);
-  await expect(page.locator('#hud .done')).toBeHidden();
-  await expect(page.locator('#hud .goal')).toHaveText('Pick up the parcel at the meadow pad');
-
-  // and again, ended by Enter
-  await landOn(pickup);
-  await step(100);
-  await landOn(drop);
-  await step(100);
-  await expect(page.locator('#hud .done')).toBeVisible();
-  await page.keyboard.press('Enter');
-  await step(1);
-  expect((await state()).mission.next).toBe(0);
-  await expect(page.locator('#hud .done')).toBeHidden();
   expect(problems).toEqual([]);
 });
 
@@ -531,36 +456,6 @@ for (const [name, viewport] of [
       expect((await controls()).forward).toBe(1);
       await page.evaluate(() => dispatchEvent(new Event('blur')));
       expect((await controls()).forward, 'let go when the page loses its focus').toBe(0);
-      expect(problems).toEqual([]);
-    });
-
-    test('the first level delivered by letting the lever sink onto each pad, and flown again by a tap', async ({
-      page,
-    }) => {
-      const problems = watch(page);
-      await start(page, { seed: 11, paused: true });
-      const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
-      const state = () => page.evaluate(() => window.game!.state());
-      const pads = await page.evaluate(() => window.game!.content().pads);
-      const [pickup, drop] = (await state()).mission.steps.map((step) => ('pad' in step ? step.pad : -1));
-      // the lever starts at the sink: set over a pad, the helicopter settles onto it and the parcel goes on and off
-      for (const pad of [pickup, drop]) {
-        await page.evaluate((p) => window.game!.teleport(p.x, p.y, 4, 0), pads[pad]);
-        await step(240);
-      }
-      expect((await state()).mission.done).toBe(true);
-      const button = page.locator('#hud .card .again');
-      await expect(button).toBeVisible();
-      const box = (await button.boundingBox())!;
-      expect(box.height, 'a thumb-sized button').toBeGreaterThanOrEqual(44);
-      expect(box.x).toBeGreaterThanOrEqual(0);
-      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
-      const hand = await fingers(page);
-      await hand.down(9, box.x + box.width / 2, box.y + box.height / 2);
-      await hand.up(9);
-      await step(1);
-      expect((await state()).mission.next).toBe(0);
-      await expect(page.locator('#hud .done')).toBeHidden();
       expect(problems).toEqual([]);
     });
 

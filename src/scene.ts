@@ -14,12 +14,12 @@
 import { MATERIAL_STRIDE, type GameGroup } from 'artshape-render/game/renderer';
 import type { Box } from 'artshape-render/game/shadows';
 import type { Mesh } from 'artshape-render/mesh/types';
-import { ISLAND, TREE_KINDS } from './arena';
+import { ISLAND, LEVELS, TREE_KINDS } from './arena';
 import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
-import { RING, RINGS, type Step } from './mission';
+import { RING, RINGS, type Level, type Ring } from './mission';
 import type { Block } from './solids';
 import {
   beacon,
@@ -185,6 +185,19 @@ const DECK = { slab: 1.5, rail: 0.3 };
 const BAND = 7;
 
 /**
+ * The start flags, chosen from a mock: a dark pole 0.3 square and 6 tall, and a cloth of 3 by 2 squares of 1.1, chequered
+ * black and white, hung across the way the opening faces, `start` out from the pole to its first square's middle. The
+ * flag marks the start of a level, which is where its first step is done: it stands on the top of a start ring, a ring
+ * tube's width clear of it, and on whatever a gate's content says.
+ */
+const FLAG_DARK_PAINT: Paint = { albedo: seen(0x22222a), roughness: 0.7 };
+const FLAG_LIGHT_PAINT: Paint = { albedo: seen(0xf5f3e8), roughness: 0.7 };
+const FLAG = { pole: 0.3, height: 6, square: 1.1, columns: 3, rows: 2, thin: 0.12, start: 0.6 };
+/** How many boxes a flag is made of, in each colour: the pole and the black squares, and the white squares. */
+const FLAG_DARK = 1 + Math.floor((FLAG.columns * FLAG.rows) / 2);
+const FLAG_LIGHT = Math.ceil((FLAG.columns * FLAG.rows) / 2);
+
+/**
  * The beacon: how wide and tall it stands, how far above the pad it starts so it never stands through the helicopter
  * on the pad, and how near the helicopter must come for it to go out, its work done. A crate on a pad sits this far
  * from the pad's middle, as a share of its radius, past the ends of the H and inside the painted ring.
@@ -193,19 +206,33 @@ const BEACON = { width: 0.9, height: 140, above: 20, near: 40 };
 const CRATE_OUT = 0.65;
 
 /**
- * Where the level has got to, as the scene draws it: whether the parcel is aboard, the pad it stands on if it is not
- * (−1 for none), and the pad wanted now (−1 once the level is done).
+ * What is going, as the scene draws it: the level, or null with nothing going, the step wanted, whether the parcel is
+ * aboard, the pad it stands on if it is not (−1 for none), and the pad wanted now (−1 for none, and once the level is
+ * done). A `Mission` is one.
  */
-export interface ParcelPose {
+export interface Going {
+  level: Level | null;
+  next: number;
   carrying: boolean;
   waiting: number;
   target: number;
 }
 
-/** Where a level of rings has got to, as the scene draws them: its steps, and the one wanted (their number once done). */
-export interface RingsPose {
-  level: { steps: readonly Step[] };
-  next: number;
+/** Where a flag's pole stands, and the way its opening faces. */
+interface FlagSpot {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+}
+
+/** The flags that mark the start of `level`, where its first step is a ring or an opening: none for a delivery. */
+export function startFlags(level: Level): FlagSpot[] {
+  const first = level.steps[0];
+  if (first.kind === 'ring')
+    return [{ x: first.x, y: first.y, z: first.z + first.opening + 2 * RING.tube, yaw: first.yaw }];
+  if (first.kind === 'gate') return (first.flags ?? []).map(({ x, y, z }) => ({ x, y, z, yaw: first.yaw }));
+  return [];
 }
 
 /** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
@@ -515,15 +542,39 @@ export class Scene {
   private leaning = new Int32Array(0);
   private leaned = 0;
   private moving = new Uint8Array(0);
-  /** The pads, which the parcel and the beacon stand on, and where in `pools` the parcel's groups start. */
+  /** The pads, which the crates and the beacon stand on, and where in `pools` the parcel's groups start. */
   private islandPads: readonly Pad[] = [];
   private parcelAt = 0;
+  /** The levels that begin with a pickup, each with the pad its crate waits on: a crate each in the pool, after the one carried. Built once. */
+  private readonly crates: { level: Level; pad: number }[] = [];
+  /** What the resting crates were last written for, so they are written only when what is going changes. */
+  private cratesFor: Level | null | undefined;
   /** Where the ring groups are among the pools, and what they were last written for, so they are written only on a change. */
   private ringsAt = -1;
-  private ringsFor: { steps: readonly Step[] } | null = null;
+  private ringsFor: Level | null | undefined;
   private ringsNext = -1;
+  /** The levels that begin at a ring: every other one's start is drawn while one goes. Built once. */
+  private readonly startRings: { level: Level; ring: Ring }[] = [];
+  /** Where the flag groups are among the pools, what each level's flags are, and what the groups were last written for. */
+  private flagsAt = -1;
+  private readonly flags: { level: Level; spots: FlagSpot[] }[] = [];
+  private flagsFor: Level | null | undefined;
   /** One ring, its opening the one most levels have; a ring of another opening is drawn at its size by its placing. */
   private readonly ringMesh = ring(RING_DRAWN + RING.tube, RING.tube);
+
+  /**
+   * The scene of `levels`: which of them have a crate to wait on a pad, a ring to be drawn as a start and flags to mark
+   * it, worked out once here so that no frame works it out again. The arena's unless told otherwise.
+   */
+  constructor(levels: readonly Level[] = LEVELS) {
+    for (const level of levels) {
+      const first = level.steps[0];
+      if (first.kind === 'pickup') this.crates.push({ level, pad: first.pad });
+      else if (first.kind === 'ring') this.startRings.push({ level, ring: first });
+      const spots = startFlags(level);
+      if (spots.length > 0) this.flags.push({ level, spots });
+    }
+  }
 
   /**
    * The box the sun's shadow is fitted to, which the renderer holds and `write` moves: a stretch of the island
@@ -664,17 +715,29 @@ export class Scene {
     this.islandPads = [];
     if (island) {
       this.trees(island, add);
-      // the parcel and the beacon, last: one placement each, written every frame
+      // the crates, last but for the rings and the flags: a placement for the parcel of the level going, and one for each
+      // level that begins with a pickup, waiting on its pad; and the beacon, one placement, all written every frame
       this.parcelAt = this.pools.length;
       const { wood, straps } = crate();
-      add('crate', wood, CRATE_PAINT);
-      add('crate straps', straps, STRAP_PAINT);
+      const places = 1 + this.crates.length;
+      add('crate', wood, CRATE_PAINT, new Float32Array(places * 16), places);
+      add('crate straps', straps, STRAP_PAINT, new Float32Array(places * 16), places);
       add('beacon', beacon(BEACON.width, BEACON.height), BEACON_PAINT);
       this.islandPads = island.pads;
+      this.cratesFor = undefined;
       // the rings, one lit and room for every other a level may have, written only when the ring wanted changes
       this.ringsAt = this.pools.length;
+      this.ringsFor = undefined;
+      this.ringsNext = -1;
       add('rings', this.ringMesh, RING_PAINT, new Float32Array(RINGS.capacity * 16), RINGS.capacity);
       add('ring next', this.ringMesh, RING_NEXT_PAINT);
+      // the start flags, room for every one there is, written only when what is going changes
+      this.flagsAt = this.pools.length;
+      this.flagsFor = undefined;
+      const spots = this.flags.reduce((n, f) => n + f.spots.length, 0);
+      const unit = box(1, 1, 1);
+      add('flags dark', unit, FLAG_DARK_PAINT, new Float32Array(spots * FLAG_DARK * 16), spots * FLAG_DARK);
+      add('flags light', unit, FLAG_LIGHT_PAINT, new Float32Array(spots * FLAG_LIGHT * 16), spots * FLAG_LIGHT);
     }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
@@ -716,9 +779,10 @@ export class Scene {
 
   /**
    * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
-   * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again.
+   * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again. Given what is
+   * going, which may be nothing, the crates, the beacon, the rings and the flags are written as it says.
    */
-  write(pose: HelicopterPose, sway?: Sway, parcel?: ParcelPose, rings?: RingsPose): void {
+  write(pose: HelicopterPose, sway?: Sway, going?: Going): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
     this.changed.fill(0, HELICOPTER_GROUPS);
@@ -730,8 +794,11 @@ export class Scene {
     dark.set(body);
     placePart(main, 0, body, 0, 0, 0, mastTop, 'z', pose.rotor);
     placePart(tail, 0, body, 0, tailRotorAt[0], tailRotorAt[1], tailRotorAt[2], 'y', pose.tailRotor);
-    if (parcel && this.islandPads.length > 0) this.parcel(pose, parcel);
-    if (rings && this.ringsAt >= 0) this.rings(rings);
+    if (going && this.islandPads.length > 0) {
+      this.parcel(pose, going);
+      this.rings(going);
+      this.flag(going);
+    }
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -742,19 +809,28 @@ export class Scene {
   }
 
   /**
-   * The parcel where the level has it (on the pad it waits on, under the helicopter, or on the pad it was wanted
-   * on), and the beacon over the pad wanted now, out once the helicopter is near it or the level is done.
+   * The parcel of the level going where it is (on the pad it waits on, under the helicopter, or on the pad it was wanted
+   * on), the crate of every other level that begins with a pickup on its own pad, and the beacon over the pad wanted now,
+   * out once the helicopter is near it, and with nothing going. A level's crate is not drawn on its pickup pad while it
+   * is the one going, and nothing is left on a drop pad once it ends.
    */
-  private parcel(pose: HelicopterPose, parcel: ParcelPose): void {
+  private parcel(pose: HelicopterPose, going: Going): void {
     const at = this.parcelAt;
     const [wood, straps, light] = [this.pools[at], this.pools[at + 1], this.pools[at + 2]];
     // strapped under the belly, between the skids, turning and tilting with the helicopter
-    if (parcel.carrying) placePart(wood, 0, this.pools[0], 0, 0.25, 0, 0.02, 'z', 0);
-    else if (parcel.waiting >= 0) onPadEdge(wood, this.islandPads[parcel.waiting]);
+    if (going.carrying) placePart(wood, 0, this.pools[0], 0, 0.25, 0, 0.02, 'z', 0);
+    else if (going.waiting >= 0) onPadEdge(wood, 0, this.islandPads[going.waiting]);
     // none: drawn at no size at all
     else place(wood, 0, pose.x, pose.y, pose.z, 0, 0);
+    if (going.level !== this.cratesFor) {
+      this.cratesFor = going.level;
+      this.crates.forEach(({ level, pad }, k) => {
+        if (level === going.level) place(wood, 1 + k, pose.x, pose.y, pose.z, 0, 0);
+        else onPadEdge(wood, 1 + k, this.islandPads[pad]);
+      });
+    }
     straps.set(wood);
-    const target = parcel.target >= 0 ? this.islandPads[parcel.target] : undefined;
+    const target = going.target >= 0 ? this.islandPads[going.target] : undefined;
     if (target && Math.hypot(pose.x - target.x, pose.y - target.y) > BEACON.near)
       place(light, 0, target.x, target.y, target.z + BEACON.above, 0);
     // out: drawn at no size at all, so nothing of it is seen
@@ -763,10 +839,11 @@ export class Scene {
   }
 
   /**
-   * The rings of the level where it has got to: the one wanted lit, those after it white, those passed not drawn, and
-   * every slot past the last at no size; written only when the level or the ring wanted has changed.
+   * The rings drawn: those of the level going where it has got to, the one wanted lit and those after it white, those
+   * passed not drawn; and the start ring of every other level, white, as the rings to come are, so a start is never taken
+   * for the one wanted. Every slot past the last at no size; written only when what is going or the ring wanted changes.
    */
-  private rings({ level, next }: RingsPose): void {
+  private rings({ level, next }: Going): void {
     const at = this.ringsAt;
     if (level === this.ringsFor && next === this.ringsNext) return;
     this.ringsFor = level;
@@ -775,12 +852,45 @@ export class Scene {
     later.fill(0);
     lit.fill(0);
     let n = 0;
-    level.steps.forEach((step, k) => {
+    const size = (ring: Ring) => (ring.opening + RING.tube) / (RING_DRAWN + RING.tube);
+    level?.steps.forEach((step, k) => {
       if (step.kind !== 'ring' || k < next) return;
-      const size = (step.opening + RING.tube) / (RING_DRAWN + RING.tube);
-      if (k === next) place(lit, 0, step.x, step.y, step.z, step.yaw, size);
-      else place(later, n++, step.x, step.y, step.z, step.yaw, size);
+      if (k === next) place(lit, 0, step.x, step.y, step.z, step.yaw, size(step));
+      else place(later, n++, step.x, step.y, step.z, step.yaw, size(step));
     });
+    for (const start of this.startRings)
+      if (start.level !== level)
+        place(later, n++, start.ring.x, start.ring.y, start.ring.z, start.ring.yaw, size(start.ring));
+    this.changed[at] = this.changed[at + 1] = 1;
+  }
+
+  /**
+   * The start flags: a pole and a chequered cloth at each start there is, except those of the level going, whose start is
+   * done. Written only when what is going changes.
+   */
+  private flag({ level }: Going): void {
+    const at = this.flagsAt;
+    if (level === this.flagsFor) return;
+    this.flagsFor = level;
+    const [dark, light] = [this.pools[at], this.pools[at + 1]];
+    dark.fill(0);
+    light.fill(0);
+    let [d, l] = [0, 0];
+    for (const flags of this.flags) {
+      if (flags.level === level) continue;
+      for (const { x, y, z, yaw } of flags.spots) {
+        place(dark, d++, x, y, z, yaw, FLAG.pole, FLAG.pole, FLAG.height);
+        // the cloth hangs from the top of the pole, across the way the opening faces
+        const [across, up] = [[-Math.sin(yaw), Math.cos(yaw)], z + FLAG.height];
+        for (let i = 0; i < FLAG.columns; i++)
+          for (let j = 0; j < FLAG.rows; j++) {
+            const out = FLAG.start + i * FLAG.square;
+            const [px, py, pz] = [x + across[0] * out, y + across[1] * out, up - (j + 1) * FLAG.square];
+            if ((i + j) % 2) place(dark, d++, px, py, pz, yaw, FLAG.thin, FLAG.square, FLAG.square);
+            else place(light, l++, px, py, pz, yaw, FLAG.thin, FLAG.square, FLAG.square);
+          }
+      }
+    }
     this.changed[at] = this.changed[at + 1] = 1;
   }
 
@@ -806,7 +916,7 @@ export class Scene {
 }
 
 /** A crate set down on a pad, out from its middle past the ends of the H, turned a little off the pad's square. */
-function onPadEdge(out: Float32Array, pad: Readonly<Pad>): void {
+function onPadEdge(out: Float32Array, i: number, pad: Readonly<Pad>): void {
   const r = pad.radius * CRATE_OUT;
-  place(out, 0, pad.x + Math.cos(pad.yaw) * r, pad.y + Math.sin(pad.yaw) * r, pad.z, pad.yaw + 0.4);
+  place(out, i, pad.x + Math.cos(pad.yaw) * r, pad.y + Math.sin(pad.yaw) * r, pad.z, pad.yaw + 0.4);
 }

@@ -105,10 +105,19 @@ const TREES = Array.from({ length: treeCount }, (_, t) => {
   };
 });
 
-/** The rings of a trial and the pad it starts from. */
+/**
+ * The point each trial's first ring faces from, which the level says without building the island: the middle of the
+ * pad beside it, where a player would come to it from. The trial no longer starts there, since it starts at its ring.
+ */
+const FROM: Record<string, { pad: number; x: number; y: number }> = {
+  'ring-trial': { pad: 2, x: 201, y: -15 },
+  'up-the-valley': { pad: 7, x: 69, y: 69 },
+};
+
+/** The rings of a trial and the point its first ring faces from. */
 function trial(id: string) {
   const level = LEVELS.find((l) => l.id === id)!;
-  return { level, rings: level.steps as Ring[], start: pads[level.start ?? 0] };
+  return { level, rings: level.steps as Ring[], start: FROM[id] };
 }
 
 /** The angle from one heading to another, in (−π, π]. */
@@ -120,9 +129,11 @@ describe.each([
 ] as const)('the ring trial %s', (id, site, count, opening) => {
   const { level, rings, start } = trial(id);
 
-  it(`starts on the ${site} pad, with ${count} rings, each an opening of ${opening}`, () => {
+  it(`has its first ring face from the ${site} pad, with ${count} rings, each an opening of ${opening}`, () => {
     expect(level.kind).toBe('rings');
-    expect(start.site).toBe(site);
+    expect(pads[start.pad].site).toBe(site);
+    // the point is the pad's middle, said in the content so the levels can be read without building the island
+    expect([start.x, start.y]).toEqual([pads[start.pad].x, pads[start.pad].y]);
     // the first ring faces the way from the pad's middle, which the level says without building the island
     expect(rings[0].yaw).toBeCloseTo(Math.atan2(rings[0].y - start.y, rings[0].x - start.x), 9);
     expect(rings).toHaveLength(count);
@@ -287,14 +298,17 @@ describe('what stands on the island', () => {
   });
 });
 
+/** The pad the course lands on, which its opening between the towers faces from. */
+const SHOULDER = 6;
+
 describe('the course', () => {
   const level = LEVELS.find((l) => l.id === 'under-and-between')!;
   const [between, under, ...rest] = level.steps;
   const rings = rest.filter((s): s is Ring => s.kind === 'ring');
   const [bridge, , , west, east] = STRUCTURES;
 
-  it('is flown from the shoulder pad, between the towers, under the bridge, through three rings, and back down', () => {
-    expect(pads[level.start ?? 0].site).toBe('shoulder');
+  it('is begun between the towers, goes under the bridge, through three rings, and lands back on the shoulder pad', () => {
+    expect(pads[SHOULDER].site).toBe('shoulder');
     expect(level.steps.map((s) => (s.kind === 'gate' ? s.label : s.kind))).toEqual([
       'between the towers',
       'under the bridge',
@@ -303,7 +317,7 @@ describe('the course', () => {
       'ring',
       'land',
     ]);
-    expect(level.steps.at(-1)).toEqual({ kind: 'land', pad: level.start });
+    expect(level.steps.at(-1)).toEqual({ kind: 'land', pad: SHOULDER });
   });
 
   it('has its opening between the towers in the gap between their inner faces, from the ground to their tops', () => {
@@ -312,9 +326,17 @@ describe('the course', () => {
     expect(g.width).toBeCloseTo(20, 1);
     expect(g.z + g.height / 2).toBeCloseTo(west.z + west.height, 6);
     expect(g.z - g.height / 2).toBeLessThanOrEqual(ground.heightAt(g.x, g.y));
-    // facing the way from the pad it is flown from
-    const pad = pads[level.start ?? 0];
+    // facing the way from the shoulder pad, which it is flown from and back down to
+    const pad = pads[SHOULDER];
     expect(g.yaw).toBeCloseTo(Math.atan2(g.y - pad.y, g.x - pad.x), 3);
+  });
+
+  it('stands a flag on the top middle of each tower to mark its start, and no other opening has one', () => {
+    expect((between as Gate).flags).toEqual([
+      { x: west.x, y: west.y, z: west.z + west.height },
+      { x: east.x, y: east.y, z: east.z + east.height },
+    ]);
+    expect((under as Gate).flags).toBeUndefined();
   });
 
   it('has its opening under the bridge from the water to the deck, facing up the gorge, square to the deck', () => {
@@ -361,5 +383,24 @@ describe('every ring', () => {
           );
         }
       });
+  });
+});
+
+describe('where a level begins', () => {
+  it('is its first step, and no level names a start pad of its own', () => {
+    for (const level of LEVELS) expect('start' in level, level.id).toBe(false);
+  });
+
+  it('is a pickup for a delivery, and a ring or an opening for the trials and the course', () => {
+    for (const level of LEVELS)
+      expect(level.steps[0].kind, level.id).toBe(
+        level.kind === 'delivery' ? 'pickup' : level.kind === 'rings' ? 'ring' : 'gate',
+      );
+  });
+
+  it('is a pad of its own for each of the four deliveries: 4, 3, 7 and 2, so that no two begin from one', () => {
+    const pickups = LEVELS.flatMap((level) => (level.steps[0].kind === 'pickup' ? [level.steps[0].pad] : []));
+    expect(pickups).toEqual([4, 3, 7, 2]);
+    expect(new Set(pickups).size).toBe(4);
   });
 });
