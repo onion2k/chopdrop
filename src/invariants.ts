@@ -19,7 +19,7 @@ import type { Game } from './game';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
-import { DELIVERY, RING, onPad } from './mission';
+import { DELIVERY, onPad } from './mission';
 import type { Sway } from './sway';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
@@ -85,14 +85,11 @@ export function checkInvariants(game: Game): string[] {
   return out;
 }
 
-/** What must hold of the solids: the helicopter is never inside one, its middle never nearer a ring's tube than it can be. */
+/** What must hold of the solids: the helicopter is never inside one, its reach never past touching a ring's tube or a block. */
 export function checkSolids(game: Game): string[] {
-  const { depth, ring } = game.solids.inside(game.helicopter);
+  const { depth, what } = game.solids.inside(game.helicopter);
   if (depth <= TOLERANCE) return [];
-  const touch = RING.tube + HELICOPTER.size.rotorRadius;
-  return [
-    `the helicopter is inside ring ${ring} of ${game.solids.count}: its middle ${(touch - depth).toFixed(3)} from the tube's centre line, and it reaches ${touch.toFixed(3)}`,
-  ];
+  return [`the helicopter is inside ${what}: its reach ${depth.toFixed(3)} past touching it`];
 }
 
 /**
@@ -184,9 +181,10 @@ export function checkSway(sway: Sway): string[] {
 
 /**
  * What must hold of the chase camera over the island: chasing, it is never under the ground nor inside a tree's
- * crown, leaned as the sway has it. A crown is worked out here from the trees themselves (how tall each kind stands
- * and how far it spreads, in `sizes` by kind), not from the canopy the camera keeps over, so a canopy that runs
- * under a crown is caught. A parked camera is the tests' own, and is not held to it.
+ * crown, leaned as the sway has it, nor nearer a structure than its near plane, which would cut it open. A crown is
+ * worked out here from the trees themselves (how tall each kind stands and how far it spreads, in `sizes` by kind),
+ * not from the canopy the camera keeps over, so a canopy that runs under a crown is caught; and a structure from its
+ * own box, not from the distances the camera keeps off. A parked camera is the tests' own, and is not held to it.
  */
 export function checkCamera(camera: ChaseCamera, game: Game, sizes: readonly TreeSize[]): string[] {
   if (camera.mode !== 'chase') return [];
@@ -211,6 +209,21 @@ export function checkCamera(camera: ChaseCamera, game: Game, sizes: readonly Tre
       );
       break;
     }
+  }
+  for (const block of game.solids.blocks) {
+    // in the block's own frame: along it, across it, and up from its foot, and how far outside it each way
+    const c = Math.cos(block.yaw),
+      s = Math.sin(block.yaw);
+    const along = (p[0] - block.x) * c + (p[1] - block.y) * s;
+    const across = -(p[0] - block.x) * s + (p[1] - block.y) * c;
+    const up = p[2] - block.z;
+    const off = Math.hypot(
+      Math.max(0, Math.abs(along) - block.length / 2),
+      Math.max(0, Math.abs(across) - block.width / 2),
+      Math.max(0, -up, up - block.height),
+    );
+    if (off < CHASE.near - TOLERANCE)
+      out.push(`in a structure: the camera ${where} is ${off.toFixed(2)} from ${block.name}, nearer than it draws`);
   }
   return out;
 }

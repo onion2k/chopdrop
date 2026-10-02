@@ -8,7 +8,7 @@
  * before anything uses it, so that the first thing that does is seeded from
  * its first line.
  */
-import { LEVELS, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
+import { LEVELS, STRUCTURES, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
 import { Canopy } from './canopy';
 import { HELICOPTER, Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
@@ -16,7 +16,7 @@ import { treeSize } from './meshes';
 import { Mission, type Level, type LevelKind, type MissionEvents, type Ring } from './mission';
 import { Progress, type Standing } from './progress';
 import type { Random } from './random';
-import { Solids } from './solids';
+import { Solids, type Block } from './solids';
 import { Sway, reachedLean } from './sway';
 
 /**
@@ -45,6 +45,8 @@ export interface GameOptions {
   island?: Island;
   /** The levels, in order; the arena's unless told otherwise. */
   levels?: readonly Level[];
+  /** What stands on the island in every level, solid: the arena's unless told otherwise. */
+  structures?: readonly Block[];
   /** What the player has done, and where it is kept; a save in memory unless told otherwise, so nothing is written. */
   progress?: Progress;
 }
@@ -67,7 +69,7 @@ export class Game {
   readonly mission: Mission;
   /** The player's best time on each level, kept as each is done. */
   readonly progress: Progress;
-  /** What the helicopter cannot fly into: the rings of the level being flown. */
+  /** What the helicopter cannot fly into: what stands on the island, and the rings of the level being flown. */
   readonly solids: Solids;
   /** Game time, in seconds. */
   t = 0;
@@ -81,7 +83,7 @@ export class Game {
     this.levels = options.levels ?? LEVELS;
     const first = this.levels[0];
     const { middle, rotorRadius } = HELICOPTER.size;
-    this.solids = new Solids({ middle, radius: rotorRadius });
+    this.solids = new Solids({ middle, radius: rotorRadius }, options.structures ?? STRUCTURES);
     this.solids.set(rings(first));
     // the grid reads itself through `this`, so it is bound once here and not each time the helicopter asks the height
     this.helicopter = new Helicopter(
@@ -102,6 +104,8 @@ export class Game {
       loaded: events.loaded,
       delivered: events.delivered,
       passed: events.passed,
+      through: events.through,
+      landed: events.landed,
       // the time kept before it is told, so what is told is what is kept; a level never lifted off from, which only a
       // test's teleport can finish, was not flown and is not timed
       finished: (seconds) => {

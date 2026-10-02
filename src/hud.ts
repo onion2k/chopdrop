@@ -39,7 +39,11 @@ export function clock(seconds: number): string {
 const LOADER_STEPS = 40;
 
 /** What the card says a level of each kind ends with. */
-const DONE: Record<LevelKind, string> = { delivery: 'Delivered!', rings: 'Trial complete!' };
+const DONE: Record<LevelKind, string> = {
+  delivery: 'Delivered!',
+  rings: 'Trial complete!',
+  course: 'Course complete!',
+};
 
 /** What the HUD's buttons do, which is the page's to say: the level again, the next one, and the list of levels. */
 export interface HudActions {
@@ -143,9 +147,13 @@ export class Hud {
     const words =
       step.kind === 'ring'
         ? `Fly through ring ${d.ringNumber} of ${d.ringCount}`
-        : step.kind === 'pickup'
-          ? `Pick up the parcel at the ${game.island.pads[step.pad].site} pad`
-          : `Deliver it to the ${game.island.pads[step.pad].site} pad`;
+        : step.kind === 'gate'
+          ? `Fly ${step.label}`
+          : step.kind === 'land'
+            ? `Land on the ${game.island.pads[step.pad].site} pad`
+            : step.kind === 'pickup'
+              ? `Pick up the parcel at the ${game.island.pads[step.pad].site} pad`
+              : `Deliver it to the ${game.island.pads[step.pad].site} pad`;
     const far = `${Math.round(Math.hypot(goal.x - h.x, goal.y - h.y))} m`;
     const time = clock(d.time);
     const turn = pointer(camera, h, goal);

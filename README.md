@@ -16,14 +16,19 @@ hills and meadows, a snowy range in the north-west, gullies and valleys
 cut where the rain would cut them, lakes, rivers from the hills to the sea,
 some seven thousand trees of five kinds, which bow away from the rotor's
 downwash when the helicopter comes down low over them and spring back when
-it has gone, and nine landing pads with home on the south coast.
+it has gone, and nine landing pads with home on the south coast. A bridge
+in red steel crosses the gorge at the head of the northern river, and two
+red and white towers stand on the high ground by the shoulder pad: they
+are there in every level, and solid.
 
-The game opens on a list of six levels, each opened by finishing the one
+The game opens on a list of seven levels, each opened by finishing the one
 before, with the best time on each kept in the browser and the clock
 running at the top of the screen from the first lift-off. Two are ring
 trials: rings to fly through in order, the one wanted lit gold, solid
 enough to knock the helicopter back, six over the meadow and nine up a
-river valley. The rest are deliveries:
+river valley. The last is a course from the shoulder pad: between the
+towers, up the gorge and under the bridge, through three rings over the
+hills, and back to land where it began. The rest are deliveries:
 a crate waits on one pad, a gold beacon over it, and an arrow at the top of
 the screen points the way and says how far. Land on the pad and stay while
 the loader fills, and the crate is strapped under the helicopter and the
@@ -31,8 +36,8 @@ beacon moves to the pad it is wanted on; land there and stay, and it is
 delivered, with the time it took from the first lift-off, and the way on to
 the next level, to fly it again, or back to the list. The first is a short
 hop from the meadow to a hilltop; then over a lake, over the mountains, and
-up to a pad on the shoulder of the range. A search and a course come
-next, one feature at a time, through `/feature`. The template's stub,
+up to a pad on the shoulder of the range. A search comes next, through
+`/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -78,8 +83,8 @@ is fixed, and no baseline is moved to make it green.
 ## Layout
 
     src/game.ts        the game without the picture: the island, the helicopter, the mission, the clock
-    src/mission.ts     the level as it is flown: its steps, parcels picked up and delivered and rings flown through
-    src/solids.ts      what the helicopter cannot fly into: the rings' tubes, which knock it back
+    src/mission.ts     the level as it is flown: its steps, parcels picked up and delivered, rings and openings flown through, a landing
+    src/solids.ts      what the helicopter cannot fly into: the bridge, the towers and the rings' tubes, which knock it back
     src/hud.ts         the words on the screen: what is wanted, where, and the card at the end
     src/level-list.ts  the list of levels the game opens on: locked, open or done, and the best times
     src/progress.ts    the save: the best time on each level, kept in the browser
@@ -89,7 +94,7 @@ is fixed, and no baseline is moved to make it green.
     src/input.ts       the keyboard or touch, whichever was used last, as the helicopter's controls
     src/touch.ts       the touch stick and lever: fingers in, controls out
     src/touch-view.ts  the touch controls as the page draws and feeds them
-    src/chase.ts       the camera that follows it, above the ground and the treetops
+    src/chase.ts       the camera that follows it, above the ground and the treetops, and off the bridge and the towers
     src/canopy.ts      the top of the crowns over a point: what the camera keeps over
     src/downwash.ts    the air under the rotor, and how it blows at a point
     src/sway.ts        the trees in the downwash: which are moving, and how each leans

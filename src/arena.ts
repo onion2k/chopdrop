@@ -5,9 +5,10 @@
  * generator in `island.ts` is the same for any recipe, and the lower modules
  * go on knowing nothing of what is on it.
  */
-import { buildIsland, type Island, type IslandRecipe } from './island';
-import type { Level, Ring } from './mission';
+import { buildIsland, type Clearing, type Island, type IslandRecipe } from './island';
+import type { Gate, Level, Ring } from './mission';
 import { seeded } from './random';
+import type { Block } from './solids';
 
 /** The kinds of tree, in the order the island's trees name them by. Each has its habitat in the recipe, at the same index. */
 export const TREE_KINDS = ['broadleaf', 'pine', 'poplar', 'palm', 'bush'] as const;
@@ -27,6 +28,88 @@ export const TREE_GIVE: Record<TreeKind, number> = { broadleaf: 1, pine: 0.7, po
  * meadows, a range of mountains in the north-west, a few lakes held in the
  * land, rivers from the hills to the sea, and nine pads to fly between.
  */
+/** The bridge's deck across the gorge, 13 over the water where the river runs under it, its rails taken into its height. */
+const BRIDGE: Block = {
+  name: 'the bridge',
+  kind: 'deck',
+  x: -15.21,
+  y: 335.67,
+  z: 87.5,
+  yaw: 2.2689,
+  length: 46.5,
+  width: 8,
+  height: 2.7,
+};
+
+/**
+ * The bridge's abutments, filling the ground under each end of the deck from the bank up to it, wherever there is less
+ * room between them than the helicopter needs to stand, and a metre past each edge of the deck: without them it could
+ * be pressed between the bank rising under it and the deck above it, and be held inside the deck.
+ */
+const ABUTMENTS: readonly Block[] = [
+  {
+    name: 'the south abutment',
+    kind: 'abutment',
+    x: -5.01,
+    y: 323.51,
+    z: 77,
+    yaw: BRIDGE.yaw,
+    length: 14.75,
+    width: 10,
+    height: 10.5,
+  },
+  {
+    name: 'the north abutment',
+    kind: 'abutment',
+    x: -27.34,
+    y: 350.13,
+    z: 77,
+    yaw: BRIDGE.yaw,
+    length: 8.75,
+    width: 10,
+    height: 10.5,
+  },
+];
+
+/** The two towers, 20 apart on the level ground between the shoulder pad and the river, their feet sunk a little into it. */
+const TOWERS: readonly Block[] = [
+  {
+    name: 'the west tower',
+    kind: 'tower',
+    x: -131.85,
+    y: 230.33,
+    z: 71.5,
+    yaw: 1.1479,
+    length: 6,
+    width: 6,
+    height: 38.5,
+  },
+  {
+    name: 'the east tower',
+    kind: 'tower',
+    x: -108.15,
+    y: 219.67,
+    z: 71.5,
+    yaw: 1.1479,
+    length: 6,
+    width: 6,
+    height: 38.5,
+  },
+];
+
+/**
+ * What stands on the island in every level, and is solid in every level, painted steel as chosen from a mock: the
+ * bridge across the gorge at the head of the northern river, turned square to the river's run into it and resting on
+ * both banks on its abutments, and the two towers, their tops at 110.
+ */
+export const STRUCTURES: readonly Block[] = [BRIDGE, ...ABUTMENTS, ...TOWERS];
+
+/** The ground kept clear of trees under and round each structure: 8 round a tower, and 4 past the bridge and its ends. */
+const CLEARINGS: readonly Clearing[] = STRUCTURES.map((block) => {
+  const margin = TOWERS.includes(block) ? 8 : 4;
+  return { x: block.x, y: block.y, yaw: block.yaw, length: block.length + 2 * margin, width: block.width + 2 * margin };
+});
+
 export const ISLAND: IslandRecipe = {
   seed: 1977,
   seaLevel: 0,
@@ -199,6 +282,7 @@ export const ISLAND: IslandRecipe = {
     shore: 0.4,
     scale: [0.75, 1.3],
     apron: 25,
+    clear: CLEARINGS,
     water: 3,
     forest: { wavelength: 190, octaves: 3, from: 0.5, to: 0.7 },
     meadow: 0.12,
@@ -278,11 +362,77 @@ function trial(
   opening: number,
   middles: readonly (readonly [number, number, number])[],
 ): Level {
-  const steps: Ring[] = middles.map(([x, y, z], k) => {
-    const [px, py] = k ? middles[k - 1] : from;
-    return { kind: 'ring', x, y, z, yaw: Math.atan2(y - py, x - px), opening };
-  });
+  const steps = middles.map((middle, k) => ringFrom(k ? middles[k - 1] : from, middle, opening));
   return { id, name, kind: 'rings', start, steps };
+}
+
+/** A ring of `opening` with its middle at [x, y, z], facing the way from `from`, so that it is flown straight into. */
+function ringFrom(
+  from: readonly [number, number, ...number[]],
+  [x, y, z]: readonly [number, number, number],
+  opening: number,
+): Ring {
+  return { kind: 'ring', x, y, z, yaw: Math.atan2(y - from[1], x - from[0]), opening };
+}
+
+/** The opening between the two towers: the gap between their inner faces, from the ground in it to their tops. */
+const BETWEEN_THE_TOWERS: Gate = (() => {
+  const [west, east] = TOWERS;
+  const ground = 72;
+  const top = west.z + west.height;
+  return {
+    kind: 'gate',
+    x: (west.x + east.x) / 2,
+    y: (west.y + east.y) / 2,
+    z: (ground + top) / 2,
+    yaw: west.yaw,
+    width: Math.hypot(west.x - east.x, west.y - east.y) - west.width,
+    height: top - ground,
+    label: 'between the towers',
+  };
+})();
+
+/**
+ * The opening under the bridge: where the river runs under the deck, facing up the gorge the way the deck is square
+ * to, from the water at 74.5 to the deck's underside, and 20 across, about as wide as the gorge is at a helicopter's
+ * height.
+ */
+const UNDER_THE_BRIDGE: Gate = (() => {
+  const deck = BRIDGE;
+  const water = 74.5;
+  return {
+    kind: 'gate',
+    x: -16.5,
+    y: 337.2,
+    z: (water + deck.z) / 2,
+    yaw: deck.yaw - Math.PI / 2,
+    width: 20,
+    height: deck.z - water,
+    label: 'under the bridge',
+  };
+})();
+
+/**
+ * The course: from the shoulder pad between the towers, up the river into the gorge and under the bridge, out past
+ * the spring and round through three rings of 8 over the eastern hills, and back down onto the shoulder pad. The rings
+ * were found by the script that found the trials', to their rules, clear of the towers and the bridge.
+ */
+function course(): Level {
+  const middles = [
+    [80, 330, 120],
+    [80, 250, 98],
+    [20, 190, 94],
+  ] as const;
+  const rings = middles.map((middle, k) =>
+    ringFrom(k ? middles[k - 1] : [UNDER_THE_BRIDGE.x, UNDER_THE_BRIDGE.y], middle, 8),
+  );
+  return {
+    id: 'under-and-between',
+    name: 'Under and between',
+    kind: 'course',
+    start: 6,
+    steps: [BETWEEN_THE_TOWERS, UNDER_THE_BRIDGE, ...rings, { kind: 'land', pad: 6 }],
+  };
 }
 
 /**
@@ -296,6 +446,10 @@ function trial(
  * nine rings of 8 up the river that falls from the gorge, 454 of them, climbing from 37 up to 107 and turning with
  * the water. They were found by a script that held every ring clear of the trees and 8 over the ground under it, and
  * every run between rings 10 over the ground and the treetops; the tests hold them to it still.
+ *
+ * The course, last for now, is flown from the shoulder pad and ends on it: between the towers, under the bridge and
+ * through three rings, as `course` says, its clock stopping as the skids touch. It opens by the same rule as the rest,
+ * the level before it done, so it goes eighth when the search is slotted in before it.
  */
 export const LEVELS: readonly Level[] = [
   delivery('first-delivery', 'First delivery', 4, 1),
@@ -321,6 +475,7 @@ export const LEVELS: readonly Level[] = [
     [5, 341, 107],
   ]),
   delivery('mountain-drop', 'Mountain drop', 2, 6),
+  course(),
 ];
 
 /**

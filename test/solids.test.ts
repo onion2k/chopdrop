@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { HELICOPTER } from '../src/helicopter';
 import { RING, RINGS, type Ring } from '../src/mission';
 import { seeded as randomFor } from '../src/random';
-import { SOLID, Solids, type Body } from '../src/solids';
+import { SOLID, Solids, type Block, type Body } from '../src/solids';
 
 const MIDDLE = HELICOPTER.size.middle;
 const RADIUS = HELICOPTER.size.rotorRadius;
@@ -107,5 +107,119 @@ describe('the solids', () => {
     s.set(many.slice(0, RINGS.capacity));
     expect(s.count).toBe(RINGS.capacity);
     expect(() => s.set(many)).toThrow(/13 rings, and there is room for 12/);
+  });
+});
+
+describe('the solids, as blocks', () => {
+  // a tower 6 by 6 and 35 tall, turned half a radian, its foot at (0, 0, 100)
+  const TOWER: Block = {
+    name: 'the tower',
+    kind: 'tower',
+    x: 0,
+    y: 0,
+    z: 100,
+    yaw: 0.5,
+    length: 6,
+    width: 6,
+    height: 35,
+  };
+  const blocks = () => new Solids({ middle: MIDDLE, radius: RADIUS }, [TOWER]);
+  /** A body whose middle is at `along`, `across` and `up` in the tower's own frame, going so in the world. */
+  const near = (along: number, across: number, up: number, vx = 0, vy = 0, vz = 0) => {
+    const [c, s] = [Math.cos(TOWER.yaw), Math.sin(TOWER.yaw)];
+    return body(along * c - across * s, along * s + across * c, TOWER.z + up, vx, vy, vz);
+  };
+  /** How far a body's middle is from the tower, outside it; less than nothing inside it. */
+  const fromBlock = (b: Body) => {
+    const [c, s] = [Math.cos(TOWER.yaw), Math.sin(TOWER.yaw)];
+    const along = b.x * c + b.y * s,
+      across = -b.x * s + b.y * c,
+      up = b.z + MIDDLE - TOWER.z;
+    const dx = Math.max(Math.abs(along) - 3, 0),
+      dy = Math.max(Math.abs(across) - 3, 0),
+      dz = Math.max(up - 35, -up, 0);
+    const outside = Math.hypot(dx, dy, dz);
+    return outside > 0 ? outside : -Math.min(3 - Math.abs(along), 3 - Math.abs(across), up, 35 - up);
+  };
+
+  it('leave alone a body clear of a block, beside it, over it or off its corner', () => {
+    const s = blocks();
+    for (const b of [near(3 + RADIUS + 0.5, 0, 10), near(0, 0, 35 + RADIUS + 0.5), near(7, 7, 10), near(-30, 0, 10)]) {
+      const was = { ...b };
+      expect(s.collide(b)).toBe(false);
+      expect(b).toEqual(was);
+    }
+  });
+
+  it('push a body out of a face to just touching it, and knock it back at a third, its speed along the face kept', () => {
+    const s = blocks();
+    const [c, si] = [Math.cos(TOWER.yaw), Math.sin(TOWER.yaw)];
+    // flying straight at the face at 9 along the tower's axis, and sliding along it at 4
+    const b = near(3 + RADIUS - 1, 0, 10, -9 * c - 4 * si, -9 * si + 4 * c, 0);
+    expect(s.collide(b)).toBe(true);
+    expect(fromBlock(b)).toBeCloseTo(RADIUS, 9);
+    expect(b.vx * c + b.vy * si).toBeCloseTo(9 * SOLID.bounce, 9);
+    expect(-b.vx * si + b.vy * c).toBeCloseTo(4, 9);
+  });
+
+  it('push a body off a corner along the way from the corner to it', () => {
+    const s = blocks();
+    const b = near(3 + 2, 3 + 2, 10);
+    s.collide(b);
+    expect(fromBlock(b)).toBeCloseTo(RADIUS, 9);
+    const [c, si] = [Math.cos(TOWER.yaw), Math.sin(TOWER.yaw)];
+    expect(b.x * c + b.y * si).toBeCloseTo(-b.x * si + b.y * c, 9);
+  });
+
+  it('push a body whose middle is inside a block out through the face it is nearest', () => {
+    const s = blocks();
+    const b = near(0, 2.5, 10);
+    s.collide(b);
+    expect(fromBlock(b)).toBeCloseTo(RADIUS, 9);
+    const [c, si] = [Math.cos(TOWER.yaw), Math.sin(TOWER.yaw)];
+    expect(-b.x * si + b.y * c).toBeCloseTo(3 + RADIUS, 9);
+  });
+
+  it('never leave a body inside a block, wherever about it it is and however it is going', () => {
+    const s = blocks();
+    const random = randomFor(5);
+    for (let n = 0; n < 5000; n++) {
+      const b = near(
+        (random() - 0.5) * 2 * (3 + RADIUS),
+        (random() - 0.5) * 2 * (3 + RADIUS),
+        -RADIUS + random() * (35 + 2 * RADIUS),
+        (random() - 0.5) * 60,
+        (random() - 0.5) * 60,
+        (random() - 0.5) * 30,
+      );
+      s.collide(b);
+      expect(fromBlock(b)).toBeGreaterThanOrEqual(RADIUS - 1e-9);
+    }
+  });
+
+  it('keep the blocks when a level sets its rings, and say which a body is inside by name', () => {
+    const s = blocks();
+    // a ring well clear of the tower
+    s.set([{ ...RING_AT, x: 60 }]);
+    expect(s.count).toBe(1);
+    expect(s.collide(near(0, 3 + RADIUS - 1, 10))).toBe(true);
+    const deep = near(0, 2, 10);
+    expect(s.inside(deep)).toMatchObject({ what: 'the tower' });
+    expect(s.inside(deep).depth).toBeGreaterThan(RADIUS);
+    expect(s.inside(body(60, 0, 100 + LINE))).toMatchObject({ what: 'ring 1 of 1' });
+    expect(s.inside(near(40, 0, 10))).toEqual({ depth: 0, what: '' });
+  });
+
+  it('say how far a point is from the nearest block: off a face, off a corner, and less than nothing inside', () => {
+    const s = blocks();
+    const point = (along: number, across: number, up: number) => {
+      const [c, sn] = [Math.cos(TOWER.yaw), Math.sin(TOWER.yaw)];
+      return [along * c - across * sn, along * sn + across * c, TOWER.z + up] as const;
+    };
+    expect(s.distanceAt(...point(3 + 2, 0, 10))).toBeCloseTo(2, 9);
+    expect(s.distanceAt(...point(0, 0, 35 + 1.5))).toBeCloseTo(1.5, 9);
+    expect(s.distanceAt(...point(3 + 3, 3 + 4, 10))).toBeCloseTo(5, 9);
+    expect(s.distanceAt(...point(2, 0, 10))).toBeCloseTo(-1, 9);
+    expect(new Solids({ middle: MIDDLE, radius: RADIUS }).distanceAt(0, 0, 0)).toBe(Infinity);
   });
 });

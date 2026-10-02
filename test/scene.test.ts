@@ -4,7 +4,7 @@
  * once for the file, since it takes most of a second.
  */
 import { describe, expect, it } from 'vitest';
-import { ISLAND, LEVELS, TREE_KINDS, theIsland } from '../src/arena';
+import { ISLAND, LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { RINGS, type Ring } from '../src/mission';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
@@ -223,7 +223,7 @@ describe('shadowBox', () => {
 
 const island = theIsland();
 const scene = new Scene();
-const groups = scene.static(island);
+const groups = scene.static(island, STRUCTURES);
 const movers = scene.dynamic(island);
 const group = (name: string) => {
   const k = scene.names.indexOf(name);
@@ -257,15 +257,15 @@ describe('static', () => {
 
   it('draws it again as the same groups, and names them afresh and not twice over', () => {
     const again = new Scene();
-    expect(again.static(island)).toHaveLength(groups.length);
+    expect(again.static(island, STRUCTURES)).toHaveLength(groups.length);
     expect(again.names).toEqual(scene.names);
-    again.static(island);
+    again.static(island, STRUCTURES);
     expect(again.names).toEqual(scene.names);
   });
 
   it('builds the whole island in well under a second', () => {
     const t = performance.now();
-    new Scene().static(island);
+    new Scene().static(island, STRUCTURES);
     expect(performance.now() - t).toBeLessThan(1000);
   });
 });
@@ -555,6 +555,138 @@ describe('the pads', () => {
     }
     expect(lo).toBeCloseTo(0, 5);
     expect(hi).toBeCloseTo(ISLAND.pads.thickness, 5);
+  });
+});
+
+describe('the structures', () => {
+  const NAMES = ['deck', 'rails', 'abutments', 'tower red', 'tower white'];
+  /** Each placement of a structure group, as the drawn box's foot's middle, its yaw and its size along, across and up. */
+  const boxes = (name: string) =>
+    Array.from({ length: count(name) }, (_, k) => {
+      const m = group(name).matrices.subarray(16 * k, 16 * k + 16);
+      return {
+        x: m[12],
+        y: m[13],
+        z: m[14],
+        yaw: Math.atan2(m[1], m[0]),
+        length: Math.hypot(m[0], m[1]),
+        width: Math.hypot(m[4], m[5]),
+        height: m[10],
+      };
+    });
+  type Drawn = ReturnType<typeof boxes>[number];
+  /** The corners of `box` in the frame of `block`: along it, across it and up from its foot. */
+  const corners = (box: Drawn, block: (typeof STRUCTURES)[number]) => {
+    const out: [number, number, number][] = [];
+    for (const a of [-0.5, 0.5])
+      for (const c of [-0.5, 0.5])
+        for (const u of [0, 1]) {
+          const wx = box.x + Math.cos(box.yaw) * a * box.length - Math.sin(box.yaw) * c * box.width;
+          const wy = box.y + Math.sin(box.yaw) * a * box.length + Math.cos(box.yaw) * c * box.width;
+          const dx = wx - block.x,
+            dy = wy - block.y;
+          out.push([
+            dx * Math.cos(block.yaw) + dy * Math.sin(block.yaw),
+            -dx * Math.sin(block.yaw) + dy * Math.cos(block.yaw),
+            box.z + u * box.height - block.z,
+          ]);
+        }
+    return out;
+  };
+  /** The drawn boxes standing in `block`: those whose middle is inside it. */
+  const drawnIn = (block: (typeof STRUCTURES)[number]) =>
+    NAMES.flatMap((name) => boxes(name).map((box) => ({ name, box }))).filter(({ box }) => {
+      const dx = box.x - block.x,
+        dy = box.y - block.y;
+      const along = dx * Math.cos(block.yaw) + dy * Math.sin(block.yaw);
+      const across = -dx * Math.sin(block.yaw) + dy * Math.cos(block.yaw);
+      const up = box.z + box.height / 2 - block.z;
+      return Math.abs(along) < block.length / 2 && Math.abs(across) < block.width / 2 && up > 0 && up < block.height;
+    });
+
+  it('draws each one as big as it is solid, out to every face, and no bigger', () => {
+    for (const block of STRUCTURES) {
+      const drawn = drawnIn(block);
+      expect(drawn.length, block.name).toBeGreaterThan(0);
+      const lo = [Infinity, Infinity, Infinity],
+        hi = [-Infinity, -Infinity, -Infinity];
+      for (const { box } of drawn) {
+        expect(Math.abs(Math.sin(box.yaw - block.yaw)), `${block.name}: turned with it`).toBeLessThan(1e-6);
+        for (const corner of corners(box, block))
+          corner.forEach((v, k) => {
+            lo[k] = Math.min(lo[k], v);
+            hi[k] = Math.max(hi[k], v);
+          });
+      }
+      const size = [block.length / 2, block.width / 2];
+      for (let k = 0; k < 2; k++) {
+        expect(lo[k], `${block.name} ${k}`).toBeCloseTo(-size[k], 4);
+        expect(hi[k], `${block.name} ${k}`).toBeCloseTo(size[k], 4);
+      }
+      expect(lo[2], `${block.name}: from its foot`).toBeCloseTo(0, 4);
+      expect(hi[2], `${block.name}: to its top`).toBeCloseTo(block.height, 4);
+    }
+    // and nothing drawn that stands in none of them
+    const all = NAMES.reduce((n, name) => n + count(name), 0);
+    expect(STRUCTURES.reduce((n, block) => n + drawnIn(block).length, 0)).toBe(all);
+  });
+
+  /** Whether `name` is painted a strong red, a white, or a grey: as the mock chose, painted steel on stone. */
+  const red = (name: string) => {
+    const [r, g, b] = group(name).albedo!;
+    return r > 4 * g && r > 4 * b;
+  };
+  const white = (name: string) => Math.min(...group(name).albedo!) > 0.6;
+  const grey = (name: string) => {
+    const rgb = group(name).albedo!;
+    return Math.max(...rgb) - Math.min(...rgb) < 0.05 && Math.max(...rgb) > 0.1 && Math.max(...rgb) < 0.5;
+  };
+
+  it('paints the deck red with white rails along both its edges, and the abutments grey', () => {
+    expect(red('deck')).toBe(true);
+    expect(white('rails')).toBe(true);
+    expect(grey('abutments')).toBe(true);
+    for (const block of STRUCTURES.filter((b) => b.kind === 'deck')) {
+      const drawn = drawnIn(block);
+      const slab = drawn.filter(({ name }) => name === 'deck').map(({ box }) => box);
+      const rails = drawn.filter(({ name }) => name === 'rails').map(({ box }) => box);
+      expect(slab).toHaveLength(1);
+      expect(rails).toHaveLength(2);
+      // the rails on the slab, at either edge, as long as it
+      for (const rail of rails) {
+        expect(rail.z).toBeCloseTo(slab[0].z + slab[0].height, 5);
+        expect(rail.length).toBeCloseTo(block.length, 5);
+      }
+      const across = rails.map((r) => -(r.x - block.x) * Math.sin(block.yaw) + (r.y - block.y) * Math.cos(block.yaw));
+      expect(Math.sign(across[0])).toBe(-Math.sign(across[1]));
+    }
+    for (const block of STRUCTURES.filter((b) => b.kind === 'abutment'))
+      expect(drawnIn(block).map(({ name }) => name)).toEqual(['abutments']);
+  });
+
+  it('bands each tower red and white, seven high from its top down, red first, with no gap and no overlap', () => {
+    expect(red('tower red')).toBe(true);
+    expect(white('tower white')).toBe(true);
+    const towers = STRUCTURES.filter((b) => b.kind === 'tower');
+    expect(towers.length).toBeGreaterThan(0);
+    for (const tower of towers) {
+      const bands = drawnIn(tower).sort((a, b) => b.box.z - a.box.z);
+      expect(bands).toHaveLength(Math.ceil(tower.height / 7));
+      let top = tower.z + tower.height;
+      bands.forEach(({ name, box }, k) => {
+        expect(name, `${tower.name} band ${k}`).toBe(k % 2 === 0 ? 'tower red' : 'tower white');
+        expect(box.z + box.height).toBeCloseTo(top, 5);
+        if (k < bands.length - 1) expect(box.height).toBeCloseTo(7, 5);
+        top = box.z;
+      });
+      expect(top).toBeCloseTo(tower.z, 5);
+    }
+  });
+
+  it('draws none where there are none', () => {
+    const bare = new Scene();
+    bare.static(island);
+    for (const name of NAMES) expect(bare.names).not.toContain(name);
   });
 });
 

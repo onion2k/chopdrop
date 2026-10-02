@@ -3,10 +3,13 @@
  * nor into a tree, and the fixed view the pictures are taken from.
  */
 import { describe, expect, it } from 'vitest';
-import { CHASE, ChaseCamera, fovFor, type Heights, type Point } from '../src/chase';
-import { HOVER_LIFT, IDLE } from '../src/helicopter';
+import { CHASE, ChaseCamera, fovFor, type Distances, type Heights, type Point } from '../src/chase';
+import { LEVELS, STRUCTURES } from '../src/arena';
+import { HELICOPTER, HOVER_LIFT, IDLE } from '../src/helicopter';
 import { TREE_STRIDE } from '../src/island';
 import type { Game } from '../src/game';
+import type { Gate } from '../src/mission';
+import { Solids, type Block } from '../src/solids';
 import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
 
 function near(a: Point, b: Point, tolerance = 1e-9) {
@@ -328,6 +331,182 @@ describe('over the island', () => {
     expect(heldRise).toBeLessThan(0.15);
     // and every other move is its easing toward where it settles, which crossed 0.42 in a frame at the most
     expect(most).toBeLessThan(0.5);
+  });
+});
+
+describe('off the structures', () => {
+  // a tower 3 square and 40 tall, its near face at x = 4, between a helicopter at x = 10 heading +x and the camera 15
+  // behind it
+  const TOWER: Block = { name: 'a tower', kind: 'tower', x: 2.5, y: 0, z: 0, yaw: 0, length: 3, width: 3, height: 40 };
+  const solids = (blocks: readonly Block[] = [TOWER]) =>
+    new Solids({ middle: HELICOPTER.size.middle, radius: HELICOPTER.size.rotorRadius }, blocks);
+
+  it('is drawn in before a tower between it and the helicopter, to its distance off it, on the line to the helicopter', () => {
+    const cam = new ChaseCamera(undefined, undefined, solids());
+    cam.snap({ x: 20, y: 0, z: 5, yaw: 0 });
+    // the line from the helicopter's look point, (20, 0, 6.5), to where it would be, (5, 0, 11.5), comes within the
+    // distance of the tower's face at x = 4 + 2.5, further out than the nearest it comes
+    const t = (20 - (4 + CHASE.offBlocks)) / 15;
+    expect(t * Math.hypot(15, 5)).toBeGreaterThan(CHASE.closest);
+    const blocks = solids();
+    near(cam.position, [20 - 15 * t, 0, 6.5 + 5 * t], 1e-3);
+    // and on the side of it that is far enough off, never past it
+    expect(blocks.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+    cam.step(DT, { x: 20, y: 0, z: 5, yaw: 0 });
+    near(cam.position, [20 - 15 * t, 0, 6.5 + 5 * t], 1e-3);
+    expect(blocks.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+  });
+
+  it('with no room behind, over or level, is drawn right in along its line, to its distance off what is there', () => {
+    // a wall at x = 7, 3 behind the look point at (10, 0, 6.5), and a ceiling at 9.2, 2.7 over it
+    const pocket: Distances = { distanceAt: (x, _y, z) => Math.min(x - 7, 9.2 - z) };
+    const cam = new ChaseCamera(undefined, undefined, pocket);
+    cam.snap({ x: 10, y: 0, z: 5, yaw: 0 });
+    // the wall's distance is met first along the line, half a unit back
+    const t = (10 - (7 + CHASE.offBlocks)) / 15;
+    near(cam.position, [10 - 15 * t, 0, 6.5 + 5 * t], 1e-3);
+    expect(pocket.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+  });
+
+  /** How far the camera is from the point it is drawn in toward, over the skids of what it follows. */
+  const arm = (cam: ChaseCamera, f: { x: number; y: number; z: number }) =>
+    Math.hypot(cam.position[0] - f.x, cam.position[1] - f.y, cam.position[2] - (f.z + CHASE.lookUp));
+
+  it('with the helicopter backed up to a tower, too near to come in behind it, looks down from over it instead', () => {
+    const blocks = solids();
+    const cam = new ChaseCamera(undefined, undefined, blocks);
+    // facing away from the tower, the look point 6 out from its face
+    const f = { x: 10, y: 0, z: 5, yaw: 0 };
+    cam.snap(f);
+    expect(arm(cam, f)).toBeGreaterThanOrEqual(CHASE.closest - 1e-6);
+    expect(blocks.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+    // tilted up from where it would settle, by no more than it needs: the room it has is all but just enough
+    const rise = Math.atan2(cam.position[2] - 6.5, 10 - cam.position[0]);
+    expect(rise).toBeGreaterThan(Math.atan2(5, 15) + 0.1);
+    expect(rise).toBeLessThan(Math.PI / 2);
+    expect(arm(cam, f)).toBeLessThan(CHASE.closest + 0.05);
+    // and still behind it, looking down on its tail, not over its nose
+    expect(cam.position[0]).toBeLessThan(10);
+  });
+
+  it('under a deck too low to come in behind it, comes in lower instead', () => {
+    // everything over 9.5 is solid, 3 over the look point at (10, 0, 6.5)
+    const deck: Distances = { distanceAt: (_x, _y, z) => 9.5 - z };
+    const cam = new ChaseCamera(undefined, undefined, deck);
+    const f = { x: 10, y: 0, z: 5, yaw: 0 };
+    cam.snap(f);
+    expect(deck.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+    expect(arm(cam, f)).toBeGreaterThanOrEqual(CHASE.closest - 1e-6);
+    expect(cam.position[2]).toBeLessThan(6.5 + 5 * (CHASE.closest / Math.hypot(15, 5)));
+    expect(cam.position[2]).toBeGreaterThanOrEqual(6.5 - 1e-6);
+  });
+
+  it('tilts the way that needs the least, over a bar behind it it could have gone under', () => {
+    // a bar across its way back, 11 from the look point at (10, 0, 6.5) and 14 degrees up, under its line at 18.4: it
+    // has room past it tilted 8.5 degrees up, or 17.4 down
+    const [bx, bz] = [10 - 11 * Math.cos((14 * Math.PI) / 180), 6.5 + 11 * Math.sin((14 * Math.PI) / 180)];
+    const bar: Distances = { distanceAt: (x, _y, z) => Math.hypot(x - bx, z - bz) - 0.5 };
+    const cam = new ChaseCamera(undefined, undefined, bar);
+    cam.snap({ x: 10, y: 0, z: 5, yaw: 0 });
+    const rise = Math.atan2(cam.position[2] - 6.5, 10 - cam.position[0]);
+    expect(rise).toBeGreaterThan(Math.atan2(5, 15));
+    expect(bar.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+  });
+
+  it('moves without a jump as the helicopter backs slowly up to a tower until it is knocked off it', () => {
+    const blocks = solids();
+    const cam = new ChaseCamera(undefined, undefined, blocks);
+    const f = { x: 30, y: 0, z: 5, yaw: 0 };
+    cam.snap(f);
+    let most = 0;
+    for (let n = 0; n < 60 * 25; n++) {
+      // backing at a metre a second until its rotor touches the face
+      f.x = Math.max(4 + HELICOPTER.size.rotorRadius, f.x - DT);
+      const was = [...cam.position];
+      cam.step(DT, f);
+      most = Math.max(most, Math.hypot(...cam.position.map((v, k) => v - was[k])));
+      expect(blocks.distanceAt(...cam.position)).toBeGreaterThanOrEqual(CHASE.offBlocks);
+      expect(arm(cam, f)).toBeGreaterThanOrEqual(Math.min(CHASE.closest - 1e-6, Math.hypot(15, 5)));
+    }
+    // the most it moved in a frame, against its easing toward a helicopter going a metre a second
+    expect(most).toBeLessThan(0.2);
+  });
+
+  it('eases back out once the tower is no longer between them', () => {
+    const cam = new ChaseCamera(undefined, undefined, solids());
+    const f = { x: 10, y: 0, z: 5, yaw: 0 };
+    cam.snap(f);
+    // the helicopter goes on 30 north, past the tower's side, and the camera with it
+    const free = new ChaseCamera();
+    f.y = 30;
+    free.snap(f);
+    for (let n = 0; n < 180; n++) cam.step(DT, f);
+    expect(Math.hypot(...cam.position.map((v, k) => v - free.position[k]))).toBeLessThan(0.1);
+  });
+
+  it('chases exactly as before where no structure is near', () => {
+    const far = new ChaseCamera(undefined, undefined, solids([{ ...TOWER, x: 500 }]));
+    const none = new ChaseCamera();
+    const f = { x: 0, y: 0, z: 5, yaw: 0 };
+    far.snap(f);
+    none.snap(f);
+    for (let n = 0; n < 240; n++) {
+      f.x += 0.3;
+      f.yaw += 0.01;
+      far.step(DT, f);
+      none.step(DT, f);
+      expect(far.position).toEqual(none.position);
+    }
+  });
+
+  describe('on the island', () => {
+    /** The game and the camera stepped together under `controls`, the camera held off every structure each frame. */
+    function chase(game: Game, cam: ChaseCamera, frames: number, controls = IDLE) {
+      let drawn = 0;
+      for (let n = 0; n < frames; n++) {
+        game.step(DT, controls);
+        cam.step(DT, game.helicopter);
+        const d = game.solids.distanceAt(...cam.position);
+        expect(d, `the camera at ${cam.position.map((v) => v.toFixed(2)).join(', ')}`).toBeGreaterThanOrEqual(
+          CHASE.offBlocks,
+        );
+        if (d < CHASE.offBlocks + 0.01) drawn++;
+      }
+      return drawn;
+    }
+    const course = LEVELS.find((level) => level.kind === 'course')!;
+    const gates = course.steps.filter((step): step is Gate => step.kind === 'gate');
+
+    it.each(gates.map((gate) => [gate.label, gate] as const))(
+      'is never within its distance of a structure, flown %s at full speed',
+      (_, gate) => {
+        const { game } = newGame();
+        const cam = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+        const [ax, ay] = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
+        const [x, y] = [gate.x - ax * 60, gate.y - ay * 60];
+        game.helicopter.place(x, y, gate.z - HELICOPTER.size.middle, gate.yaw);
+        cam.snap(game.helicopter);
+        chase(game, cam, 300, { forward: 1, turn: 0, lift: HOVER_LIFT });
+      },
+    );
+
+    it('is drawn in, never within its distance, as the helicopter turns on the spot beside a tower', () => {
+      const { game } = newGame();
+      const cam = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+      for (const tower of STRUCTURES.filter((b) => b.kind === 'tower')) {
+        // hovering with its rotor clear of the tower's face by 2, at half its height
+        const out = tower.length / 2 + HELICOPTER.size.rotorRadius + 2;
+        game.helicopter.place(
+          tower.x + out * Math.cos(tower.yaw),
+          tower.y + out * Math.sin(tower.yaw),
+          tower.z + 18,
+          0,
+        );
+        cam.snap(game.helicopter);
+        // a turn and a half, so the camera's line passes through the tower at least once
+        expect(chase(game, cam, 300, { forward: 0, turn: 1, lift: HOVER_LIFT }), tower.name).toBeGreaterThan(10);
+      }
+    });
   });
 });
 

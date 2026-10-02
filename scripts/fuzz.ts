@@ -4,6 +4,8 @@
  *   npm run fuzz                         seeds 1-12, 4000 frames each
  *   npm run fuzz -- --seeds 1-50 --frames 10000
  *   npm run fuzz -- --seed 17            one seed again, with what was done before it went wrong
+ *   npm run fuzz -- --level under-and-between
+ *                                        every seed starting on one level, picked as by a player who has done them all
  *
  * Fails, and says how to play the failure again, if any seed breaks a rule
  * or throws. Says how much of each thing was done and happened, so a monkey
@@ -14,8 +16,8 @@ import { Worker, isMainThread, parentPort, workerData } from 'node:worker_thread
 import { fuzz, type FuzzResult } from './fuzzer';
 
 if (!isMainThread) {
-  const { seed, frames } = workerData as { seed: number; frames: number };
-  parentPort!.postMessage(fuzz(seed, frames));
+  const { seed, frames, level } = workerData as { seed: number; frames: number; level?: string };
+  parentPort!.postMessage(fuzz(seed, frames, level));
 } else {
   await main();
 }
@@ -30,6 +32,7 @@ async function main() {
   const range = (value('seeds') ?? '1-12').split('-').map(Number);
   const seeds = one !== undefined ? [+one] : Array.from({ length: range[1] - range[0] + 1 }, (_, k) => range[0] + k);
   const frames = +(value('frames') ?? 4000);
+  const level = value('level');
   const started = performance.now();
   const queue = [...seeds];
   const results: FuzzResult[] = [];
@@ -38,7 +41,7 @@ async function main() {
       for (let seed = queue.shift(); seed !== undefined; seed = queue.shift()) {
         results.push(
           await new Promise<FuzzResult>((resolve, reject) => {
-            const worker = new Worker(new URL(`file://${process.argv[1]}`), { workerData: { seed, frames } });
+            const worker = new Worker(new URL(`file://${process.argv[1]}`), { workerData: { seed, frames, level } });
             worker.once('message', resolve);
             worker.once('error', reject);
           }),
@@ -57,7 +60,7 @@ async function main() {
   };
   const failed = results.filter((r) => r.failure);
   console.log(
-    `${seeds.length} seed${seeds.length === 1 ? '' : 's'}, ${frames} frames each (${((performance.now() - started) / 1000).toFixed(1)} s)`,
+    `${seeds.length} seed${seeds.length === 1 ? '' : 's'}, ${frames} frames each${level ? `, from ${level}` : ''} (${((performance.now() - started) / 1000).toFixed(1)} s)`,
   );
   console.log(`  done: ${sum('done')}`);
   console.log(`  happened: ${sum('happened')}`);
@@ -67,7 +70,7 @@ async function main() {
     for (const p of f.problems) console.error(`  ${p}`);
     console.error('  after:');
     for (const l of f.log) console.error(`    ${l}`);
-    console.error(`  again: npm run fuzz -- --seed ${f.seed} --frames ${frames}`);
+    console.error(`  again: npm run fuzz -- --seed ${f.seed} --frames ${frames}${level ? ` --level ${level}` : ''}`);
   }
   if (failed.length) process.exitCode = 1;
   else console.log('  no rule broken');

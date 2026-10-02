@@ -17,6 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { WOOD, fingers, leverTravel, standardView, start, watch } from './game';
 
@@ -41,7 +42,7 @@ async function carrying(page: Page, along = 0.45) {
   await page.evaluate(
     ([hover, share]) => {
       const g = window.game!;
-      const [pickup, drop] = g.state().mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
+      const [pickup, drop] = g.state().mission.steps.map((step) => ('pad' in step ? step.pad : -1));
       const [a, b] = [g.content().pads[pickup], g.content().pads[drop]];
       g.teleport(a.x, a.y, 0, 0);
       g.step(100);
@@ -56,19 +57,20 @@ async function carrying(page: Page, along = 0.45) {
 }
 
 /**
- * A ring trial under way: the level `id` flown, its rings before `ring` passed by lining up on each and flying through,
- * and the helicopter `back` before that one on its axis, at its height, flying at it; the camera behind it.
+ * A level of rings or openings under way: the level `id` flown, its rings and openings before the one at `n` flown
+ * through by lining up on each, and the helicopter `back` before that one on its axis, at its height, flying at it;
+ * the camera behind it.
  */
-async function ringAhead(page: Page, id: string, ring: number, back: number) {
+async function openingAhead(page: Page, id: string, n: number, back: number) {
   await page.evaluate(
     ([level, n, b, middle, hover]) => {
       const g = window.game!;
       g.play(level);
       g.fly(0, 0, 1);
       g.step(30);
-      const rings = g.state().mission.steps.filter((s) => s.kind === 'ring');
+      const openings = g.state().mission.steps.filter((s) => s.kind === 'ring' || s.kind === 'gate');
       const before = (k: number, d: number) => {
-        const r = rings[k];
+        const r = openings[k];
         const [x, y] = [r.x - Math.cos(r.yaw) * d, r.y - Math.sin(r.yaw) * d];
         g.teleport(x, y, r.z - middle - g.floorAt(x, y), r.yaw);
       };
@@ -82,7 +84,27 @@ async function ringAhead(page: Page, id: string, ring: number, back: number) {
       g.step(40);
       g.release();
     },
-    [id, ring, back, HELICOPTER.size.middle, HOVER_LIFT] as const,
+    [id, n, back, HELICOPTER.size.middle, HOVER_LIFT] as const,
+  );
+}
+
+/**
+ * The helicopter hovering beside the west tower, facing straight away from it, its look point `out` from the tower's
+ * middle and at half its height, so the tower is behind it and its camera.
+ */
+async function besideTower(page: Page, out: number) {
+  await page.evaluate(
+    ([out, hover, lookUp]) => {
+      const g = window.game!;
+      g.play('under-and-between');
+      const tower = g.content().structures.find((b) => b.name === 'the west tower')!;
+      const [x, y] = [tower.x + out * Math.cos(tower.yaw), tower.y + out * Math.sin(tower.yaw)];
+      g.teleport(x, y, tower.z + tower.height / 2 - lookUp - g.floorAt(x, y), tower.yaw);
+      g.fly(0, 0, hover);
+      g.step(60);
+      g.release();
+    },
+    [out, HOVER_LIFT, CHASE.lookUp] as const,
   );
 }
 
@@ -96,7 +118,7 @@ const TWO_DONE = { best: { 'first-delivery': 41.2, 'ring-trial': 33.5 } };
 async function delivered(page: Page) {
   await page.evaluate(() => {
     const g = window.game!;
-    const [pickup, drop] = g.state().mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
+    const [pickup, drop] = g.state().mission.steps.map((step) => ('pad' in step ? step.pad : -1));
     const pads = g.content().pads;
     g.fly(0, 0, 1);
     g.step(30);
@@ -187,7 +209,7 @@ test.describe('what it looks like', () => {
     await page.evaluate(() => {
       const g = window.game!;
       const first = g.state().mission.steps[0];
-      if (first.kind === 'ring') throw new Error('the first level starts with a parcel');
+      if (!('pad' in first)) throw new Error('the first level starts with a parcel');
       const pad = g.content().pads[first.pad];
       g.teleport(pad.x, pad.y, 0, 2.3);
       g.step(45);
@@ -229,7 +251,7 @@ test.describe('what it looks like', () => {
   test('the ring trial: the ring wanted lit ahead, the rings after it white, the one passed gone', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    await ringAhead(page, 'ring-trial', 1, 45);
+    await openingAhead(page, 'ring-trial', 1, 45);
     await hideStats(page);
     await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 2 of 6');
     await expect(page.locator('#view')).toHaveScreenshot('rings.png', TOLERANCE);
@@ -239,10 +261,48 @@ test.describe('what it looks like', () => {
   test('up the valley: climbing the river to the fourth ring, the rest above it', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    await ringAhead(page, 'up-the-valley', 3, 40);
+    await openingAhead(page, 'up-the-valley', 3, 40);
     await hideStats(page);
     await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 4 of 9');
     await expect(page.locator('#view')).toHaveScreenshot('rings-valley.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the course: under the bridge in the gorge, from the chase camera', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await openingAhead(page, 'under-and-between', 1, 45);
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Fly under the bridge');
+    await expect(page.locator('#view')).toHaveScreenshot('course-bridge.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the course: between the towers, from the chase camera', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await openingAhead(page, 'under-and-between', 0, 35);
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Fly between the towers');
+    await expect(page.locator('#view')).toHaveScreenshot('course-towers.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the camera drawn in, a tower between it and the helicopter', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await besideTower(page, 16);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('camera-drawn-in.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the camera looking down, the helicopter backed up to a tower with no room behind it', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await besideTower(page, 9.4);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('camera-over.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -330,9 +390,18 @@ test.describe('the first level on a phone, upright', () => {
   test('the ring trial, the ring wanted lit ahead', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    await ringAhead(page, 'ring-trial', 1, 45);
+    await openingAhead(page, 'ring-trial', 1, 45);
     await hideStats(page);
     await expect(page).toHaveScreenshot('rings-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the course, under the bridge', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await openingAhead(page, 'under-and-between', 1, 30);
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('course-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 

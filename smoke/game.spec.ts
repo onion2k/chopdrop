@@ -238,7 +238,7 @@ test('the first level: picked up and delivered by key, and flown again by the bu
   const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
   const state = () => page.evaluate(() => window.game!.state());
   const pads = await page.evaluate(() => window.game!.content().pads);
-  const [pickup, drop] = (await state()).mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
+  const [pickup, drop] = (await state()).mission.steps.map((step) => ('pad' in step ? step.pad : -1));
   await step(1);
   await expect(page.locator('#hud .goal')).toHaveText('Pick up the parcel at the meadow pad');
   await expect(page.locator('#hud .far')).toHaveText(/^\d+ m$/);
@@ -542,7 +542,7 @@ for (const [name, viewport] of [
       const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
       const state = () => page.evaluate(() => window.game!.state());
       const pads = await page.evaluate(() => window.game!.content().pads);
-      const [pickup, drop] = (await state()).mission.steps.map((step) => (step.kind === 'ring' ? -1 : step.pad));
+      const [pickup, drop] = (await state()).mission.steps.map((step) => ('pad' in step ? step.pad : -1));
       // the lever starts at the sink: set over a pad, the helicopter settles onto it and the parcel goes on and off
       for (const pad of [pickup, drop]) {
         await page.evaluate((p) => window.game!.teleport(p.x, p.y, 4, 0), pads[pad]);

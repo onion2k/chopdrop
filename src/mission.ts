@@ -2,8 +2,9 @@
  * A level as it is flown: a list of steps done in order, and the time from
  * the first lift-off to the last step kept. A parcel is picked up by landing
  * on its pad and staying while it is loaded, and set down on another the same
- * way; a ring is passed by flying the helicopter's middle through its opening
- * the way it faces, in its turn. What happens is told through the events it
+ * way; a ring or an opening is passed by flying the helicopter's middle
+ * through it the way it faces, in its turn; and a landing is done as the
+ * skids touch the pad. What happens is told through the events it
  * is handed; how it is drawn and put into words is the page's. Without it
  * there is nothing on the island to do.
  */
@@ -45,13 +46,33 @@ export interface Ring {
 }
 
 /**
- * What a level asks for, a step at a time: a parcel picked up from a pad, or set down on one, by its place in the
- * island's list; or a ring flown through.
+ * An opening to fly through, under something or between things, square to the ground with its middle at (x, y, z) and
+ * facing `yaw`, `width` across and `height` from its foot to its top; `label` is where it is, as the words say it:
+ * "under the bridge".
  */
-export type Step = { kind: 'pickup'; pad: number } | { kind: 'drop'; pad: number } | Ring;
+export interface Gate {
+  kind: 'gate';
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  width: number;
+  height: number;
+  label: string;
+}
 
-/** What sort of level it is, as the list of levels names it: parcels to deliver, or rings to fly through. */
-export type LevelKind = 'delivery' | 'rings';
+/**
+ * What a level asks for, a step at a time: a parcel picked up from a pad, or set down on one, by its place in the
+ * island's list; a ring or an opening flown through; or a pad landed on, which is done the moment the skids touch it.
+ */
+export type Step =
+  { kind: 'pickup'; pad: number } | { kind: 'drop'; pad: number } | { kind: 'land'; pad: number } | Ring | Gate;
+
+/**
+ * What sort of level it is, as the list of levels names it: parcels to deliver, rings to fly through, or a course of
+ * openings and rings flown round to a landing.
+ */
+export type LevelKind = 'delivery' | 'rings' | 'course';
 
 export interface Level {
   /** What it is known by in the save: a name, never its place in the list, so a level slotted in before it changes nothing. */
@@ -72,12 +93,15 @@ export interface Point3 {
 
 /**
  * What a mission tells as it happens: a parcel loaded on a pad, one delivered to a pad, a ring passed (which of how
- * many, counting from one), and the level done, with its time.
+ * many, counting from one), an opening flown through (by where it is), a pad landed on, and the level done, with its
+ * time.
  */
 export interface MissionEvents {
   loaded?(pad: number): void;
   delivered?(pad: number): void;
   passed?(ring: number, of: number): void;
+  through?(label: string): void;
+  landed?(pad: number): void;
   finished?(seconds: number): void;
 }
 
@@ -134,20 +158,20 @@ export class Mission {
     return this.flying.steps[this.next];
   }
 
-  /** The pad the helicopter is wanted on now, or −1 for a ring and once the level is done. */
+  /** The pad the helicopter is wanted on now, or −1 for a ring or an opening, and once the level is done. */
   get target(): number {
     const s = this.current;
-    return s && s.kind !== 'ring' ? s.pad : -1;
+    return s && s.kind !== 'ring' && s.kind !== 'gate' ? s.pad : -1;
   }
 
   /**
    * Where the step being done wants the helicopter, for the arrow and the pilot: the top of its pad, or the middle of
-   * its ring; null once all are done.
+   * its ring or its opening; null once all are done.
    */
   get goal(): Readonly<Point3> | null {
     const s = this.current;
     if (!s) return null;
-    const at = s.kind === 'ring' ? s : this.pads[s.pad];
+    const at = s.kind === 'ring' || s.kind === 'gate' ? s : this.pads[s.pad];
     this.wanted.x = at.x;
     this.wanted.y = at.y;
     this.wanted.z = at.z;
@@ -195,11 +219,16 @@ export class Mission {
     if (!s) return;
     if (!h.landed) this.started = true;
     if (this.started) this.time += dt;
-    if (s.kind === 'ring') {
+    if (s.kind === 'ring' || s.kind === 'gate') {
       if (this.through(s, h)) this.stepDone(s);
       return;
     }
     this.remember(h);
+    // a landing is done as the skids touch the pad, with no wait
+    if (s.kind === 'land') {
+      if (onPad(h, this.pads[s.pad])) this.stepDone(s);
+      return;
+    }
     if (!onPad(h, this.pads[s.pad])) {
       this.loading = 0;
       return;
@@ -215,6 +244,8 @@ export class Mission {
     this.next++;
     if (s.kind === 'pickup') this.events.loaded?.(s.pad);
     else if (s.kind === 'drop') this.events.delivered?.(s.pad);
+    else if (s.kind === 'land') this.events.landed?.(s.pad);
+    else if (s.kind === 'gate') this.events.through?.(s.label);
     else this.events.passed?.(this.ringsTo(this.next - 1), this.ringCount);
     if (this.done) this.events.finished?.(this.time);
   }
@@ -228,28 +259,31 @@ export class Mission {
   }
 
   /**
-   * Whether the helicopter's middle went through `ring` since the last step: from behind its face to in front of it,
-   * crossing inside its opening, and no further than a step's flight. Where it is now is remembered either way.
+   * Whether the helicopter's middle went through `opening`, a ring or a gate, since the last step: from behind its face
+   * to in front of it, crossing inside it (within a ring's radius of its middle, or within a gate's half width to the
+   * side and half height up or down), and no further than a step's flight. Where it is now is remembered either way.
    */
-  private through(ring: Ring, h: Readonly<Lander>): boolean {
+  private through(opening: Ring | Gate, h: Readonly<Lander>): boolean {
     const x = h.x,
       y = h.y,
       z = h.z + HELICOPTER.size.middle;
     const w = this.was;
     const fresh = !this.seen;
-    const ax = Math.cos(ring.yaw),
-      ay = Math.sin(ring.yaw);
-    const before = (w.x - ring.x) * ax + (w.y - ring.y) * ay;
-    const now = (x - ring.x) * ax + (y - ring.y) * ay;
+    const ax = Math.cos(opening.yaw),
+      ay = Math.sin(opening.yaw);
+    const before = (w.x - opening.x) * ax + (w.y - opening.y) * ay;
+    const now = (x - opening.x) * ax + (y - opening.y) * ay;
     const moved = Math.hypot(x - w.x, y - w.y, z - w.z);
     this.remember(h);
     if (fresh || before >= 0 || now < 0 || moved > RING.jump) return false;
-    // where the move crossed the ring's face, and whether that is inside the opening
+    // where the move crossed the face, across it and up from its middle, and whether that is inside the opening
     const t = before / (before - now);
-    return (
-      Math.hypot(w.x + (x - w.x) * t - ring.x, w.y + (y - w.y) * t - ring.y, w.z + (z - w.z) * t - ring.z) <=
-      ring.opening
-    );
+    const cx = w.x + (x - w.x) * t - opening.x,
+      cy = w.y + (y - w.y) * t - opening.y;
+    const across = -cx * ay + cy * ax;
+    const up = w.z + (z - w.z) * t - opening.z;
+    if (opening.kind === 'ring') return Math.hypot(across, up) <= opening.opening;
+    return Math.abs(across) <= opening.width / 2 && Math.abs(up) <= opening.height / 2;
   }
 
   /** Where the helicopter's middle is now, for the next step to go from. */

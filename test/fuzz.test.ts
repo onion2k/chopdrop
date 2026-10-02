@@ -26,6 +26,9 @@ describe('the fuzzer', () => {
       'pick a level',
       'ring run',
       'through the ring',
+      'structure run',
+      'onto a structure',
+      'through the gate',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
@@ -43,8 +46,27 @@ describe('the fuzzer', () => {
       'delivered',
       'passed a ring',
       'knocked off a ring',
+      'knocked off a structure',
+      'rested on a structure',
     ])
       expect(seen, happening).toContain(happening);
+  });
+
+  it('flies the course through to its landing, started on it as a player who has done every level does', () => {
+    const course = LEVELS.find((level) => level.kind === 'course')!.id;
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 12; seed++) {
+      const r = fuzz(seed, 4000, course);
+      expect(r.failure, JSON.stringify(r.failure)).toBe(null);
+      expect(r.happened[`flew ${course}`], `seed ${seed}`).toBeGreaterThan(0);
+      for (const key of Object.keys(r.happened)) seen.add(key);
+    }
+    for (const happening of ['through a gate', 'passed a ring', 'landed where wanted', 'knocked off a structure'])
+      expect(seen, happening).toContain(happening);
+  });
+
+  it('refuses a level it does not have, by name', () => {
+    expect(fuzz(1, 10, 'no-such-level').failure?.problems.join()).toMatch(/there is no level "no-such-level"/);
   });
 
   it('comes back with a save, and flies every level the list lets it pick, over the seeds `npm run fuzz` plays', () => {

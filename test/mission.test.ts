@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
-import { DELIVERY, onPad, type Level, type Ring } from '../src/mission';
+import { DELIVERY, onPad, type Gate, type Level, type Ring } from '../src/mission';
 import { seeded } from '../src/random';
 import { DT, padsOf } from './helpers';
 
@@ -338,5 +338,106 @@ describe('a trial of rings', () => {
     expect(mission.goal).toBeNull();
     expect(mission.carrying).toBe(false);
     expect(mission.waiting).toBe(-1);
+  });
+});
+
+describe('a course: openings to fly through, and a pad to land on', () => {
+  // an opening under a bridge and one between two towers, high over the island, then home to land on
+  const UNDER: Gate = { kind: 'gate', x: 0, y: 0, z: 200, yaw: 0, width: 20, height: 12, label: 'under the bridge' };
+  const BETWEEN: Gate = {
+    kind: 'gate',
+    x: 80,
+    y: 0,
+    z: 200,
+    yaw: 0,
+    width: 16,
+    height: 30,
+    label: 'between the towers',
+  };
+  const RING: Ring = { kind: 'ring', x: 160, y: 0, z: 200, yaw: 0, opening: 8 };
+  const course: Level = {
+    id: 'course',
+    name: 'Course',
+    kind: 'course',
+    steps: [UNDER, BETWEEN, RING, { kind: 'land', pad: 0 }],
+  };
+  const flying = () => {
+    const told: string[] = [];
+    const game = new Game({
+      random: seeded(1),
+      levels: [course],
+      events: {
+        through: (label) => told.push(`through ${label}`),
+        passed: (ring, of) => told.push(`passed ${ring} ${of}`),
+        landed: (pad) => told.push(`landed ${pad}`),
+        finished: (id, seconds) => told.push(`finished ${id} ${seconds.toFixed(2)}`),
+      },
+    });
+    game.play('course');
+    const h = game.helicopter;
+    const put = (x: number, y: number, z: number, yaw = 0) => {
+      h.placeAbove(x, y, 0, yaw);
+      h.z = z - HELICOPTER.size.middle;
+      h.vz = 0;
+    };
+    const fly = (seconds: number, controls: Controls = { forward: 1, turn: 0, lift: HOVER_LIFT }) => {
+      for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, controls);
+    };
+    return { game, told, mission: game.mission, h, put, fly };
+  };
+
+  it('wants the middle of the opening first, and no pad and no ring yet', () => {
+    const { mission } = flying();
+    expect(mission.current).toBe(UNDER);
+    expect({ ...mission.goal }).toEqual({ x: 0, y: 0, z: 200 });
+    expect([mission.target, mission.ringNumber, mission.ringCount]).toEqual([-1, 0, 1]);
+  });
+
+  it('passes an opening flown through anywhere inside its width and height, the way it faces, and tells it', () => {
+    const { mission, told, put, fly } = flying();
+    // near its corner: 9 to the side of 10, and 5 up of 6
+    put(-20, 9, 205);
+    fly(2);
+    expect(told).toEqual(['through under the bridge']);
+    expect(mission.current).toBe(BETWEEN);
+  });
+
+  it('passes nothing flown over the opening, beside it, or through it the wrong way', () => {
+    const { mission, told, put, fly } = flying();
+    put(-20, 0, 207);
+    fly(2);
+    put(-20, 11, 200);
+    fly(2);
+    put(20, 0, 200, Math.PI);
+    fly(2);
+    expect(told).toEqual([]);
+    expect(mission.next).toBe(0);
+  });
+
+  it('counts the ring among rings, and the openings not at all', () => {
+    const { mission, told, put, fly } = flying();
+    put(-20, 0, 200);
+    fly(8);
+    expect(told).toEqual(['through under the bridge', 'through between the towers', 'passed 1 1']);
+    expect(mission.current?.kind).toBe('land');
+  });
+
+  it('wants the pad last, which the beacon stands over, and is done the moment the skids touch it', () => {
+    const { game, mission, told, put, fly } = flying();
+    put(-20, 0, 200);
+    fly(8);
+    const pad = game.island.pads[0];
+    expect(mission.target).toBe(0);
+    expect({ ...mission.goal }).toEqual({ x: pad.x, y: pad.y, z: pad.z });
+    // hovered over it, it is not landed on
+    game.helicopter.placeAbove(pad.x, pad.y, 0.1, 0);
+    fly(1, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(mission.done).toBe(false);
+    // and set down on it, it is done that step, with no wait
+    game.helicopter.placeAbove(pad.x, pad.y, 0, 0);
+    game.step(DT);
+    expect(told.slice(-2, -1)).toEqual(['landed 0']);
+    expect(told.at(-1)).toMatch(/^finished course \d+\.\d\d$/);
+    expect(mission.done).toBe(true);
   });
 });

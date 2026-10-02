@@ -102,5 +102,5 @@ export function islandCanopy(): Canopy {
 
 /** The pads of a level's steps, in order: where its parcels wait and where they are wanted. */
 export function padsOf(level: Level): number[] {
-  return level.steps.flatMap((step) => (step.kind === 'ring' ? [] : [step.pad]));
+  return level.steps.flatMap((step) => ('pad' in step ? [step.pad] : []));
 }

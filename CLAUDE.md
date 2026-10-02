@@ -9,10 +9,10 @@ rules in `~/.claude/CLAUDE.md` apply too.
 
 The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
-from a recipe, its trees bowing in the rotor's downwash, and six levels,
-four deliveries and two ring trials, opened one by one from the list the
-game opens on, the best time on each kept in a save. The search and the
-course are still to come (the plan is
+from a recipe, its trees bowing in the rotor's downwash, a bridge and two towers that stand
+solid in every level, and seven levels, four deliveries, two ring trials
+and a course, opened one by one from the list the game opens on, the best
+time on each kept in a save. The search is still to come (the plan is
 `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
 physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
@@ -80,7 +80,8 @@ back with the first body.
     npm run check:quick    formatting, types, lint, unit tests (the pre-commit hook)
     npm run check          all of it: check:quick, fuzz, determinism, leaks, pace, then smoke with perf and look (~70 s)
     npm test               unit tests (Vitest, test/)
-    npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again
+    npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again,
+                           -- --level ID starts every seed on one level, as a player with every level done
     npm run perf           boot, frame and download held to smoke/perf-baseline.json and the budget;
                            the chase and downwash views' frames told, not held
     npm run smoke          the game in headless Chromium on the real GPU (Playwright, smoke/)
@@ -104,14 +105,17 @@ says why. Look at every picture.
   step at a time, and `restart`. It knows nothing of the renderer or the
   page; what happens in it is told through the `GameEvents` handed in.
   `src/mission.ts` is the level as it is flown: its steps done in order
-  (a parcel picked up, a parcel dropped, a ring flown through), the loading
-  that fills while the helicopter is landed on the pad it is wanted on
-  (`onPad`, said once), a ring passed by the helicopter's middle crossing
-  its opening the way it faces, and the clock from the first lift-off; the
-  levels themselves are content, `LEVELS` in `arena.ts`, each known by an
-  `id` that is a name and flown from its `start` pad, home unless it says.
-  `src/solids.ts` is what the helicopter cannot enter, the level's ring
-  tubes, handed to it as the ground is: it is pushed out and knocked back.
+  (a parcel picked up, a parcel dropped, a ring or an opening flown
+  through, a landing), the loading that fills while the helicopter is
+  landed on the pad it is wanted on (`onPad`, said once), a ring or a gate
+  passed by one rule, the helicopter's middle crossing its opening the way
+  it faces, and the clock from the first lift-off; the levels themselves
+  are content, `LEVELS` in `arena.ts`, each known by an `id` that is a name
+  and flown from its `start` pad, home unless it says.
+  `src/solids.ts` is what the helicopter cannot enter, the structures'
+  blocks, kept, and the level's ring tubes, handed to it as the ground is:
+  it is pushed out and knocked back. It also says how far a point is from
+  the nearest block, for the camera.
 - `src/helicopter.ts` is the player's machine: the flight, and the numbers
   and size in `HELICOPTER`, said once. It is handed a ground, an edge and
   the height of what it can stand on at every point, not the island.
@@ -126,9 +130,11 @@ says why. Look at every picture.
   fingers as numbers and tested headless, and drawn and fed by the page in
   `src/touch-view.ts`; `src/chase.ts` is the camera
   rig, stepped with the game so the pictures repeat, and handed the ground
-  so that it stays above it and the canopy (`src/canopy.ts`, the top of the
+  so that it stays above it, the canopy (`src/canopy.ts`, the top of the
   crowns over a point, built by `game.ts`) so that it is never in a tree,
-  looking ahead along its way to rise in time.
+  looking ahead along its way to rise in time, and the solids, so that a
+  structure between it and the helicopter draws it in, and one too near
+  behind tilts its line up or down by the least that leaves it room.
 - `src/downwash.ts` is the air under the rotor: `washAt` says how it blows
   at a point, from where the helicopter is and how fast its rotor turns.
   `src/sway.ts` is the trees in it, a pool of those moving, sized once, each
@@ -140,11 +146,12 @@ says why. Look at every picture.
   nothing held sinks; `release`; `teleport`, which takes a height above the
   floor, where the skids rest, and not a height above the sea), the ground
   (`groundAt`, and `floorAt`, which on a slope is higher, so a test that
-  wants a height above the sea takes the floor from it), what is
-  on the island (`content`: the pads, home, the bounds and the ceiling), the
-  level (`state().mission`, `events()`, which takes what the game has
-  told, `restart`, and `play`, which flies any level as the list does, locked
-  or not), the levels and the save (`levels`, `save`), what is on the
+  wants a height above the sea takes the floor from it), what is on the
+  island (`content`: the pads, home, the bounds, the ceiling and the
+  structures), the level (`state().mission`, `events()`, which takes what
+  the game has told, as lines like `through under the bridge` and
+  `landed 6`, `restart`, and `play`, which flies any level as the list
+  does, locked or not), the levels and the save (`levels`, `save`), what is on the
   screen (`state().screen`), the trees (`treesNear`, each with its height and
   spread as drawn, and `sway`:
   which are moving and how each leans), the
@@ -157,8 +164,9 @@ says why. Look at every picture.
 - `src/invariants.ts` lists the rules that must always hold;
   `scripts/fuzzer.ts` plays the game at random and checks them.
 - Content lives in `arena.ts`: the island's recipe, with every number
-  named, and the one island built from it once. The generator is
-  `island.ts`, the same for any recipe; `heightfield.ts` is the grid it
+  named, the one island built from it once, and the structures, each a
+  block with a name and a kind. The generator is `island.ts`, the same for
+  any recipe, which drops the trees from the ground the recipe clears; `heightfield.ts` is the grid it
   works on, sampled on the triangles that are drawn, and the algorithms
   that read a grid (the flood, the flow, the distances); `noise.ts` is the
   seeded noise. Chance comes from `random.ts`, handed in. `scene.ts` is the
@@ -220,6 +228,26 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   and "fly again"; flown through by key and by touch in
   `smoke/game.spec.ts`, and pictured (`level-loading.png`,
   `level-carrying.png`, `level-delivered.png`, and on a phone).
+- **The structures**, for anything that stands on the island: a block in
+  `STRUCTURES` (`arena.ts`), with a name a broken rule says and a kind the
+  scene paints by; the trees cleared from round it by the recipe's
+  `trees.clear`; solid in `solids.ts`, ruled by `checkSolids`; drawn
+  static by `scene.ts` in the chosen paint; kept off by the camera, ruled
+  by `checkCamera`; gone round, over or out from under by the autopilot's
+  `detour`; read by `debug.ts` (`content().structures`); flown at and set
+  down on by the fuzzer's "structure run" and "onto a structure"; held on
+  the ground, clear of the trees, with room under the deck, and clear of
+  every other level's way, in `test/levels.test.ts`; pictured
+  (`course-bridge.png`, `course-towers.png`, `camera-drawn-in.png`,
+  `camera-over.png`, `course-phone.png`), and every picture that can see
+  one written again.
+- **The course**, for a level of more than one kind of step: `gate` and
+  `land` steps in `mission.ts`, a gate passed by the ring's rule with a
+  rectangle for its opening; put into words by `hud.ts`; flown by the
+  autopilot; flown through by the fuzzer's "through the gate", and by a run
+  of openings that ends on the pad wanted, started on the course by
+  `fuzz -- --level`; flown by key and touch in `smoke/course.spec.ts`, and
+  finished by the play-through.
 - **The rings**, for anything solid or flown through: a `ring` step in
   `mission.ts`, its tube a solid in `solids.ts` that `game.ts` sets for the
   level; drawn by `scene.ts` (lit when wanted, white after, gone once
@@ -323,7 +351,8 @@ For anything new in the arena, check what it does:
 - **the land and the edge of the world:** hills, water and the edge flown
   at, carried past, dropped over, in the corners; never left inside the
   land
-- **the camera:** following at full speed, and behind something tall
+- **the camera:** following at full speed, behind something tall, under
+  something low, and with no room behind the helicopter
 - **save:** saved, reloaded, and loaded from an old save without the field
 - **scale:** many at once, at capacity; and what it costs a frame at that
   many

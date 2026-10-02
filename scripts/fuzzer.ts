@@ -56,8 +56,12 @@ export interface FuzzResult {
   happened: Record<string, number>;
 }
 
-/** Play `frames` frames of the game at random from `seed`. */
-export function fuzz(seed: number, frames: number): FuzzResult {
+/**
+ * Play `frames` frames of the game at random from `seed`; from the level named `level`, if given, as a player who has
+ * done every level picks it from the list, so a level late in the list, which a player reaches only after the rest,
+ * is played as long as the first.
+ */
+export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
   // the monkey's own chance, apart from the game's, so what it decides does not shift what the game does
   const random = seeded(seed * 7 + 1);
   const happened: Record<string, number> = {};
@@ -74,8 +78,11 @@ export function fuzz(seed: number, frames: number): FuzzResult {
   });
 
   try {
-    // a player back for another go, with the first few levels done, as many as chance says, none or all
-    const flown = Math.floor(random() * (LEVELS.length + 1));
+    // a player back for another go, with the first few levels done, as many as chance says, none or all: all, where a
+    // level is asked for, so it is open
+    if (level !== undefined && !LEVELS.some((l) => l.id === level)) throw new Error(`there is no level "${level}"`);
+    const chance = Math.floor(random() * (LEVELS.length + 1));
+    const flown = level === undefined ? chance : LEVELS.length;
     const save = { best: Object.fromEntries(LEVELS.slice(0, flown).map((level, k) => [level.id, 40 + 20 * k])) };
     const game = new Game({
       random: seeded(seed),
@@ -84,6 +91,8 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
         passed: () => count(happened, 'passed a ring'),
+        through: () => count(happened, 'through a gate'),
+        landed: () => count(happened, 'landed where wanted'),
         finished: (_id, _seconds, best) => count(happened, best ? 'finished, a best time' : 'finished'),
       },
     });
@@ -96,17 +105,22 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       count(happened, `flew ${game.mission.level.id}`);
     };
     // the game opens on the list, so the first thing a player does is pick from it
-    pick();
+    if (level === undefined) pick();
+    else {
+      game.play(level);
+      count(happened, `flew ${level}`);
+    }
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
-    const rig = new ChaseCamera(game.island.ground, game.canopy);
+    const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
     rig.snap(heli);
     const sizes = TREE_KINDS.map(treeSize);
     const { bounds } = heli;
     const { ground, pads, trees, treeCount } = game.island;
     let controls: Controls = { ...IDLE };
     // how many frames the current thing is still held for, whether it is a landing, which ends when the skids touch,
-    // and the rhythm the lift is tapped at, frames on and frames in all, if it is a hover
-    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 }, wander: false };
+    // the rhythm the lift is tapped at, frames on and frames in all, if it is a hover, and whether it is a run of
+    // openings, each lined up on as the last is passed, and the step it is at
+    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 }, wander: false, run: false, at: 0 };
     const between = (a: number, b: number) => a + random() * (b - a);
     const timesDone = (what: string) => done[what] ?? 0;
     const did = (what: string) => {
@@ -129,6 +143,65 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         if (ground.heightAt(x, y) > 2) break;
       }
       return [x, y];
+    };
+    /** Whether it is pressed down onto the top of a structure, all but still: its middle over the top and inside its edges. */
+    const restingOnTop = () =>
+      Math.abs(heli.vz) < 0.5 &&
+      game.solids.blocks.some((block) => {
+        const c = Math.cos(block.yaw),
+          s = Math.sin(block.yaw);
+        const along = (heli.x - block.x) * c + (heli.y - block.y) * s;
+        const across = -(heli.x - block.x) * s + (heli.y - block.y) * c;
+        return (
+          Math.abs(along) < block.length / 2 &&
+          Math.abs(across) < block.width / 2 &&
+          heli.z + HELICOPTER.size.middle > block.z + block.height
+        );
+      });
+    /**
+     * Over the pad wanted, down onto it, and waiting there as long as a player does, or not quite; whether a pad is
+     * wanted.
+     */
+    const downOnWantedPad = (): boolean => {
+      const target = game.mission.target;
+      if (target < 0) return false;
+      const pad = pads[target];
+      const spread = pad.radius * 0.5;
+      heli.placeAbove(
+        pad.x + between(-spread, spread),
+        pad.y + between(-spread, spread),
+        between(2, 30),
+        between(-Math.PI, Math.PI),
+      );
+      controls = { forward: 0, turn: 0, lift: -1 };
+      hold.busy = framesToLand() + Math.floor(between(30, 150));
+      return true;
+    };
+    /**
+     * Lined up on the ring or the opening wanted, before it on its axis, at its height and a little off its middle, and
+     * flown at it, as a player who has it right does; whether there was one to line up on. From rest it covers 18 in
+     * a second and a half and 44 in two and a half: through, and on past it.
+     */
+    const lineUp = (): boolean => {
+      const step = game.mission.current;
+      if (step?.kind !== 'ring' && step?.kind !== 'gate') return false;
+      const back = between(10, 25);
+      const ax = Math.cos(step.yaw),
+        ay = Math.sin(step.yaw);
+      const [off, up] =
+        step.kind === 'ring'
+          ? [between(-step.opening / 3, step.opening / 3), 0]
+          : [between(-step.width / 6, step.width / 6), between(-step.height / 8, step.height / 8)];
+      heli.place(
+        step.x - ax * back - ay * off,
+        step.y - ay * back + ax * off,
+        step.z - HELICOPTER.size.middle + up,
+        step.yaw,
+      );
+      controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
+      hold.busy = 150;
+      hold.at = game.mission.next;
+      return true;
     };
     /** Everything a player can make happen, each as often as it is weighted. */
     const actions: { name: string; weight: number; places?: boolean; go: () => void }[] = [
@@ -283,19 +356,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         places: true,
         weight: 5,
         go() {
-          // over the pad the parcel is wanted at, down onto it, and waiting there as long as a player does, or not quite
-          const target = game.mission.target;
-          if (target < 0) return;
-          const pad = pads[target];
-          const spread = pad.radius * 0.5;
-          heli.placeAbove(
-            pad.x + between(-spread, spread),
-            pad.y + between(-spread, spread),
-            between(2, 30),
-            between(-Math.PI, Math.PI),
-          );
-          controls = { forward: 0, turn: 0, lift: -1 };
-          hold.busy = framesToLand() + Math.floor(between(30, 150));
+          downOnWantedPad();
         },
       },
       {
@@ -327,22 +388,70 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         places: true,
         weight: 4,
         go() {
-          // lined up on the ring wanted, before it, at its height, and through it as a player who has it right does
-          const ring = game.mission.current;
-          if (ring?.kind !== 'ring') return;
-          // from rest it covers 18 in a second and a half and 44 in two and a half: through, and on past it
-          const back = between(10, 25);
-          const ax = Math.cos(ring.yaw),
-            ay = Math.sin(ring.yaw);
-          const off = between(-ring.opening / 3, ring.opening / 3);
+          // lined up on the ring wanted, before it, at its height, and through it as a player who has it right does,
+          // and as often, on to the next and through that, as one who has the whole trial right
+          if (game.mission.current?.kind !== 'ring') return;
+          lineUp();
+          hold.run = random() < 0.5;
+        },
+      },
+      {
+        name: 'through the gate',
+        places: true,
+        weight: 3,
+        go() {
+          // lined up on the opening wanted, the same, and on through the course as often
+          if (game.mission.current?.kind !== 'gate') return;
+          lineUp();
+          hold.run = random() < 0.5;
+        },
+      },
+      {
+        name: 'structure run',
+        places: true,
+        weight: 2,
+        go() {
+          // at the bridge or a tower from any side, high or low, fast or slow, as a player who has misjudged it does:
+          // knocked off a face, a corner, the deck's underside or its top, or under it and out the other side
+          const { blocks } = game.solids;
+          const block = blocks[Math.floor(random() * blocks.length)];
+          const round = between(-Math.PI, Math.PI);
+          const away = Math.max(block.length, block.width) / 2 + between(8, 30);
           heli.place(
-            ring.x - ax * back - ay * off,
-            ring.y - ay * back + ax * off,
-            ring.z - HELICOPTER.size.middle,
-            ring.yaw,
+            block.x + Math.cos(round) * away,
+            block.y + Math.sin(round) * away,
+            between(block.z - 6, block.z + block.height + 4) - HELICOPTER.size.middle,
+            round + Math.PI + between(-0.4, 0.4),
           );
-          controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
-          hold.busy = 150;
+          controls = {
+            forward: between(0.3, 1),
+            turn: between(-0.2, 0.2),
+            lift: between(HOVER_LIFT - 0.3, HOVER_LIFT + 0.3),
+          };
+          hold.busy = Math.floor(between(60, 180));
+        },
+      },
+      {
+        name: 'onto a structure',
+        places: true,
+        weight: 1,
+        go() {
+          // over the deck or a tower's top, and let down or left to sink onto it: it rests there, pressed on it and
+          // never in it, and never landed, and pushed on, it slides off its edge
+          const { blocks } = game.solids;
+          const block = blocks[Math.floor(random() * blocks.length)];
+          const along = between(-block.length / 2, block.length / 2),
+            across = between(-block.width / 2, block.width / 2);
+          const c = Math.cos(block.yaw),
+            s = Math.sin(block.yaw);
+          heli.place(
+            block.x + along * c - across * s,
+            block.y + along * s + across * c,
+            block.z + block.height + HELICOPTER.size.rotorRadius - HELICOPTER.size.middle + between(0.5, 12),
+            between(-Math.PI, Math.PI),
+          );
+          controls = { forward: random() < 0.3 ? between(0.2, 1) : 0, turn: 0, lift: random() < 0.5 ? -1 : 0 };
+          hold.busy = Math.floor(between(120, 300));
         },
       },
       {
@@ -433,6 +542,7 @@ export function fuzz(seed: number, frames: number): FuzzResult {
         hold.landing = false;
         hold.tap.every = 0;
         hold.wander = false;
+        hold.run = false;
         act();
       }
       if (hold.wander) {
@@ -451,7 +561,13 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       const wasSwaying = game.sway.count;
       game.step(DT, controls);
       rig.step(DT, heli);
-      if (game.solids.touched) count(happened, 'knocked off a ring');
+      if (game.solids.touched) {
+        // the solid touched: a structure, if the nearest is within its reach of its middle, and a ring if not
+        const { middle, rotorRadius } = HELICOPTER.size;
+        const block = game.solids.distanceAt(heli.x, heli.y, heli.z + middle) <= rotorRadius + 1e-6;
+        count(happened, block ? 'knocked off a structure' : 'knocked off a ring');
+        if (block && restingOnTop()) count(happened, 'rested on a structure');
+      }
       if (wasSwaying === 0 && game.sway.count > 0) count(happened, 'trees swayed');
       if (wasSwaying > 0 && game.sway.count === 0) count(happened, 'trees settled');
       if (wasLanded && !landed()) count(happened, 'took off');
@@ -465,6 +581,20 @@ export function fuzz(seed: number, frames: number): FuzzResult {
       if (!wasAtCeiling && heli.z === HELICOPTER.ceiling) count(happened, 'reached the ceiling');
       if (!wasAtEdge && touchingEdge()) count(happened, 'touched the edge');
       if (hold.landing && landed()) hold.busy = 0;
+      // in a run of openings, the next lined up on as soon as the last is passed, and after the last, down onto the
+      // pad wanted, if one is, as a course ends
+      if (hold.run && game.mission.next !== hold.at) {
+        if (lineUp()) {
+          rig.snap(heli);
+          log.push(`frame ${frame}: on to the next`);
+        } else {
+          hold.run = false;
+          if (downOnWantedPad()) {
+            rig.snap(heli);
+            log.push(`frame ${frame}: down onto the pad wanted`);
+          }
+        }
+      }
       if (frame % CHECK_EVERY === 0) {
         const problems = [...checkInvariants(game), ...checkCamera(rig, game, sizes)];
         if (problems.length) return fail(problems);

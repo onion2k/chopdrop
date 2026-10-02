@@ -75,11 +75,14 @@ describe('the game', () => {
   });
 });
 
-/** The level being flown, finished: lifted off for `airborne` seconds, then set down on each step's pad in turn and waited on. */
+/**
+ * The level being flown, finished: lifted off for `airborne` seconds, then set down on each step's pad in turn and
+ * waited on. It is for levels of pads alone.
+ */
 function finish(game: Game, airborne = 1) {
   for (let f = 0, n = Math.round(airborne / DT); f < n; f++) game.step(DT, { forward: 0, turn: 0, lift: 1 });
   for (const step of game.mission.level.steps) {
-    if (step.kind === 'ring') continue;
+    if (!('pad' in step)) continue;
     const pad = game.island.pads[step.pad];
     game.helicopter.placeAbove(pad.x, pad.y, 0, pad.yaw);
     for (let f = 0, n = Math.round((DELIVERY.load + 0.1) / DT); f < n; f++) game.step(DT);
@@ -132,7 +135,7 @@ describe('the levels in play', () => {
   it('knows the level after the one being flown, and that there is none after the last', () => {
     const { game } = played();
     expect(game.nextLevel?.id).toBe('ring-trial');
-    game.play('mountain-drop');
+    game.play('under-and-between');
     expect(game.nextLevel).toBeUndefined();
   });
 
@@ -167,6 +170,7 @@ describe('the levels in play', () => {
       { id: 'over-the-range', name: 'Over the range', kind: 'delivery', standing: 'locked', best: null },
       { id: 'up-the-valley', name: 'Up the valley', kind: 'rings', standing: 'locked', best: null },
       { id: 'mountain-drop', name: 'Mountain drop', kind: 'delivery', standing: 'locked', best: null },
+      { id: 'under-and-between', name: 'Under and between', kind: 'course', standing: 'locked', best: null },
     ]);
   });
 
@@ -225,6 +229,32 @@ describe('the levels in play', () => {
     expect(game.mission.next, 'and did not pass the ring').toBe(0);
   });
 
+  it('never knocks the helicopter faster than it can fly, struck at full speed on any part of a tube', () => {
+    const { game } = played();
+    game.play('ring-trial');
+    const ring = game.mission.current as Ring;
+    const h = game.helicopter;
+    for (let k = 0; k < 72; k++) {
+      // at full speed along the ring's axis, from just behind it, square on to its tube and glancing off it 3 inside
+      // and outside its line, where the way off it slants up or down
+      const round = ((k % 24) / 24) * Math.PI * 2;
+      const line = ring.opening + RING.tube + [0, -3, 3][Math.floor(k / 24)];
+      const across = Math.cos(round) * line,
+        up = Math.sin(round) * line;
+      const [ax, ay] = [Math.cos(ring.yaw), Math.sin(ring.yaw)];
+      h.placeAbove(ring.x - ax * 6 - ay * across, ring.y - ay * 6 + ax * across, 0, ring.yaw);
+      h.z = ring.z + up - HELICOPTER.size.middle;
+      h.vx = ax * HELICOPTER.maxSpeed;
+      h.vy = ay * HELICOPTER.maxSpeed;
+      h.vz = 0;
+      for (let f = 0; f < 30; f++) {
+        game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+        expect(Math.abs(h.vz), `struck at ${k}, frame ${f}`).toBeLessThanOrEqual(HELICOPTER.climbSpeed + 1e-9);
+        expect(h.speed, `struck at ${k}, frame ${f}`).toBeLessThanOrEqual(HELICOPTER.maxSpeed + 1e-9);
+      }
+    }
+  });
+
   it('pushes the helicopter out of a ring it is put inside', () => {
     const { game } = played();
     game.play('ring-trial');
@@ -233,6 +263,40 @@ describe('the levels in play', () => {
     game.helicopter.place(ring.x, ring.y, ring.z + ring.opening + RING.tube - HELICOPTER.size.middle, 0);
     expect(checkInvariants(game)).toEqual([]);
   });
+
+  it.each(['the bridge', 'the west tower', 'the east tower'])(
+    'rests on the top of %s let down onto it, never inside it and never landed, and pushed on, slides off its edge',
+    (name) => {
+      const { game } = played();
+      const block = game.solids.blocks.find((b) => b.name === name)!;
+      const h = game.helicopter;
+      const { middle, rotorRadius } = HELICOPTER.size;
+      const top = block.z + block.height;
+      // over its middle, facing across it, let sink onto it with nothing held, every frame checked
+      h.place(block.x, block.y, top + rotorRadius - middle + 4, block.yaw + Math.PI / 2);
+      for (let f = 0; f < 240; f++) {
+        game.step(DT);
+        expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+        expect(h.landed, `frame ${f}`).toBe(false);
+      }
+      // pressed on its top by the reach of its rotor, and all but still
+      expect(h.z + middle - rotorRadius).toBeCloseTo(top, 1);
+      expect(Math.abs(h.vz)).toBeLessThan(0.5);
+      // flown on across it, off its side, and sinking once it is past the edge: lower than it rested, over ground
+      // that is not the block's, which west of the towers rises to meet it higher than their tops
+      const rested = h.z;
+      let lowest = rested;
+      for (let f = 0; f < 300; f++) {
+        game.step(DT, { forward: 1, turn: 0, lift: 0 });
+        expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+        lowest = Math.min(lowest, h.z);
+      }
+      expect(lowest).toBeLessThan(rested - 1);
+      const [c, sn] = [Math.cos(block.yaw), Math.sin(block.yaw)];
+      const across = -(h.x - block.x) * sn + (h.y - block.y) * c;
+      expect(Math.abs(across)).toBeGreaterThan(block.width / 2 + rotorRadius);
+    },
+  );
 
   it('keeps its save in memory unless handed a store, so a game run without a page writes nowhere', () => {
     const game = new Game({ random: seeded(1) });

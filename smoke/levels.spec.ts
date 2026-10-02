@@ -36,6 +36,7 @@ test('opens on the list over the island, the game held behind it, and flies the 
     { name: 'Over the range', standing: 'locked', picked: false, best: '' },
     { name: 'Up the valley', standing: 'locked', picked: false, best: '' },
     { name: 'Mountain drop', standing: 'locked', picked: false, best: '' },
+    { name: 'Under and between', standing: 'locked', picked: false, best: '' },
   ]);
   await expect(page.locator('#levels .go')).toHaveText('Fly level 1 · First delivery');
   await expect(page.locator('#hud .top')).toBeHidden();
@@ -64,15 +65,16 @@ test('lets no locked level be flown, by click or by key, and picks any other by 
     ['locked', false, ''],
     ['locked', false, ''],
     ['locked', false, ''],
+    ['locked', false, ''],
   ]);
   // a locked tile clicked, and the arrows run past the last open one: still the second picked
   await page.locator('#levels .lv').nth(3).click({ force: true });
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowDown');
-  expect((await tiles(page)).map((t) => t.picked)).toEqual([false, true, false, false, false, false]);
+  expect((await tiles(page)).map((t) => t.picked)).toEqual([false, true, false, false, false, false, false]);
   // back to the first, done, by key, and on to it again by a click
   await page.keyboard.press('ArrowLeft');
-  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false, false, false]);
+  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false, false, false, false]);
   await page.locator('#levels .lv').nth(1).click();
   await expect(page.locator('#levels .go')).toHaveText('Fly level 2 · Ring trial');
   await page.locator('#levels .go').click();
@@ -119,6 +121,7 @@ test('keeps a level done, opens the next, and goes on to it from the card; a rel
     ['locked', false],
     ['locked', false],
     ['locked', false],
+    ['locked', false],
   ]);
   await expect(page.locator('#levels .close')).toBeHidden();
   await page.keyboard.press('Escape');
@@ -148,6 +151,7 @@ test('keeps a level done, opens the next, and goes on to it from the card; a rel
     ['locked', false],
     ['locked', false],
     ['locked', false],
+    ['locked', false],
   ]);
   expect(problems).toEqual([]);
 });
@@ -166,7 +170,7 @@ test('goes back to the list mid-flight by Esc or the corner button, and carries 
   await page.keyboard.press('Escape');
   await expect(page.locator('#levels')).toBeVisible();
   await expect(page.locator('#levels .close')).toBeVisible();
-  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false, false, false]);
+  expect((await tiles(page)).map((t) => t.picked)).toEqual([true, false, false, false, false, false, false]);
   await step(page, 60);
   // held where it was, and Esc again carries on from there
   expect((await state(page)).helicopter).toEqual(before.helicopter);
@@ -210,6 +214,7 @@ test('refuses a save it cannot read, saying why, starts afresh, and leaves it be
   expect((await page.evaluate(() => window.game!.save())).refused).toBe('it is not JSON');
   expect((await tiles(page)).map((t) => t.standing)).toEqual([
     'open',
+    'locked',
     'locked',
     'locked',
     'locked',

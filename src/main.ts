@@ -12,7 +12,7 @@ import { bakeEnvironment } from 'artshape-render/render/env';
 import { noFog } from 'artshape-render/game/fog';
 import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer, type Look, type Post } from 'artshape-render/game/renderer';
-import { ChaseCamera, fovFor } from './chase';
+import { CHASE, ChaseCamera, fovFor } from './chase';
 import { Autopilot } from './autopilot';
 import { createApi } from './debug';
 import { frameCost } from './frame-cost';
@@ -134,7 +134,7 @@ async function main() {
   const env = bakeEnvironment(ctx, 'daylight', { size: 128, mips: 6 });
   renderer.setEnvironment(env.specular, env.brdf, env.mips);
   renderer.camera.fov = 40;
-  renderer.camera.near = 2;
+  renderer.camera.near = CHASE.near;
   renderer.camera.far = FAR;
 
   // ---- the game ----
@@ -169,6 +169,8 @@ async function main() {
       loaded: (pad) => tell(`loaded ${pad}`),
       delivered: (pad) => tell(`delivered ${pad}`),
       passed: (ring, of) => tell(`passed ${ring} ${of}`),
+      through: (label) => tell(`through ${label}`),
+      landed: (pad) => tell(`landed ${pad}`),
       finished: (id, seconds, best) => {
         tell(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`);
         hud.finished(
@@ -188,7 +190,7 @@ async function main() {
   bootMsg.textContent = 'laying out the land…';
   await nextFrame();
   const scene = new Scene();
-  renderer.setStatic(scene.static(game.island));
+  renderer.setStatic(scene.static(game.island, game.solids.blocks));
   renderer.setDynamic(scene.dynamic(game.island));
   renderer.setSunShadow(scene.shadowBox);
   // there is no lamp on the island: the sun is all the light there is
@@ -242,7 +244,7 @@ async function main() {
   let pilot: Autopilot | null = null;
   /** What the helicopter was flown with at the last step, copied, for the test API. */
   const flown = { forward: 0, turn: 0, lift: 0 };
-  const rig = new ChaseCamera(game.island.ground, game.canopy);
+  const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
   rig.snap(game.helicopter);
   const cam = renderer.camera;
   cam.position = rig.position;

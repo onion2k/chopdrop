@@ -14,7 +14,7 @@
  */
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
-import { RING, onPad, type Ring } from './mission';
+import { RING, onPad, type Gate, type Ring } from './mission';
 
 /** How it flies. Distances are world units, speeds a second. */
 export const PILOT = {
@@ -45,6 +45,8 @@ export const PILOT = {
   cone: 1,
   /** How near in front of a ring's face it goes straight out sideways first. */
   near: 10,
+  /** How near its rotor may come to a block on its way before it goes round or over. */
+  margin: 3,
 };
 
 export class Autopilot {
@@ -67,15 +69,21 @@ export class Autopilot {
     c.lift = 0;
     const step = mission.current;
     if (!step) return c;
-    if (step.kind === 'ring') return this.ring(step);
+    if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
     const pad = island.pads[mission.target];
     // on the pad that is wanted: still, while the parcel loads
     if (onPad(h, pad)) return c;
 
-    const dx = pad.x - h.x,
+    let dx = pad.x - h.x,
       dy = pad.y - h.y;
     const far = Math.hypot(dx, dy);
-    const cruise = this.cruise(pad.x, pad.y, pad.z);
+    let cruise = this.cruise(pad.x, pad.y, pad.z);
+    // round a tower or over the deck, where one is in the way
+    if (this.detour(null, pad.x, pad.y, cruise)) {
+      dx = this.via.x - h.x;
+      dy = this.via.y - h.y;
+      cruise = this.via.z;
+    }
     if (far < PILOT.over && h.speed < PILOT.slow) {
       // over it and all but stopped: straight down onto it
       c.lift = -1;
@@ -103,7 +111,7 @@ export class Autopilot {
    * into the tube; and from far off, high enough over the ground on its way, as to a pad. Another ring in the way is
    * gone round, as `detour` says.
    */
-  private ring(r: Ring): Controls {
+  private through(r: Ring | Gate): Controls {
     const c = this.controls;
     const h = this.game.helicopter;
     const ax = Math.cos(r.yaw),
@@ -113,7 +121,7 @@ export class Autopilot {
     const along = dx * ax + dy * ay;
     const across = -dx * ay + dy * ax;
     const side = across < 0 ? -1 : 1;
-    const wide = r.opening + PILOT.beside;
+    const wide = (r.kind === 'ring' ? r.opening : r.width / 2) + PILOT.beside;
     let to: number, off: number;
     let speed: number = PILOT.through;
     if (along < 0 && Math.abs(across) < -along * PILOT.cone) {
@@ -139,7 +147,8 @@ export class Autopilot {
       ty = r.y + to * ay + off * ax;
     // the ring's height when near it; from further off, high enough over the ground on the way there too
     const height = r.z - HELICOPTER.size.middle;
-    const far = Math.hypot(r.x - h.x, r.y - h.y) > PILOT.lead * 2;
+    // down to an opening's height from further off than a ring's, so it is level before it is under anything
+    const far = Math.hypot(r.x - h.x, r.y - h.y) > PILOT.lead * (r.kind === 'gate' ? 3 : 2);
     let want = far ? Math.max(height, this.cruise(tx, ty, -Infinity)) : height;
     if (this.detour(r, tx, ty, want)) ({ x: tx, y: ty, z: want } = this.via);
     const heading = Math.atan2(ty - h.y, tx - h.x);
@@ -155,12 +164,14 @@ export class Autopilot {
   }
 
   /**
-   * Whether a ring other than `wanted` is in the way to (tx, ty) at the height `want`, and if so where to go instead and
-   * how high, written into `via`. Caught in its opening, out along its axis the side the goal is, holding its height so
-   * as not to sink into its tube; and where the way would cross its face near enough its opening for the rotor to
-   * touch, past its rim instead, on the side the way was nearer.
+   * Whether something is in the way to (tx, ty) at the height `want`, and if so where to go instead and how high,
+   * written into `via`. A ring other than `wanted`: caught in it, inside its opening or under, over or beside it within
+   * its tube's reach, out along its axis the side the goal is, holding its height so as not to climb or sink into it;
+   * and where the way would cross its face near enough its opening for the rotor to touch, past its rim instead, on the
+   * side the way was nearer. A block: a low one, as the deck is, gone over, unless what is wanted is under it, and from
+   * under it, out across it first; a tall one, as a tower is, gone round, on the side the way passes it.
    */
-  private detour(wanted: Ring, tx: number, ty: number, want: number): boolean {
+  private detour(wanted: Ring | Gate | null, tx: number, ty: number, want: number): boolean {
     const h = this.game.helicopter;
     const { middle, rotorRadius } = HELICOPTER.size;
     for (const o of this.game.mission.level.steps) {
@@ -171,11 +182,13 @@ export class Autopilot {
       const goal = (tx - o.x) * ax + (ty - o.y) * ay;
       const fromAcross = -(h.x - o.x) * ay + (h.y - o.y) * ax;
       const fromUp = h.z + middle - o.z;
-      if (Math.abs(from) < rotorRadius + RING.tube && Math.hypot(fromAcross, fromUp) < o.opening + RING.tube) {
+      const reach = o.opening + RING.tube + rotorRadius;
+      // anywhere under it counts, since what is under it would climb into it
+      if (Math.abs(from) < rotorRadius + RING.tube && Math.abs(fromAcross) < reach && fromUp < reach) {
         const way = goal < 0 ? -1 : 1;
         this.via.x = o.x + ax * way * PILOT.lead;
         this.via.y = o.y + ay * way * PILOT.lead;
-        this.via.z = o.z - middle;
+        this.via.z = h.z;
         return true;
       }
       if (from < 0 === goal < 0) continue;
@@ -186,6 +199,49 @@ export class Autopilot {
       const side = across < 0 ? -1 : 1;
       this.via.x = o.x - ay * side * (o.opening + PILOT.beside);
       this.via.y = o.y + ax * side * (o.opening + PILOT.beside);
+      this.via.z = want;
+      return true;
+    }
+    const { solids } = this.game;
+    for (const block of solids.blocks) {
+      // the way there, sampled from where it is, against the block: whether the rotor would come within the margin of it
+      let near = false;
+      for (let k = 0; k <= PILOT.look && !near; k++) {
+        const t = k / PILOT.look;
+        const z = h.z + (want - h.z) * t;
+        near = solids.gapTo(block, h.x + (tx - h.x) * t, h.y + (ty - h.y) * t, z) < PILOT.margin;
+      }
+      if (!near) continue;
+      if (block.height < block.length) {
+        // low and wide: over it, unless what is wanted is under it; and from under it, out at the height it is first,
+        // climbing only once the rotor is clear of it
+        if (want + middle + rotorRadius < block.z) continue;
+        if (h.z + middle + rotorRadius < block.z + PILOT.margin) {
+          // straight out across it, on the side the goal is, so it passes nothing standing under it
+          const c = Math.cos(block.yaw),
+            s = Math.sin(block.yaw);
+          const along = (h.x - block.x) * c + (h.y - block.y) * s;
+          const side = -(tx - block.x) * s + (ty - block.y) * c < 0 ? -1 : 1;
+          const out = side * (block.width / 2 + rotorRadius + PILOT.margin + 4);
+          this.via.x = block.x + along * c - out * s;
+          this.via.y = block.y + along * s + out * c;
+          this.via.z = Math.min(want, h.z);
+          return true;
+        }
+        this.via.x = tx;
+        this.via.y = ty;
+        this.via.z = Math.max(want, block.z + block.height + rotorRadius + PILOT.margin - middle);
+        return true;
+      }
+      // tall: round it, beside its middle on the side the way passes, by its half diagonal and the rotor and a margin
+      const dx = tx - h.x,
+        dy = ty - h.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const cross = (dx * (block.y - h.y) - dy * (block.x - h.x)) / length;
+      const side = cross > 0 ? -1 : 1;
+      const out = Math.hypot(block.length, block.width) / 2 + rotorRadius + PILOT.margin + 4;
+      this.via.x = block.x + (-dy / length) * side * out;
+      this.via.y = block.y + (dx / length) * side * out;
       this.via.z = want;
       return true;
     }

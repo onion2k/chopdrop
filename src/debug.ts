@@ -34,6 +34,7 @@ import { TREE_STRIDE } from './island';
 import { treeSize } from './meshes';
 import type { Step } from './mission';
 import { seeded } from './random';
+import type { Block } from './solids';
 
 declare global {
   interface Window {
@@ -152,9 +153,18 @@ export interface GameApi {
   /**
    * What the helicopter is kept inside and what is on the island, so a test does not say it twice: where its middle
    * may go (`bounds`), the island's whole extent (`world`), the highest it can climb to (`ceiling`, above the sea),
-   * the sea's level, the landing pads and the first of them, `home`, which it starts on.
+   * the sea's level, the landing pads and the first of them, `home`, which it starts on, and the structures that
+   * stand in every level, each the box it is solid as.
    */
-  content(): { bounds: Bounds; world: Bounds; ceiling: number; seaLevel: number; pads: PadInfo[]; home: PadInfo };
+  content(): {
+    bounds: Bounds;
+    world: Bounds;
+    ceiling: number;
+    seaLevel: number;
+    pads: PadInfo[];
+    home: PadInfo;
+    structures: Block[];
+  };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
   /**
@@ -168,7 +178,10 @@ export interface GameApi {
   /** The trees moving in the downwash, and how. */
   sway(): SwayState;
 
-  /** What the game has told since this was last asked, oldest first, as lines: `loaded 4`, `delivered 1`, `finished 47.25`. */
+  /**
+   * What the game has told since this was last asked, oldest first, as lines: `loaded 4`, `delivered 1`, `passed 2 6`,
+   * `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`.
+   */
   events(): string[];
   /** The level from the start again, as "Fly again" does. */
   restart(): void;
@@ -302,6 +315,7 @@ export function createApi(host: DebugHost): GameApi {
       seaLevel: game.island.seaLevel,
       pads: game.island.pads.map(padInfo),
       home: padInfo(game.island.pads[0]),
+      structures: game.solids.blocks.map((block) => ({ ...block })),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
     floorAt: (x, y) => helicopter.floorAt(x, y),

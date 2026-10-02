@@ -28,6 +28,10 @@ const KINDS: Record<LevelKind, { label: string; icon: string }> = {
     label: 'Rings',
     icon: '<ellipse cx="7" cy="10" rx="3.5" ry="6" /><ellipse cx="14" cy="10" rx="3" ry="5" />',
   },
+  course: {
+    label: 'Course',
+    icon: '<path d="M3 17 L3 5 M17 17 L17 5 M3 7 L17 7 M7 17 L7 11 L13 11 L13 17" />',
+  },
 };
 
 const LOCK = '<path d="M6 9 V6.5 a4 4 0 0 1 8 0 V9" /><rect x="4" y="9" width="12" height="9" rx="2" />';

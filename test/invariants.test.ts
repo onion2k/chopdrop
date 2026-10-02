@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
-import { ChaseCamera } from '../src/chase';
+import { CHASE, ChaseCamera } from '../src/chase';
 import { RING, type Ring } from '../src/mission';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
@@ -159,6 +159,26 @@ describe('what must always hold', () => {
     expect(TREE_STRIDE).toBe(7);
   });
 
+  it('reports a camera nearer a structure than it draws, inside it or beside it, and holds one just far enough off', () => {
+    const { game } = newGame();
+    const cam = new ChaseCamera(game.island.ground, islandCanopy(), game.solids);
+    const tower = game.solids.blocks.find((block) => block.kind === 'tower')!;
+    const [c, s] = [Math.cos(tower.yaw), Math.sin(tower.yaw)];
+    // chasing, set at a distance out from the tower's face, half way up it
+    const at = (out: number) => {
+      cam.snap(game.helicopter);
+      const d = tower.length / 2 + out;
+      cam.position[0] = tower.x + d * c;
+      cam.position[1] = tower.y + d * s;
+      cam.position[2] = tower.z + tower.height / 2;
+      return checkCamera(cam, game, canopyKinds()).join('\n');
+    };
+    expect(at(-1)).toMatch(/in a structure: the camera .* is 0.00 from the (west|east) tower/);
+    expect(at(CHASE.near - 0.1)).toMatch(/in a structure: the camera .* is 1.90 from the (west|east) tower/);
+    expect(at(CHASE.near + 0.01)).not.toMatch(/in a structure/);
+    expect(at(CHASE.offBlocks)).toBe('');
+  });
+
   it('holds of a level flown through, and reports a level at no step, a loading out of range or off the pad, and a clock gone wrong', () => {
     const { game } = newGame();
     const { pads } = game.island;
@@ -202,9 +222,7 @@ describe('what must always hold', () => {
     h.y = ring.y;
     h.z = ring.z + ring.opening + RING.tube - HELICOPTER.size.middle;
     h.floor = h.floorAt(h.x, h.y);
-    expect(checkInvariants(game).join('\n')).toMatch(
-      /inside ring 1 of 6: its middle 0\.0+ from the tube's centre line/,
-    );
+    expect(checkInvariants(game).join('\n')).toMatch(/inside ring 1 of 6: its reach 5\.200 past touching it/);
   });
 
   it('holds of a level done and kept, and reports a best time slower than the level was just done in, or not a time', () => {

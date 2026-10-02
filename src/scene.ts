@@ -20,8 +20,10 @@ import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
 import { RING, RINGS, type Step } from './mission';
+import type { Block } from './solids';
 import {
   beacon,
+  box,
   crate,
   ring,
   helicopterBody,
@@ -164,6 +166,23 @@ const RING_PAINT: Paint = { albedo: seen(0xf5f3e8), roughness: 0.4 };
  * with it: a valley ring of 8 looks a sixth thinner than the solid tube it is, which is a hair at the size it is seen.
  */
 const RING_DRAWN = 10;
+
+/**
+ * The structures, painted steel as chosen from a mock: the deck red with a white rail along each edge, standing on
+ * grey stone, and the towers banded red and white like an air race's pylons, so each is seen from far off for the
+ * thing to fly under or between that it is.
+ */
+const DECK_PAINT: Paint = { albedo: seen(0xc8452a), roughness: 0.6 };
+const RAIL_PAINT: Paint = { albedo: seen(0xf3ead2), roughness: 0.6 };
+const ABUTMENT_PAINT: Paint = { albedo: seen(0x8e8e86), roughness: 0.9 };
+const TOWER_RED_PAINT: Paint = { albedo: seen(0xd8402a), roughness: 0.6 };
+const TOWER_WHITE_PAINT: Paint = { albedo: seen(0xf3ead2), roughness: 0.6 };
+/**
+ * How the structures are cut up to be painted: the deck's slab is this thick, and its rails, this thick, take the rest
+ * of its height; a tower's bands are this tall, counted from its top so the top band is whole and red.
+ */
+const DECK = { slab: 1.5, rail: 0.3 };
+const BAND = 7;
 
 /**
  * The beacon: how wide and tall it stands, how far above the pad it starts so it never stands through the helicopter
@@ -516,8 +535,11 @@ export class Scene {
     max: [SHADOW_REACH, SHADOW_REACH, HELICOPTER.ceiling + HELICOPTER.size.height + SHADOW_ROOF],
   };
 
-  /** What does not move: the land, the water and the pads. It is slow, and is the page's to do once, at boot. */
-  static(island: Island): GameGroup[] {
+  /**
+   * What does not move: the land, the water, the pads, and the `structures` that stand on the island. It is slow, and
+   * is the page's to do once, at boot.
+   */
+  static(island: Island, structures: readonly Block[] = []): GameGroup[] {
     this.names.length = 0;
     const groups: GameGroup[] = [];
     const add: Add = (name, mesh, paint, matrices = stay(), count, materials) => {
@@ -548,7 +570,58 @@ export class Scene {
     if (island.rivers.length > 0) add('rivers', riverMesh(island.rivers), RIVER_PAINT);
 
     this.pads(island, add);
+    this.structures(structures, add);
     return groups;
+  }
+
+  /**
+   * The structures, each drawn as the box it is solid as, cut up to be painted: a deck as its slab and a rail along
+   * each edge on it, an abutment whole, and a tower in bands from its top down. A group is added only for what there is.
+   */
+  private structures(blocks: readonly Block[], add: Add) {
+    const decks = blocks.filter((b) => b.kind === 'deck');
+    const abutments = blocks.filter((b) => b.kind === 'abutment');
+    const towers = blocks.filter((b) => b.kind === 'tower');
+    const unit = box(1, 1, 1);
+    const group = (name: string, paint: Paint, placings: readonly (readonly number[])[]) => {
+      if (placings.length === 0) return;
+      const m = new Float32Array(placings.length * 16);
+      placings.forEach(([x, y, z, yaw, length, width, height], k) => place(m, k, x, y, z, yaw, length, width, height));
+      add(name, unit, paint, m, placings.length);
+    };
+    group(
+      'deck',
+      DECK_PAINT,
+      decks.map((b) => [b.x, b.y, b.z, b.yaw, b.length, b.width, DECK.slab]),
+    );
+    group(
+      'rails',
+      RAIL_PAINT,
+      decks.flatMap((b) =>
+        [-1, 1].map((side) => {
+          const across = (side * (b.width - DECK.rail)) / 2;
+          const [x, y] = [b.x - Math.sin(b.yaw) * across, b.y + Math.cos(b.yaw) * across];
+          return [x, y, b.z + DECK.slab, b.yaw, b.length, DECK.rail, b.height - DECK.slab];
+        }),
+      ),
+    );
+    group(
+      'abutments',
+      ABUTMENT_PAINT,
+      abutments.map((b) => [b.x, b.y, b.z, b.yaw, b.length, b.width, b.height]),
+    );
+    const bands = (red: boolean) =>
+      towers.flatMap((b) => {
+        const out: number[][] = [];
+        for (let k = red ? 0 : 1; k * BAND < b.height; k += 2) {
+          const top = b.z + b.height - k * BAND;
+          const foot = Math.max(b.z, top - BAND);
+          out.push([b.x, b.y, foot, b.yaw, b.length, b.width, top - foot]);
+        }
+        return out;
+      });
+    group('tower red', TOWER_RED_PAINT, bands(true));
+    group('tower white', TOWER_WHITE_PAINT, bands(false));
   }
 
   /** The pads: a slab and its paint each, at the pad's top, turned to face where the pad says. */

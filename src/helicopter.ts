@@ -281,8 +281,16 @@ export class Helicopter {
 
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    // out of anything solid it has flown into, and knocked back off it, before the edge and the ground have their say
-    this.solid?.collide(this);
+    // out of anything solid it has flown into, and knocked back off it, before the edge and the ground have their say;
+    // a glancing knock turns speed along it into speed up or down, which is held to what it can fly
+    if (this.solid?.collide(this)) {
+      this.vz = clamp(this.vz, -H.climbSpeed, H.climbSpeed);
+      const speed = Math.hypot(this.vx, this.vy);
+      if (speed > H.maxSpeed) {
+        this.vx *= H.maxSpeed / speed;
+        this.vy *= H.maxSpeed / speed;
+      }
+    }
     const b = this.bounds;
     if (this.x < b.minX) {
       this.x = b.minX;

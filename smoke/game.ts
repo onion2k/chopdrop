@@ -154,7 +154,8 @@ export function leverTravel(page: Page): Promise<number> {
 
 /**
  * The level being flown, finished as a player finishes it: lifted off, then each step done in turn, landed on its pad
- * and waited on, or lined up a short way before its ring at its height and flown through. The game must be paused.
+ * and waited on, or lined up a short way before its ring or its opening at its height and flown through. The game must
+ * be paused.
  */
 export async function finish(page: Page) {
   await page.evaluate(
@@ -165,7 +166,7 @@ export async function finish(page: Page) {
       g.release();
       const pads = g.content().pads;
       for (const step of g.state().mission.steps) {
-        if (step.kind === 'ring') {
+        if (step.kind === 'ring' || step.kind === 'gate') {
           const [ax, ay] = [Math.cos(step.yaw), Math.sin(step.yaw)];
           const [x, y] = [step.x - ax * 12, step.y - ay * 12];
           g.teleport(x, y, step.z - middle - g.floorAt(x, y), step.yaw);

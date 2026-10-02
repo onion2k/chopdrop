@@ -374,6 +374,8 @@ export interface IslandRecipe {
     scale: readonly [number, number];
     /** No tree this close to a pad's rim, to water's edge, to a lake. */
     apron: number;
+    /** Ground kept clear of trees, under what stands on the island: none there is cleared unless it is listed. */
+    clear?: readonly Clearing[];
     water: number;
     /** The forest mask: noise at `wavelength`, forest from `from` (fully at `to`). */
     forest: { wavelength: number; octaves: number; from: number; to: number };
@@ -1724,6 +1726,40 @@ function plant(
   return { trees: trees.slice(0, count * TREE_STRIDE), count };
 }
 
+/** A rectangle of ground kept clear of trees: its middle at (x, y), turned to `yaw`, `length` along that and `width` across. */
+export interface Clearing {
+  x: number;
+  y: number;
+  yaw: number;
+  length: number;
+  width: number;
+}
+
+/** The trees whose foot is in none of the clearings, in the order they were planted. */
+function clearTrees(
+  trees: Float32Array,
+  count: number,
+  clear: readonly Clearing[],
+): { trees: Float32Array; count: number } {
+  if (clear.length === 0) return { trees, count };
+  const kept = new Float32Array(count * TREE_STRIDE);
+  let n = 0;
+  for (let t = 0; t < count; t++) {
+    const o = t * TREE_STRIDE;
+    const x = trees[o + 1],
+      y = trees[o + 2];
+    const inside = clear.some((c) => {
+      const along = (x - c.x) * Math.cos(c.yaw) + (y - c.y) * Math.sin(c.yaw);
+      const across = -(x - c.x) * Math.sin(c.yaw) + (y - c.y) * Math.cos(c.yaw);
+      return Math.abs(along) <= c.length / 2 && Math.abs(across) <= c.width / 2;
+    });
+    if (inside) continue;
+    kept.set(trees.subarray(o, o + TREE_STRIDE), n * TREE_STRIDE);
+    n++;
+  }
+  return { trees: kept.slice(0, n * TREE_STRIDE), count: n };
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The island.
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1883,7 +1919,9 @@ export function buildIsland(recipe: IslandRecipe, random: Random, onStage?: (sta
 
   // 13. Trees.
   const terrain = new Heightfield(g.origin, g.origin, cell, cols, cols, H);
-  const { trees, count } = plant(g, r, random, terrain, surface, seaDist, lakeDist, riverDist, edge, pads);
+  const planted = plant(g, r, random, terrain, surface, seaDist, lakeDist, riverDist, edge, pads);
+  // the clearings last, once every tree has drawn its chance, so every tree not in one is the tree it would have been
+  const { trees, count } = clearTrees(planted.trees, planted.count, r.trees.clear ?? []);
   stage('trees');
 
   return {
