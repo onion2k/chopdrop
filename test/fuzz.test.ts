@@ -29,6 +29,7 @@ describe('the fuzzer', () => {
       'structure run',
       'onto a structure',
       'through the gate',
+      'through a structure',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
@@ -49,6 +50,7 @@ describe('the fuzzer', () => {
       'knocked off a structure',
       'rested on a structure',
       'abandoned',
+      'collected',
     ])
       expect(seen, happening).toContain(happening);
   });

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { WATCH, grew, leakRun, sizes, trouble } from '../scripts/leaks';
-import { LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS } from '../src/arena';
 import { RINGS } from '../src/mission';
 import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
@@ -36,6 +36,14 @@ describe('what must stay bounded', () => {
     game.progress.record('first-delivery', 40);
     expect(sizes(game)['best times kept']).toBe(1);
     expect(WATCH['best times kept']!.ceiling).toBe(LEVELS.length + SAVE.kept);
+    // and a structure collected is counted, under a ceiling of the structures there are and a save's worth more
+    expect(sizes(game)['structures collected']).toBe(0);
+    game.progress.collect('gorge-bridge');
+    expect(sizes(game)['structures collected']).toBe(1);
+    expect(WATCH['structures collected']!.ceiling).toBe(COLLECTIBLES.length + SAVE.kept);
+    expect(trouble({ 'structures collected': [COLLECTIBLES.length + SAVE.kept + 1] }).join('\n')).toMatch(
+      /structures collected went to/,
+    );
   });
 
   it('knows a size that grows from one that wanders', () => {

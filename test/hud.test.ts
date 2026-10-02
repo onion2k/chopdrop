@@ -4,7 +4,18 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LEVELS, theIsland } from '../src/arena';
-import { TOAST, barMode, clock, pointer, startPoint, startWords, toastShown, toastWords } from '../src/hud';
+import {
+  TOAST,
+  ToastQueue,
+  barMode,
+  clock,
+  collectedWords,
+  pointer,
+  startPoint,
+  startWords,
+  toastShown,
+  toastWords,
+} from '../src/hud';
 
 describe('the pointer', () => {
   // the camera looks along +x from the origin; the helicopter is at the origin
@@ -110,5 +121,143 @@ describe('the toast', () => {
     expect(toastWords('delivery', 38.4, true)).toBe('Delivered! 0:38 ★ New best');
     expect(toastWords('rings', 61, false)).toBe('Trial complete! 1:01');
     expect(toastWords('course', 47.9, false)).toBe('Course complete! 0:47');
+  });
+});
+
+describe("a collected structure's toast", () => {
+  it('says "Collected", then the name and how many of how many, as the level toast says its time', () => {
+    expect(collectedWords('the lakeside towers', 3, 7)).toBe('Collected the lakeside towers · 3 of 7');
+    const queue = new ToastQueue(7);
+    queue.collected('the lakeside towers', 3, 7, 10);
+    expect(queue.update(10)).toMatchObject({
+      title: 'Collected',
+      left: 'the lakeside towers',
+      sep: ' · ',
+      right: '3 of 7',
+      words: 'Collected the lakeside towers · 3 of 7',
+    });
+  });
+
+  it('is shown for its own three seconds of game time, and then not', () => {
+    const queue = new ToastQueue(7);
+    expect(queue.update(0)).toBeNull();
+    queue.collected('the gorge bridge', 1, 7, 10);
+    expect(queue.update(12.99)).not.toBeNull();
+    expect(queue.update(13)).toBeNull();
+    expect(queue.update(500)).toBeNull();
+  });
+
+  it("waits for a level's toast that is showing, and is then shown for its own three seconds", () => {
+    const queue = new ToastQueue(7);
+    queue.level('delivery', 38.4, true, 10);
+    queue.collected('the gorge bridge', 1, 7, 11);
+    expect(queue.update(11)!.title).toBe('Delivered!');
+    expect(queue.update(12.99)!.title).toBe('Delivered!');
+    expect(queue.update(13)!.title).toBe('Collected');
+    expect(queue.update(15.99)!.title).toBe('Collected');
+    expect(queue.update(16)).toBeNull();
+  });
+
+  it('is told in turn, when two or three are collected while one shows', () => {
+    const queue = new ToastQueue(7);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    queue.collected('the west bridge', 2, 7, 11);
+    queue.collected('the eastern towers', 3, 7, 12);
+    expect(queue.waiting).toBe(2);
+    expect(queue.update(12.5)!.words).toBe('Collected the gorge bridge · 1 of 7');
+    expect(queue.update(13)!.words).toBe('Collected the west bridge · 2 of 7');
+    expect(queue.update(15.99)!.words).toBe('Collected the west bridge · 2 of 7');
+    expect(queue.update(16)!.words).toBe('Collected the eastern towers · 3 of 7');
+    expect(queue.update(19)).toBeNull();
+    expect(queue.waiting).toBe(0);
+  });
+
+  it('keeps its own time when it is looked at late: the next begins when the last ended, not when it was seen', () => {
+    const queue = new ToastQueue(7);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    queue.collected('the west bridge', 2, 7, 10.5);
+    // nothing drawn between 10 and 14.5: the first ended at 13, so the second has 1.5 seconds left
+    expect(queue.update(14.5)!.words).toBe('Collected the west bridge · 2 of 7');
+    expect(queue.update(15.99)!.words).toBe('Collected the west bridge · 2 of 7');
+    expect(queue.update(16)).toBeNull();
+    // and one so late that all have gone leaves nothing
+    queue.collected('a', 3, 7, 20);
+    queue.collected('b', 4, 7, 20);
+    expect(queue.update(100)).toBeNull();
+  });
+
+  it('is shown at once when nothing is showing, from the moment it is told', () => {
+    const queue = new ToastQueue(7);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    queue.update(20);
+    queue.collected('the west bridge', 2, 7, 30);
+    expect(queue.update(30)!.words).toBe('Collected the west bridge · 2 of 7');
+    expect(queue.update(32.99)).not.toBeNull();
+    expect(queue.update(33)).toBeNull();
+  });
+
+  it("is put after a level's toast that comes while it shows, and still shown whole", () => {
+    const queue = new ToastQueue(7);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    queue.level('rings', 61, false, 11);
+    expect(queue.update(11)!.title).toBe('Trial complete!');
+    expect(queue.update(13.99)!.title).toBe('Trial complete!');
+    expect(queue.update(14)!.words).toBe('Collected the gorge bridge · 1 of 7');
+    expect(queue.update(16.99)).not.toBeNull();
+    expect(queue.update(17)).toBeNull();
+  });
+
+  it("is the level's toast alone that replaces a level's toast", () => {
+    const queue = new ToastQueue(7);
+    queue.level('delivery', 30, false, 10);
+    queue.level('rings', 40, true, 11);
+    expect(queue.update(11)!.words).toBe('Trial complete! 0:40 ★ New best');
+    expect(queue.update(14)).toBeNull();
+  });
+
+  it('is a ring sized once, never growing past what it was given: the oldest waiting is let go', () => {
+    const queue = new ToastQueue(3);
+    expect(queue.capacity).toBe(3);
+    for (let n = 1; n <= 9; n++) queue.collected(`s${n}`, n, 9, 10);
+    expect(queue.waiting).toBe(3);
+    expect(queue.update(10)!.words).toBe('Collected s1 · 1 of 9');
+    const shown: string[] = [];
+    for (let t = 13; t < 30; t += 3) {
+      const now = queue.update(t);
+      if (now) shown.push(now.left);
+    }
+    expect(shown).toEqual(['s7', 's8', 's9']);
+  });
+
+  it('is put away with everything waiting when the helicopter is put somewhere new', () => {
+    const queue = new ToastQueue(7);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    queue.collected('the west bridge', 2, 7, 10);
+    queue.clear();
+    expect(queue.update(10)).toBeNull();
+    expect(queue.waiting).toBe(0);
+  });
+
+  it('counts each change of what is shown, so the page writes only then', () => {
+    const queue = new ToastQueue(7);
+    const was = queue.serial;
+    queue.update(1);
+    expect(queue.serial).toBe(was);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    expect(queue.serial).toBe(was + 1);
+    queue.update(11);
+    queue.update(12);
+    expect(queue.serial).toBe(was + 1);
+    queue.update(13);
+    expect(queue.serial).toBe(was + 2);
+    queue.update(14);
+    expect(queue.serial).toBe(was + 2);
+  });
+
+  it("hides the hint under it as it does under a level's", () => {
+    const queue = new ToastQueue(7);
+    queue.collected('the gorge bridge', 1, 7, 10);
+    expect(barMode(false, false, queue.update(11) !== null)).toBe('quiet');
+    expect(barMode(false, false, queue.update(13) !== null)).toBe('free');
   });
 });

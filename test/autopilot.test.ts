@@ -4,11 +4,12 @@
  * about it than about the game.
  */
 import { describe, expect, it } from 'vitest';
-import { LEVELS } from '../src/arena';
-import { Autopilot } from '../src/autopilot';
+import { COLLECTIBLES, LEVELS, STRUCTURES } from '../src/arena';
+import { Autopilot, PILOT } from '../src/autopilot';
 import { Game } from '../src/game';
 import { HELICOPTER } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
+import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
 
@@ -233,6 +234,131 @@ describe('the autopilot', () => {
     game.begin('first-delivery');
     flown(game, 60, undefined, pilot);
     expect(game.mission.level).toBeNull();
+    expect(pilot.drive()).toEqual({ forward: 0, turn: 0, lift: 0 });
+  });
+});
+
+describe('the autopilot among the structures', () => {
+  const lakeside = COLLECTIBLES.find((c) => c.id === 'lakeside-towers')!;
+
+  it('threads the lakeside towers on the ring trial, not slowing and swerving round one, as a careful player would', () => {
+    const { game, pilot } = told('ring-trial');
+    let nearest = Infinity;
+    let knocks = 0;
+    for (let f = 0; f < 60 * 120 && game.last === null; f++) {
+      pilot.step(DT);
+      if (game.solids.touched) knocks++;
+      const h = game.helicopter;
+      for (const block of lakeside.blocks) nearest = Math.min(nearest, game.solids.gapTo(block, h.x, h.y, h.z));
+    }
+    expect(game.last?.id).toBe('ring-trial');
+    expect(game.collection.has('lakeside-towers')).toBe(true);
+    expect(knocks).toBe(0);
+    // between them, the rotor's reach at least the margin it keeps from every block clear of both
+    expect(nearest).toBeGreaterThanOrEqual(PILOT.margin);
+    // and by its own clock it is held up by them no more than 0.3 s: the same trial with the pair taken away
+    const bare = new Game({ random: seeded(1), structures: STRUCTURES.filter((b) => !lakeside.blocks.includes(b)) });
+    const barePilot = new Autopilot(bare);
+    barePilot.wanted = 'ring-trial';
+    for (let f = 0; f < 60 * 120 && bare.last === null; f++) barePilot.step(DT);
+    expect(Math.abs(game.last!.seconds - bare.last!.seconds)).toBeLessThan(0.3);
+  });
+
+  it('flies a way through the middle of a gap as it is, and goes round a tower the way would cross outside the opening', () => {
+    // a game whose levels have no rings, so that no ring is solid and only the towers can be in the way
+    const game = new Game({ random: seeded(1), levels: LEVELS.filter((l) => l.steps[0].kind === 'pickup') });
+    const pilot = new Autopilot(game);
+    const detour = (
+      pilot as unknown as {
+        detour(wanted: null, tx: number, ty: number, want: number): boolean;
+        via: { x: number; y: number };
+      }
+    ).detour.bind(pilot);
+    const via = (pilot as unknown as { via: { x: number; y: number } }).via;
+    const o = lakeside.opening;
+    const [ax, ay] = [Math.cos(o.yaw), Math.sin(o.yaw)];
+    const at = (back: number, across: number): [number, number] => [
+      o.x + ax * back - ay * across,
+      o.y + ay * back + ax * across,
+    ];
+    const heli = game.helicopter;
+    const height = o.z - HELICOPTER.size.middle;
+    const [x, y] = at(-25, 0);
+    heli.place(x, y, height, o.yaw);
+    // through the gap's middle to the far side: nothing is in the way
+    expect(detour(null, ...at(25, 0), height)).toBe(false);
+    // through a tower itself, the way crossing the plane outside the opening: round it, well to the side
+    const through = at(25, o.width + 6);
+    expect(detour(null, ...through, height)).toBe(true);
+    expect(Math.hypot(via.x - o.x, via.y - o.y)).toBeGreaterThan(o.width / 2 + 3);
+  });
+
+  it('refuses by name a structure it is told that the game does not have', () => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    expect(pilot.collect).toBeNull();
+    expect(() => (pilot.collect = 'the-moon')).toThrow(/no such structure: the-moon/);
+    expect(pilot.collect).toBeNull();
+    pilot.collect = 'gorge-bridge';
+    expect(pilot.collect).toBe('gorge-bridge');
+    pilot.collect = null;
+    expect(pilot.collect).toBeNull();
+  });
+
+  it.each(COLLECTIBLES.map((c) => c.id))('flies from home through the opening of %s, touching nothing', (id) => {
+    const game = new Game({ random: seeded(1) });
+    const pilot = new Autopilot(game);
+    pilot.collect = id;
+    let knocks = 0;
+    for (let f = 0; f < 60 * 240 && !game.collection.has(id); f++) {
+      pilot.step(DT);
+      if (game.solids.touched) knocks++;
+      const broken = checkInvariants(game);
+      if (broken.length) throw new Error(`at ${game.t.toFixed(2)} s: ${broken.join('; ')}`);
+    }
+    expect(game.collection.has(id)).toBe(true);
+    expect(knocks).toBe(0);
+  });
+
+  it('goes through it from whichever side is nearer', () => {
+    const c = COLLECTIBLES.find((k) => k.id === 'shoulder-towers')!;
+    for (const side of [-1, 1]) {
+      const game = new Game({ random: seeded(1) });
+      const pilot = new Autopilot(game);
+      pilot.collect = c.id;
+      const [ax, ay] = [Math.cos(c.opening.yaw), Math.sin(c.opening.yaw)];
+      game.helicopter.place(c.opening.x + ax * 40 * side, c.opening.y + ay * 40 * side, c.opening.z - 6, 0);
+      const was = { x: game.helicopter.x, y: game.helicopter.y };
+      let farthest = 0;
+      for (let f = 0; f < 60 * 60 && !game.collection.has(c.id); f++) {
+        pilot.step(DT);
+        farthest = Math.max(farthest, Math.hypot(game.helicopter.x - was.x, game.helicopter.y - was.y));
+      }
+      expect(game.collection.has(c.id), `from side ${side}`).toBe(true);
+      // never flew round to the far side to come back through: it went straight on through, some 40 and a little
+      expect(farthest, `from side ${side}`).toBeLessThan(140);
+    }
+  });
+
+  it('puts the level first: with a level going, or told one, it does not go for the structure', () => {
+    const { game, pilot } = told('first-delivery');
+    pilot.collect = 'gorge-bridge';
+    expect(flown(game, 90, undefined, pilot)).not.toBeNull();
+    expect(game.last!.id).toBe('first-delivery');
+    expect(game.collection.has('gorge-bridge')).toBe(false);
+    // then, with nothing more asked of it, the structure
+    pilot.wanted = null;
+    for (let f = 0; f < 60 * 240 && !game.collection.has('gorge-bridge'); f++) pilot.step(DT);
+    expect(game.collection.has('gorge-bridge')).toBe(true);
+  });
+
+  it('asks for nothing once the structure is collected', () => {
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(memoryStore('{"best":{},"collected":["gorge-bridge"]}')),
+    });
+    const pilot = new Autopilot(game);
+    pilot.collect = 'gorge-bridge';
     expect(pilot.drive()).toEqual({ forward: 0, turn: 0, lift: 0 });
   });
 });

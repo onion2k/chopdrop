@@ -13,8 +13,9 @@
  * before anything uses it, so that the first thing that does is seeded from
  * its first line.
  */
-import { LEVELS, STRUCTURES, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
+import { COLLECTIBLES, LEVELS, STRUCTURES, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
 import { Canopy } from './canopy';
+import { Collection } from './collection';
 import { HELICOPTER, Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
@@ -27,10 +28,13 @@ import { Sway, reachedLean } from './sway';
 
 /**
  * What the game tells the page as it happens, so the page can put it into words: a level begun or abandoned, a parcel
- * loaded and delivered, and a level done, by its name, with the time it took and whether that is the best time on it yet.
+ * loaded and delivered, a level done, by its name, with the time it took and whether that is the best time on it yet,
+ * and a structure collected.
  */
 export interface GameEvents extends Omit<MissionEvents, 'finished'> {
   finished?(level: string, seconds: number, best: boolean): void;
+  /** A structure collected for the first time: its name, how many are collected now, and of how many there are. */
+  collected?(id: string, n: number, of: number): void;
 }
 
 /** The last level done: which, how long it took, and whether that was the best time on it yet. */
@@ -76,8 +80,10 @@ export class Game {
   readonly mission: Mission;
   /** What begins a level while nothing is going: a crate loaded, or a start ring or opening flown through. */
   readonly starts: Starts;
-  /** The player's best time on each level, kept as each is done. */
+  /** The player's best time on each level, and the structures collected, kept as each is done. */
   readonly progress: Progress;
+  /** The structures collected, by flying through their openings, whatever is going. */
+  readonly collection: Collection;
   /** What the helicopter cannot fly into: what stands on the island, and the rings that are drawn. */
   readonly solids: Solids;
   /** The last level done, for the toast and the invariants; null until one is. */
@@ -88,6 +94,8 @@ export class Game {
   t = 0;
   /** Where chance comes from: replaced by the test API's `seed`. */
   random: Random;
+  /** Who is told what happens, if anyone. */
+  private readonly events: GameEvents;
   /** The first ring of every level that begins at a ring: what is solid with nothing going. Built once. */
   private readonly startRings: Ring[];
 
@@ -111,7 +119,9 @@ export class Game {
       TREE_KINDS.map((kind, k) => ({ ...treeSize(kind), lean: reachedLean(give[k]) })),
     );
     this.progress = options.progress ?? new Progress();
+    this.collection = new Collection(COLLECTIBLES, this.progress);
     const events = options.events ?? {};
+    this.events = events;
     this.mission = new Mission(pads, {
       started: events.started,
       abandoned: events.abandoned,
@@ -178,6 +188,9 @@ export class Game {
   /** The level named `id` begun at once, wherever the helicopter is, with whatever was going abandoned; a name the game does not have is refused. */
   begin(id: string): void {
     this.beginLevel(this.named(id));
+    // not in `beginLevel`, which a level begun by flying through its first opening comes by: that crossing may be a
+    // structure's too, and is collected on the same step
+    this.collection.reset();
   }
 
   /**
@@ -206,6 +219,7 @@ export class Game {
     this.guided = null;
     this.holdRings(null);
     this.starts.reset();
+    this.collection.reset();
   }
 
   /**
@@ -224,6 +238,7 @@ export class Game {
       this.helicopter.place(pad.x, pad.y, 0, pad.yaw);
     }
     this.starts.reset();
+    this.collection.reset();
   }
 
   /** The helicopter hovering `START_BACK` before `opening` on its axis, its middle at the opening's height, facing it. */
@@ -249,6 +264,12 @@ export class Game {
     else {
       const level = this.starts.step(dt, this.helicopter);
       if (level) this.beginLevel(level);
+    }
+    // every step, whatever is going, after the level or the starts: a structure is collected by what was just flown
+    const found = this.collection.step(this.helicopter);
+    if (found) {
+      this.progress.persist();
+      this.events.collected?.(found.id, this.collection.count, COLLECTIBLES.length);
     }
   }
 }

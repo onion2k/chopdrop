@@ -11,10 +11,14 @@
  * chance and keeps no memory beyond the game's and the level it was told, so
  * the same game flown by it is flown the same way twice.
  *
+ * With nothing going and no level told to it, it can be told a structure by name, and flies through its opening, from
+ * whichever side is nearer, and then stands still: the play-through collects the structures by it.
+ *
  * The gates play the game through it: the pace of a level, the same game
  * twice, nothing kept for ever over a long play, and the play-through in the
  * page. Without it none of them has anything to time or watch.
  */
+import type { Collectible } from './arena';
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
 import { RING, onPad, type Gate, type Level, type Ring } from './mission';
@@ -46,6 +50,11 @@ export const PILOT = {
   beside: 18,
   /** How wide a cone behind a ring, about its axis, it flies straight at the ring's middle from: a tan of 45 degrees. */
   cone: 1,
+  /**
+   * How wide a cone it flies a structure's opening from, in place of `cone`: a gap in a gorge cannot be come at across
+   * its walls, which the wide cone flies it from, so it goes first to the opening's axis and comes along it.
+   */
+  structureCone: 0.2,
   /** How near in front of a ring's face it goes straight out sideways first. */
   near: 10,
   /** How near its rotor may come to a block on its way before it goes round or over. */
@@ -59,7 +68,37 @@ export class Autopilot {
   /** The level it is told to do while nothing is going, found once when it is told so that driving makes nothing. */
   private told: Level | null = null;
 
-  constructor(readonly game: Game) {}
+  /** The opening of the structure it is told to collect, from the side it flies it from, chosen when it first drives and then kept; null for none. */
+  private flying: Gate | null = null;
+  /** The structure it is told to collect while nothing else is asked of it, found once when it is told; null for none. */
+  private collecting: Collectible | null = null;
+  /** Each collectible's opening and the same turned about, built once, so that choosing a side makes nothing. */
+  private readonly sides: { id: string; ahead: Gate; behind: Gate }[];
+
+  constructor(readonly game: Game) {
+    const { collectibles } = game.collection;
+    this.sides = collectibles.map(({ id, opening }) => ({
+      id,
+      ahead: opening,
+      behind: { ...opening, yaw: opening.yaw + Math.PI },
+    }));
+  }
+
+  /** The id of the structure it will fly through while nothing else is asked of it, or null for none; an id the game does not have is refused. */
+  get collect(): string | null {
+    return this.collecting?.id ?? null;
+  }
+
+  set collect(id: string | null) {
+    this.flying = null;
+    if (id === null) {
+      this.collecting = null;
+      return;
+    }
+    const found = this.game.collection.collectibles.find((c) => c.id === id);
+    if (!found) throw new Error(`no such structure: ${id}`);
+    this.collecting = found;
+  }
 
   /** The name of the level it will fly to and do while nothing is going, or null for none; a name the game does not have is refused. */
   get wanted(): string | null {
@@ -92,7 +131,7 @@ export class Autopilot {
     c.turn = 0;
     c.lift = 0;
     const step = mission.current ?? this.told?.steps[0];
-    if (!step) return c;
+    if (!step) return this.collecting ? this.collectStructure() : c;
     if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
     const pad = island.pads[step.pad];
     // on the pad that is wanted: still, while the parcel loads; unless a level has just ended on it, which loads
@@ -133,13 +172,29 @@ export class Autopilot {
   }
 
   /**
+   * The structure it is told to collect: through its opening from the side it is nearer, chosen once and kept, so it
+   * never turns back at the plane; and nothing once it is collected.
+   */
+  private collectStructure(): Controls {
+    const c = this.collecting!;
+    if (this.game.collection.has(c.id)) return this.controls;
+    if (!this.flying) {
+      const { ahead, behind } = this.sides.find((s) => s.id === c.id)!;
+      const h = this.game.helicopter;
+      // behind the opening as it faces is where a helicopter on its negative side is
+      this.flying = (h.x - ahead.x) * Math.cos(ahead.yaw) + (h.y - ahead.y) * Math.sin(ahead.yaw) < 0 ? ahead : behind;
+    }
+    return this.through(this.flying, PILOT.structureCone);
+  }
+
+  /**
    * A ring: from anywhere behind it within the cone of `cone` about its axis, straight at its middle, which a straight
    * line through crosses at the middle; wider than that, to the point on its axis `lead` before it first. From in front
    * of it, round its rim to just behind it, going straight out sideways first if it is near its face, so it never flies
    * into the tube; and from far off, high enough over the ground on its way, as to a pad. Another ring in the way is
    * gone round, as `detour` says.
    */
-  private through(r: Ring | Gate): Controls {
+  private through(r: Ring | Gate, cone: number = PILOT.cone): Controls {
     const c = this.controls;
     const h = this.game.helicopter;
     const ax = Math.cos(r.yaw),
@@ -152,7 +207,7 @@ export class Autopilot {
     const wide = (r.kind === 'ring' ? r.opening : r.width / 2) + PILOT.beside;
     let to: number, off: number;
     let speed: number = PILOT.through;
-    if (along < 0 && Math.abs(across) < -along * PILOT.cone) {
+    if (along < 0 && Math.abs(across) < -along * cone) {
       // behind it, within the cone: at its middle, and once at its face, on past it
       to = along > -PILOT.line ? PILOT.lead : 0;
       off = 0;

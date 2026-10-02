@@ -17,7 +17,7 @@
  * through is not. A new list, map or cache in the game gets a line in
  * `WATCH` and a reading in `sizes`.
  */
-import { LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS } from '../src/arena';
 import type { Game } from '../src/game';
 import { RINGS } from '../src/mission';
 import { SAVE } from '../src/progress';
@@ -34,6 +34,8 @@ export const WATCH: Partial<Record<string, { ceiling: number; steady?: boolean }
   'trees moving': { ceiling: SWAY.capacity },
   // a time for each level the game has, and those a save brought with it, which is cut short at its own limit
   'best times kept': { ceiling: LEVELS.length + SAVE.kept },
+  // a name for each structure the game has, and those a save brought with it, which is cut short at its own limit
+  'structures collected': { ceiling: COLLECTIBLES.length + SAVE.kept },
   // the rings that are solid are written over each time a level begins or ends, into room made once for this many
   'rings solid': { ceiling: RINGS.capacity },
   // the catch-all for what is leaking and has no name here; noisy, so it is given a lot of room
@@ -45,6 +47,7 @@ export function sizes(game: Game): Record<string, number> {
   return {
     'trees moving': game.sway.count,
     'best times kept': game.progress.best.size,
+    'structures collected': game.progress.collected.length,
     'rings solid': game.solids.count,
     // the heap and the memory behind typed arrays, which Node keeps apart from it: a pool kept for ever is in the second
     'heap MB': Math.round((process.memoryUsage().heapUsed + process.memoryUsage().arrayBuffers) / 1e5) / 10,

@@ -2,10 +2,11 @@
  * The words on the screen: flying free, a hint that a crate is to be landed on or a start flown; shown the way, an
  * arrow turned toward the start of a level and how far off it is; and with a level going, what is wanted, at which pad or
  * which ring of how many, the arrow and distance to it and the clock from the level's beginning. The loader fills while
- * a parcel is loaded or unloaded, a button in the corner opens the panel, and a toast under the bar tells a level done
- * and goes after a few seconds of game time. It reads where the game has got to and is told the end by the game's
- * event; it writes to the page only when a word or a figure on it changes. Without it a player would not know where to
- * go, nor that they had got there.
+ * a parcel is loaded or unloaded, a button in the corner opens the panel, and a toast under the bar tells a level done or a
+ * structure collected and goes after a few seconds of game time, a structure's waiting for the one before it. It reads
+ * where the game has got to and is told the end, and each structure collected, by the game's events; it writes to the
+ * page only when a word or a figure on it changes. Without it a player would not know where to go, nor that they had
+ * got there.
  */
 import type { Point } from './chase';
 import type { Game } from './game';
@@ -103,6 +104,162 @@ export function toastWords(kind: LevelKind, seconds: number, best: boolean): str
   return `${DONE[kind]} ${clock(seconds)}${best ? ' ★ New best' : ''}`;
 }
 
+/** The toast's words for a structure collected, as the test API reads them: "Collected the lakeside towers · 3 of 7". */
+export function collectedWords(name: string, n: number, of: number): string {
+  return `Collected ${name} · ${n} of ${of}`;
+}
+
+/**
+ * A toast: the four places the card writes (its title, then the two halves of the line under it and what is between
+ * them), the words as the test API reads them, whether it is a level's, and the game time it began to be shown at.
+ */
+export interface ToastText {
+  title: string;
+  left: string;
+  sep: string;
+  right: string;
+  words: string;
+  level: boolean;
+  from: number;
+}
+
+/** A toast written over another's, field by field. */
+function copy(to: ToastText, from: ToastText): void {
+  to.title = from.title;
+  to.left = from.left;
+  to.sep = from.sep;
+  to.right = from.right;
+  to.words = from.words;
+  to.level = from.level;
+  to.from = from.from;
+}
+
+/**
+ * What the card says and what waits behind it, in game time. A level's toast is shown at once; a structure's, told while
+ * another shows, waits its turn and is then shown for `TOAST.seconds` of its own, counted from the moment the one before
+ * it ended and not from when it was seen, so the same game shows the same toasts however often it is drawn. The waiting
+ * are a ring of slots sized once, as many as there are structures to collect, since each can be told once: past that the
+ * oldest waiting is let go. A level's toast that comes while a structure's shows takes the card, and the structure's
+ * goes to the front of the queue, to be shown whole once it has gone. It makes nothing after it is built.
+ */
+export class ToastQueue {
+  /** What is shown now, valid while `update` last returned it. */
+  private readonly now: ToastText = blank();
+  private readonly ring: ToastText[];
+  private head = 0;
+  private count = 0;
+  private showing = false;
+  /** Changes each time what is shown changes, to a toast or to none, so the page writes the card only then. */
+  serial = 0;
+
+  constructor(readonly capacity: number) {
+    this.ring = Array.from({ length: capacity }, blank);
+  }
+
+  /** What is shown, as it was last brought up to date by `update`, or null. */
+  get current(): ToastText | null {
+    return this.showing ? this.now : null;
+  }
+
+  /** How many toasts wait behind the one shown. */
+  get waiting(): number {
+    return this.count;
+  }
+
+  /** What is shown at game time `now`, with the waiting one that is next brought up as each ends; null for nothing. */
+  update(now: number): ToastText | null {
+    while (this.showing && !toastShown(this.now.from, now)) {
+      const ended = this.now.from + TOAST.seconds;
+      if (this.count === 0) {
+        this.showing = false;
+        this.serial++;
+        break;
+      }
+      copy(this.now, this.ring[this.head]);
+      this.head = (this.head + 1) % this.capacity;
+      this.count--;
+      this.now.from = ended;
+      this.serial++;
+    }
+    return this.showing ? this.now : null;
+  }
+
+  /** The end of a level of `kind`, taking `seconds`, told at game time `now`: shown at once. */
+  level(kind: LevelKind, seconds: number, best: boolean, now: number): void {
+    this.update(now);
+    if (this.showing && !this.now.level) this.push(this.now, true);
+    const t = this.now;
+    t.title = DONE[kind];
+    t.left = clock(seconds);
+    t.sep = best ? ' · ' : '';
+    t.right = best ? '★ New best' : '';
+    t.words = toastWords(kind, seconds, best);
+    t.level = true;
+    t.from = now;
+    this.showing = true;
+    this.serial++;
+  }
+
+  /** The structure `name` collected, the `n`th of `of`, told at game time `now`: shown at once if nothing is, and otherwise in its turn. */
+  collected(name: string, n: number, of: number, now: number): void {
+    this.update(now);
+    if (this.showing) {
+      this.push(
+        {
+          title: 'Collected',
+          left: name,
+          sep: ' · ',
+          right: `${n} of ${of}`,
+          words: collectedWords(name, n, of),
+          level: false,
+          from: 0,
+        },
+        false,
+      );
+      return;
+    }
+    const t = this.now;
+    t.title = 'Collected';
+    t.left = name;
+    t.sep = ' · ';
+    t.right = `${n} of ${of}`;
+    t.words = collectedWords(name, n, of);
+    t.level = false;
+    t.from = now;
+    this.showing = true;
+    this.serial++;
+  }
+
+  /** Everything put away, shown and waiting. */
+  clear(): void {
+    if (this.showing) this.serial++;
+    this.showing = false;
+    this.head = 0;
+    this.count = 0;
+  }
+
+  /** `toast` put in the ring, at the back, or at the front to be shown next; the oldest waiting is let go if it is full. */
+  private push(toast: ToastText, front: boolean): void {
+    if (this.capacity === 0) return;
+    if (this.count === this.capacity) {
+      // full: one goes to make room, the oldest waiting from the front, and from the back if this is to go in front of it, since that has waited longest
+      if (front) this.count--;
+      else {
+        this.head = (this.head + 1) % this.capacity;
+        this.count--;
+      }
+    }
+    const slot = front ? (this.head + this.capacity - 1) % this.capacity : (this.head + this.count) % this.capacity;
+    copy(this.ring[slot], toast);
+    if (front) this.head = slot;
+    this.count++;
+  }
+}
+
+function blank(): ToastText {
+  return { title: '', left: '', sep: '', right: '', words: '', level: false, from: 0 };
+}
+
 /** The hint in the bar, flying free. */
 const HINT = 'Land on a crate or fly a start';
 
@@ -138,7 +295,7 @@ export class Hud {
     turn: NaN,
     loader: -1,
     loaderWords: '',
-    toast: false,
+    toast: -1,
   };
   /** The level the way is shown to, and the point it starts at, worked out once when it changes and not every frame. */
   private guide: Level | null = null;
@@ -147,13 +304,14 @@ export class Hud {
   /** The step the words were made for, and the words: made when the step changes and not every frame. */
   private stepFor: Step | null = null;
   private stepWords = '';
-  /** The game time the toast was told at, and its words while it is shown. */
-  private toldAt = -Infinity;
-  private words: string | null = null;
+  /** The toast shown, and those waiting behind it. */
+  private readonly toasts: ToastQueue;
   /** Whether the panel is up over it: it is hidden, and its keys are the panel's. */
   private away = false;
 
-  constructor(actions: HudActions) {
+  /** `toasts` is how many structures there are to collect, which is the most that can wait behind a toast. */
+  constructor(actions: HudActions, toasts: number) {
+    this.toasts = new ToastQueue(toasts);
     this.root = document.createElement('div');
     this.root.id = 'hud';
     this.root.hidden = true;
@@ -206,7 +364,7 @@ export class Hud {
 
   /** The toast's words while it is shown, or null. */
   get toast(): string | null {
-    return this.words;
+    return this.toasts.current?.words ?? null;
   }
 
   /**
@@ -217,11 +375,18 @@ export class Hud {
     if (this.away) return;
     const s = this.shown;
     const d = game.mission;
-    const on = this.words !== null && toastShown(this.toldAt, game.t);
-    if (on !== s.toast) {
+    const toast = this.toasts.update(game.t);
+    const on = toast !== null;
+    // the card is written when what it shows changes, and not every frame
+    if (this.toasts.serial !== s.toast) {
+      s.toast = this.toasts.serial;
       this.toastBox.hidden = !on;
-      s.toast = on;
-      if (!on) this.words = null;
+      if (toast) {
+        this.title.textContent = toast.title;
+        this.time.textContent = toast.left;
+        this.sep.textContent = toast.sep;
+        this.best.textContent = toast.right;
+      }
     }
     const step = d.current;
     const mode = barMode(step !== undefined, game.guided !== null, on);
@@ -290,24 +455,22 @@ export class Hud {
 
   /**
    * The end, as the game tells it, at game time `now`: the toast, with the title by the kind of level, the time it took
-   * and, if this is the best time on it yet, "New best". It is shown for `TOAST.seconds` of game time from `now`.
+   * and, if this is the best time on it yet, "New best". It is shown for `TOAST.seconds` of game time from `now`, ahead of
+   * any structure's toast waiting.
    */
   finished(kind: LevelKind, seconds: number, isBest: boolean, now: number): void {
-    this.title.textContent = DONE[kind];
-    this.time.textContent = clock(seconds);
-    this.sep.textContent = isBest ? ' · ' : '';
-    this.best.textContent = isBest ? '★ New best' : '';
-    this.toastBox.hidden = false;
-    this.shown.toast = true;
-    this.toldAt = now;
-    this.words = toastWords(kind, seconds, isBest);
+    this.toasts.level(kind, seconds, isBest, now);
+  }
+
+  /** A structure collected, as the game tells it, at game time `now`: its toast, now or in its turn after the one shown. */
+  collected(name: string, n: number, of: number, now: number): void {
+    this.toasts.collected(name, n, of, now);
   }
 
   /** The toast put away and everything written afresh on the next draw, as when the helicopter is put somewhere new. */
   fly(): void {
     this.toastBox.hidden = true;
-    this.words = null;
-    this.toldAt = -Infinity;
+    this.toasts.clear();
     this.guide = null;
     this.shown = {
       mode: this.shown.mode,
@@ -317,7 +480,7 @@ export class Hud {
       turn: NaN,
       loader: -1,
       loaderWords: '',
-      toast: false,
+      toast: -1,
     };
     this.loader.hidden = true;
   }

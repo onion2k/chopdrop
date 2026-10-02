@@ -40,7 +40,10 @@ describe('progress', () => {
     p.record('first-delivery', 41.5);
     p.record('over-the-water', 63.75);
     p.persist();
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': 41.5, 'over-the-water': 63.75 } });
+    expect(JSON.parse(store.json!)).toEqual({
+      best: { 'first-delivery': 41.5, 'over-the-water': 63.75 },
+      collected: [],
+    });
     expect([...new Progress(memoryStore(store.json)).best]).toEqual([...p.best]);
   });
 
@@ -51,7 +54,7 @@ describe('progress', () => {
     expect(store.json).toBe('{"best": {"first-delivery": 40}');
     p.record('first-delivery', 45);
     p.persist();
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': 45 } });
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': 45 }, collected: [] });
   });
 
   it('refuses by name a save that is not JSON, not a table, or whose times are not a table', () => {
@@ -122,5 +125,93 @@ describe('progress', () => {
     expect(() => p.record('first-delivery', 0)).toThrow(/not a time/);
     expect(() => p.record('First Delivery', 40)).toThrow(/not a level's name/);
     expect(p.best.size).toBe(0);
+  });
+
+  describe('the structures collected', () => {
+    const withCollected = (collected: unknown) => new Progress(memoryStore(JSON.stringify({ best: {}, collected })));
+
+    it('starts with none, and a save from before there were any has none', () => {
+      expect(new Progress(memoryStore()).collected).toEqual([]);
+      const p = new Progress(memoryStore('{"best":{"first-delivery":40}}'));
+      expect(p.collected).toEqual([]);
+      expect(p.refused).toBeNull();
+    });
+
+    it('keeps one collected, says whether it was new, and keeps them in the order collected', () => {
+      const p = new Progress(memoryStore());
+      expect(p.collect('shoulder-towers')).toBe(true);
+      expect(p.collect('gorge-bridge')).toBe(true);
+      expect(p.collect('shoulder-towers')).toBe(false);
+      expect(p.collected).toEqual(['shoulder-towers', 'gorge-bridge']);
+    });
+
+    it('refuses by name to keep an id that is not a name', () => {
+      const p = new Progress(memoryStore());
+      expect(() => p.collect('The Bridge')).toThrow(/not a structure's name/);
+      expect(p.collected).toEqual([]);
+    });
+
+    it('writes them, in order, under the same key, and reads them back', () => {
+      const store = memoryStore();
+      const p = new Progress(store);
+      p.record('first-delivery', 41.5);
+      p.collect('west-bridge');
+      p.collect('gorge-bridge');
+      p.persist();
+      expect(JSON.parse(store.json!)).toEqual({
+        best: { 'first-delivery': 41.5 },
+        collected: ['west-bridge', 'gorge-bridge'],
+      });
+      expect(new Progress(memoryStore(store.json)).collected).toEqual(['west-bridge', 'gorge-bridge']);
+      expect(KEY).toBe('chopdrop-save-v1');
+    });
+
+    it.each([
+      ['a number', 4],
+      ['a string', 'gorge-bridge'],
+      ['a table', { 'gorge-bridge': true }],
+      ['null', null],
+    ])('drops a field that is %s, and reads the rest of the save', (_what, field) => {
+      const p = new Progress(memoryStore(JSON.stringify({ best: { 'first-delivery': 40 }, collected: field })));
+      expect(p.refused).toBeNull();
+      expect(p.collected).toEqual([]);
+      expect(Object.fromEntries(p.best)).toEqual({ 'first-delivery': 40 });
+    });
+
+    it('drops an entry that is not a name, and keeps the rest', () => {
+      const p = withCollected(['gorge-bridge', 4, null, 'Not A Name', '', 'a--b', ['x'], {}, 'west-bridge']);
+      expect(p.collected).toEqual(['gorge-bridge', 'west-bridge']);
+    });
+
+    it('drops a duplicate, keeping the first', () => {
+      const p = withCollected(['gorge-bridge', 'west-bridge', 'gorge-bridge']);
+      expect(p.collected).toEqual(['gorge-bridge', 'west-bridge']);
+    });
+
+    it('keeps an id the game does not have, as level names are, and writes it back', () => {
+      const store = memoryStore(JSON.stringify({ best: {}, collected: ['from-a-later-game'] }));
+      const p = new Progress(store);
+      expect(p.collected).toEqual(['from-a-later-game']);
+      p.collect('gorge-bridge');
+      p.persist();
+      expect((JSON.parse(store.json!) as { collected: string[] }).collected).toEqual([
+        'from-a-later-game',
+        'gorge-bridge',
+      ]);
+    });
+
+    it(`keeps no more than ${SAVE.kept} from a save, the first of them, however many it holds`, () => {
+      const many = Array.from({ length: SAVE.kept * 3 }, (_, k) => `structure-${k}`);
+      const p = withCollected(many);
+      expect(p.collected).toHaveLength(SAVE.kept);
+      expect(p.collected[0]).toBe('structure-0');
+      expect(p.collected[SAVE.kept - 1]).toBe(`structure-${SAVE.kept - 1}`);
+    });
+
+    it("reaches into nothing with a name that would reach into every table's prototype", () => {
+      const p = withCollected(['__proto__', 'constructor', 'gorge-bridge']);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(p.collected).toContain('gorge-bridge');
+    });
   });
 });

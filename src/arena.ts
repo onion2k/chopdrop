@@ -21,6 +21,291 @@ export type TreeKind = (typeof TREE_KINDS)[number];
 export const TREE_GIVE: Record<TreeKind, number> = { broadleaf: 1, pine: 0.7, poplar: 1.2, palm: 1.4, bush: 0.6 };
 
 /**
+ * What the helicopter can fly through that stands on the island, and is collected by flying through: its `id`, a name
+ * that players' saves are given and that never changes, its `name` for the words, the `opening` that is flown through
+ * (a `Gate`, which the course uses for two of them) and its solid `blocks`.
+ */
+export interface Collectible {
+  id: string;
+  name: string;
+  opening: Gate;
+  blocks: readonly Block[];
+}
+
+/** A structure as `bridgeAt` and `towersAt` build it: the collectible, and the ground it keeps clear of trees. */
+interface Built extends Collectible {
+  clearings: readonly Clearing[];
+}
+
+/** The numbers every bridge is built to: its deck's width and thickness, rails and all, and an abutment's width, a metre past each edge. */
+const BRIDGE = { width: 8, height: 2.7, abutment: 10 };
+
+/** Everything that is found for a bridge, by the script that places them, and kept here as numbers. */
+interface BridgeSite {
+  id: string;
+  name: string;
+  /** What the words call its opening: "under the bridge". */
+  label: string;
+  /** The deck's middle, its underside at `z` (13 over the water where the river runs under it), turned square to the river, and its length from bank to bank. */
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  length: number;
+  /** How far down the abutments' feet are sunk, below the lowest ground under either. */
+  low: number;
+  /** The abutments' lengths from each end of the deck inward, the end that lies toward negative along the deck first, and what each is called. */
+  ends: readonly [number, number];
+  sides: readonly [string, string];
+  /** Where the river runs under the deck, the water's height there and how wide the opening is across it. */
+  opening: { x: number; y: number; water: number; width: number };
+}
+
+/** A number kept to the centimetre, as the content is. */
+const cm = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * A bridge across a gorge, from a few found numbers: a deck resting on both banks, abutments filling the ground under
+ * each end wherever there is less room between it and the deck than the helicopter needs to stand (without them it
+ * could be pressed between the bank rising under it and the deck above it, and be held inside the deck), and the
+ * opening under the deck, from the water to its underside and facing along the river. The deck's end is the
+ * abutment's end, and the abutment is a metre wider than the deck either side.
+ */
+function bridgeAt(site: BridgeSite): Built {
+  const { x, y, z, yaw, length } = site;
+  const deck: Block = {
+    name: site.name,
+    kind: 'deck',
+    x,
+    y,
+    z,
+    yaw,
+    length,
+    width: BRIDGE.width,
+    height: BRIDGE.height,
+  };
+  const abutments = site.ends.map((end, k): Block => {
+    // the middle of the abutment, along the deck from its middle, toward the end it stands under
+    const along = (k ? 1 : -1) * (length / 2 - end / 2);
+    return {
+      name: `${site.name}'s ${site.sides[k]} abutment`,
+      kind: 'abutment',
+      x: cm(x + along * Math.cos(yaw)),
+      y: cm(y + along * Math.sin(yaw)),
+      z: site.low,
+      yaw,
+      length: end,
+      width: BRIDGE.abutment,
+      height: z - site.low,
+    };
+  });
+  const { water } = site.opening;
+  const opening: Gate = {
+    kind: 'gate',
+    x: site.opening.x,
+    y: site.opening.y,
+    z: (water + z) / 2,
+    yaw: yaw - Math.PI / 2,
+    width: site.opening.width,
+    height: z - water,
+    label: site.label,
+  };
+  const blocks = [deck, ...abutments];
+  return { id: site.id, name: site.name, opening, blocks, clearings: blocks.map(clearing) };
+}
+
+/** The numbers every pair of towers is built to: each tower 6 square and 38.5 tall, their inner faces 20 apart. */
+const TOWER = { size: 6, height: 38.5, gap: 20 };
+
+/** Everything that is found for a pair of towers, and kept here as numbers. */
+interface TowersSite {
+  id: string;
+  name: string;
+  /** What the words call its opening: "between the towers". */
+  label: string;
+  /** The middle of the gap, and the way it faces: through it, which is the way the pair is turned to be flown. */
+  x: number;
+  y: number;
+  yaw: number;
+  /** The feet's height, sunk a little under the lowest ground at either, and the ground in the gap, which the opening reaches down to. */
+  z: number;
+  ground: number;
+  /** Where chequered flags stand, if the opening begins a level: on each tower's top middle. */
+  flags?: boolean;
+  /**
+   * Where the towers' middles were put, first and second, where they were found by hand and are not exactly a gap and
+   * a tower apart across the way they face; said, they are what the pair is built on, to the centimetre, and not the
+   * middle and the way.
+   */
+  middles?: readonly [readonly [number, number], readonly [number, number]];
+}
+
+/**
+ * A pair of towers from a few found numbers, standing side by side across the way they face, with their inner faces a
+ * gap apart, and the opening between them, from the ground in the gap to their tops. The one that lies toward the
+ * lower end of the axis it is spread along (west for a pair spread east and west, south for a pair spread north and
+ * south) is first, and is named so.
+ */
+function towersAt(site: TowersSite): Built {
+  const { x, y, yaw, z } = site;
+  const off = (TOWER.gap + TOWER.size) / 2;
+  const tower = (side: number): Block => ({
+    name: '',
+    kind: 'tower',
+    x: cm(x - side * off * Math.sin(yaw)),
+    y: cm(y + side * off * Math.cos(yaw)),
+    z,
+    yaw,
+    length: TOWER.size,
+    width: TOWER.size,
+    height: TOWER.height,
+  });
+  const pair = [tower(1), tower(-1)];
+  site.middles?.forEach(([mx, my], k) => {
+    [pair[k].x, pair[k].y] = [mx, my];
+  });
+  // the pair is spread across the way it faces, along whichever axis that is nearer; the lower of the two is first
+  const alongX = Math.abs(pair[0].x - pair[1].x) >= Math.abs(pair[0].y - pair[1].y);
+  const key = (b: Block) => (alongX ? b.x : b.y);
+  const [first, second] = pair.sort((a, b) => key(a) - key(b));
+  first.name = `${site.name}' ${alongX ? 'west' : 'south'} tower`;
+  second.name = `${site.name}' ${alongX ? 'east' : 'north'} tower`;
+  const blocks = [first, second];
+  const top = z + TOWER.height;
+  const opening: Gate = {
+    kind: 'gate',
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2,
+    z: (site.ground + top) / 2,
+    yaw,
+    width: Math.hypot(first.x - second.x, first.y - second.y) - first.width,
+    height: top - site.ground,
+    label: site.label,
+    ...(site.flags ? { flags: blocks.map((b) => ({ x: b.x, y: b.y, z: b.z + b.height })) } : {}),
+  };
+  return { id: site.id, name: site.name, opening, blocks, clearings: blocks.map(clearing) };
+}
+
+/** The ground kept clear of trees under and round a block: 8 round a tower, and 4 past a deck and its ends. */
+function clearing(block: Block): Clearing {
+  const margin = block.kind === 'tower' ? 8 : 4;
+  return { x: block.x, y: block.y, yaw: block.yaw, length: block.length + 2 * margin, width: block.width + 2 * margin };
+}
+
+/**
+ * The seven structures, painted steel as chosen from a mock, each placed by a script that held it to its rules and
+ * kept here as the numbers it found, every tower on dry land. Two are the course's: the bridge across the gorge at
+ * the head of the northern river, turned square to the river's run into it and resting on both banks on its
+ * abutments, and the two towers on the level ground between the shoulder pad and the river, their tops at 110. The
+ * rest are the west bridge across the gorge west of the range, and four more pairs of towers.
+ *
+ * A pair that stands on a level's way is turned so that way passes through its gap, its middle on the way's line and
+ * its opening facing along it: the lakeside towers on the ring trial's leg from ring 1 to ring 2, 0.62 of the way along it, far enough past ring 1 and its turn for the pilot to line up on the gap, and the southern
+ * towers on the way over the water, which flies at 62 and passes between their tops at 64.9. No dry ground on that
+ * way would hold a second pair, so the southeastern towers stand off it, and with the eastern towers, which no way
+ * passes either, face across the slope they stand on, 20 clear of every way.
+ */
+const BUILT: readonly Built[] = [
+  bridgeAt({
+    id: 'gorge-bridge',
+    name: 'the gorge bridge',
+    label: 'under the bridge',
+    x: -15.21,
+    y: 335.67,
+    z: 87.5,
+    yaw: 2.2689,
+    length: 46.5,
+    low: 77,
+    ends: [14.75, 8.75],
+    sides: ['south', 'north'],
+    opening: { x: -16.5, y: 337.2, water: 74.5, width: 20 },
+  }),
+  towersAt({
+    id: 'shoulder-towers',
+    name: 'the shoulder towers',
+    label: 'between the towers',
+    x: -120,
+    y: 225,
+    yaw: 1.1479,
+    z: 71.5,
+    ground: 72,
+    flags: true,
+    middles: [
+      [-131.85, 230.33],
+      [-108.15, 219.67],
+    ],
+  }),
+  bridgeAt({
+    id: 'west-bridge',
+    name: 'the west bridge',
+    label: 'under the west bridge',
+    x: -282.6,
+    y: 166.88,
+    z: 50,
+    yaw: -0.4949,
+    length: 43.5,
+    low: 40,
+    ends: [8, 8],
+    sides: ['west', 'east'],
+    opening: { x: -282.6, y: 166.88, water: 37, width: 26 },
+  }),
+  towersAt({
+    id: 'southern-towers',
+    name: 'the southern towers',
+    label: 'between the southern towers',
+    x: -76.82,
+    y: -265.04,
+    yaw: 0.7328,
+    z: 26.39,
+    ground: 26.5,
+  }),
+  towersAt({
+    id: 'southeastern-towers',
+    name: 'the southeastern towers',
+    label: 'between the southeastern towers',
+    x: 65.08,
+    y: -199.33,
+    yaw: 1.4771,
+    z: 26.39,
+    ground: 26.5,
+  }),
+  towersAt({
+    id: 'lakeside-towers',
+    name: 'the lakeside towers',
+    label: 'between the lakeside towers',
+    x: 112.1,
+    y: -28.6,
+    yaw: -2.5536,
+    z: 20.9,
+    ground: 22.8,
+  }),
+  towersAt({
+    id: 'eastern-towers',
+    name: 'the eastern towers',
+    label: 'between the eastern towers',
+    x: 302,
+    y: 86,
+    yaw: 0.317,
+    z: 18.02,
+    ground: 18,
+  }),
+];
+
+/** The structures that can be collected, each with its opening and its blocks. */
+export const COLLECTIBLES: readonly Collectible[] = BUILT.map(({ id, name, opening, blocks }) => ({
+  id,
+  name,
+  opening,
+  blocks,
+}));
+
+/** What stands on the island in every level, and is solid in every level: every block of all eight. */
+export const STRUCTURES: readonly Block[] = COLLECTIBLES.flatMap((c) => c.blocks);
+
+/** The ground kept clear of trees under and round each structure. */
+const CLEARINGS: readonly Clearing[] = BUILT.flatMap((b) => b.clearings);
+
+/**
  * Every number the island is made from. Units are world units, near enough
  * metres (the helicopter is 13 long), with z up and the sea at 0. What each
  * one does is said where its type is, in `island.ts`; what they add up to is
@@ -28,88 +313,6 @@ export const TREE_GIVE: Record<TreeKind, number> = { broadleaf: 1, pine: 0.7, po
  * meadows, a range of mountains in the north-west, a few lakes held in the
  * land, rivers from the hills to the sea, and nine pads to fly between.
  */
-/** The bridge's deck across the gorge, 13 over the water where the river runs under it, its rails taken into its height. */
-const BRIDGE: Block = {
-  name: 'the bridge',
-  kind: 'deck',
-  x: -15.21,
-  y: 335.67,
-  z: 87.5,
-  yaw: 2.2689,
-  length: 46.5,
-  width: 8,
-  height: 2.7,
-};
-
-/**
- * The bridge's abutments, filling the ground under each end of the deck from the bank up to it, wherever there is less
- * room between them than the helicopter needs to stand, and a metre past each edge of the deck: without them it could
- * be pressed between the bank rising under it and the deck above it, and be held inside the deck.
- */
-const ABUTMENTS: readonly Block[] = [
-  {
-    name: 'the south abutment',
-    kind: 'abutment',
-    x: -5.01,
-    y: 323.51,
-    z: 77,
-    yaw: BRIDGE.yaw,
-    length: 14.75,
-    width: 10,
-    height: 10.5,
-  },
-  {
-    name: 'the north abutment',
-    kind: 'abutment',
-    x: -27.34,
-    y: 350.13,
-    z: 77,
-    yaw: BRIDGE.yaw,
-    length: 8.75,
-    width: 10,
-    height: 10.5,
-  },
-];
-
-/** The two towers, 20 apart on the level ground between the shoulder pad and the river, their feet sunk a little into it. */
-const TOWERS: readonly Block[] = [
-  {
-    name: 'the west tower',
-    kind: 'tower',
-    x: -131.85,
-    y: 230.33,
-    z: 71.5,
-    yaw: 1.1479,
-    length: 6,
-    width: 6,
-    height: 38.5,
-  },
-  {
-    name: 'the east tower',
-    kind: 'tower',
-    x: -108.15,
-    y: 219.67,
-    z: 71.5,
-    yaw: 1.1479,
-    length: 6,
-    width: 6,
-    height: 38.5,
-  },
-];
-
-/**
- * What stands on the island in every level, and is solid in every level, painted steel as chosen from a mock: the
- * bridge across the gorge at the head of the northern river, turned square to the river's run into it and resting on
- * both banks on its abutments, and the two towers, their tops at 110.
- */
-export const STRUCTURES: readonly Block[] = [BRIDGE, ...ABUTMENTS, ...TOWERS];
-
-/** The ground kept clear of trees under and round each structure: 8 round a tower, and 4 past the bridge and its ends. */
-const CLEARINGS: readonly Clearing[] = STRUCTURES.map((block) => {
-  const margin = TOWERS.includes(block) ? 8 : 4;
-  return { x: block.x, y: block.y, yaw: block.yaw, length: block.length + 2 * margin, width: block.width + 2 * margin };
-});
-
 export const ISLAND: IslandRecipe = {
   seed: 1977,
   seaLevel: 0,
@@ -374,44 +577,11 @@ function ringFrom(
   return { kind: 'ring', x, y, z, yaw: Math.atan2(y - from[1], x - from[0]), opening };
 }
 
-/** The opening between the two towers: the gap between their inner faces, from the ground in it to their tops. */
-const BETWEEN_THE_TOWERS: Gate = (() => {
-  const [west, east] = TOWERS;
-  const ground = 72;
-  const top = west.z + west.height;
-  return {
-    kind: 'gate',
-    x: (west.x + east.x) / 2,
-    y: (west.y + east.y) / 2,
-    z: (ground + top) / 2,
-    yaw: west.yaw,
-    width: Math.hypot(west.x - east.x, west.y - east.y) - west.width,
-    height: top - ground,
-    label: 'between the towers',
-    // a flag on each tower's top middle, since the course begins between them
-    flags: [west, east].map((tower) => ({ x: tower.x, y: tower.y, z: tower.z + tower.height })),
-  };
-})();
+/** The opening between the shoulder towers, which begins the course: the gap between their inner faces, from the ground in it to their tops. */
+const BETWEEN_THE_TOWERS: Gate = COLLECTIBLES.find((c) => c.id === 'shoulder-towers')!.opening;
 
-/**
- * The opening under the bridge: where the river runs under the deck, facing up the gorge the way the deck is square
- * to, from the water at 74.5 to the deck's underside, and 20 across, about as wide as the gorge is at a helicopter's
- * height.
- */
-const UNDER_THE_BRIDGE: Gate = (() => {
-  const deck = BRIDGE;
-  const water = 74.5;
-  return {
-    kind: 'gate',
-    x: -16.5,
-    y: 337.2,
-    z: (water + deck.z) / 2,
-    yaw: deck.yaw - Math.PI / 2,
-    width: 20,
-    height: deck.z - water,
-    label: 'under the bridge',
-  };
-})();
+/** The opening under the gorge bridge, where the river runs under the deck, facing up the gorge, from the water at 74.5 to the deck's underside. */
+const UNDER_THE_BRIDGE: Gate = COLLECTIBLES.find((c) => c.id === 'gorge-bridge')!.opening;
 
 /**
  * The course: begun by flying between the towers, then up the river into the gorge and under the bridge, out past

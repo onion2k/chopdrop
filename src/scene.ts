@@ -14,7 +14,7 @@
 import { MATERIAL_STRIDE, type GameGroup } from 'artshape-render/game/renderer';
 import type { Box } from 'artshape-render/game/shadows';
 import type { Mesh } from 'artshape-render/mesh/types';
-import { ISLAND, LEVELS, TREE_KINDS } from './arena';
+import { COLLECTIBLES, ISLAND, LEVELS, TREE_KINDS, type Collectible } from './arena';
 import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
@@ -183,6 +183,16 @@ const TOWER_WHITE_PAINT: Paint = { albedo: seen(0xf3ead2), roughness: 0.6 };
  */
 const DECK = { slab: 1.5, rail: 0.3 };
 const BAND = 7;
+
+/**
+ * What a structure collected gains, chosen from a mock: gold, a little brighter than a surface can be so the glow takes
+ * it, as the lit ring's is. A tower gets a collar round its top, a box `across` wider than the tower on every side and
+ * `tall` high, standing `over` above the tower's top; a bridge gets its two rails covered by boxes `fit` larger than the
+ * rail on every face, so the gold is seen and does not fight the paint under it. None of it is solid.
+ */
+const COLLECTED_PAINT: Paint = { albedo: seen(0xf0b429).map((c) => c * 1.2) as Rgb, roughness: 0.4 };
+const COLLAR = { across: 0.4, tall: 2.2, over: 0.2 };
+const RAIL_COVER = 0.02;
 
 /**
  * The start flags, chosen from a mock: a dark pole 0.3 square and 6 tall, and a cloth of 3 by 2 squares of 1.1, chequered
@@ -547,6 +557,16 @@ export class Scene {
   private parcelAt = 0;
   /** The levels that begin with a pickup, each with the pad its crate waits on: a crate each in the pool, after the one carried. Built once. */
   private readonly crates: { level: Level; pad: number }[] = [];
+  /**
+   * The structures that can be collected, each with where its placements are in the gold pool: a tower has one, a
+   * bridge one for each rail. Built once.
+   */
+  private readonly collectable: { id: string; blocks: Collectible['blocks']; first: number }[] = [];
+  /** Where the gold group is among the pools, and which structures it was last written for, so it is written only when one is collected. */
+  private goldAt = -1;
+  private goldSlots = 0;
+  private readonly goldFor: Uint8Array;
+  private goldWritten = false;
   /** What the resting crates were last written for, so they are written only when what is going changes. */
   private cratesFor: Level | null | undefined;
   /** Where the ring groups are among the pools, and what they were last written for, so they are written only on a change. */
@@ -564,9 +584,15 @@ export class Scene {
 
   /**
    * The scene of `levels`: which of them have a crate to wait on a pad, a ring to be drawn as a start and flags to mark
-   * it, worked out once here so that no frame works it out again. The arena's unless told otherwise.
+   * it, worked out once here so that no frame works it out again; and the structures that can be collected, each with
+   * its place in the gold. The arena's unless told otherwise.
    */
-  constructor(levels: readonly Level[] = LEVELS) {
+  constructor(levels: readonly Level[] = LEVELS, collectibles: readonly Collectible[] = COLLECTIBLES) {
+    for (const { id, blocks } of collectibles) {
+      this.collectable.push({ id, blocks, first: this.goldSlots });
+      for (const b of blocks) this.goldSlots += b.kind === 'tower' ? 1 : b.kind === 'deck' ? 2 : 0;
+    }
+    this.goldFor = new Uint8Array(collectibles.length);
     for (const level of levels) {
       const first = level.steps[0];
       if (first.kind === 'pickup') this.crates.push({ level, pad: first.pad });
@@ -738,6 +764,12 @@ export class Scene {
       const unit = box(1, 1, 1);
       add('flags dark', unit, FLAG_DARK_PAINT, new Float32Array(spots * FLAG_DARK * 16), spots * FLAG_DARK);
       add('flags light', unit, FLAG_LIGHT_PAINT, new Float32Array(spots * FLAG_LIGHT * 16), spots * FLAG_LIGHT);
+      // the gold of what is collected, a placement for every tower and rail there is, none of them at any size until it is
+      // collected, and written only when the structures collected change
+      this.goldAt = this.goldSlots > 0 ? this.pools.length : -1;
+      this.goldWritten = false;
+      if (this.goldSlots > 0)
+        add('collected', unit, COLLECTED_PAINT, new Float32Array(this.goldSlots * 16), this.goldSlots);
     }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
@@ -780,9 +812,10 @@ export class Scene {
   /**
    * Everything where it is this frame, and the shadow's box round the helicopter; `changed` says which pools moved.
    * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again. Given what is
-   * going, which may be nothing, the crates, the beacon, the rings and the flags are written as it says.
+   * going, which may be nothing, the crates, the beacon, the rings and the flags are written as it says; and given the
+   * names of the structures collected, the gold on each, which is written only when they change.
    */
-  write(pose: HelicopterPose, sway?: Sway, going?: Going): void {
+  write(pose: HelicopterPose, sway?: Sway, going?: Going, collected?: readonly string[]): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
     this.changed.fill(0, HELICOPTER_GROUPS);
@@ -799,6 +832,7 @@ export class Scene {
       this.rings(going);
       this.flag(going);
     }
+    if (collected && this.goldAt >= 0) this.paintGold(collected);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -892,6 +926,74 @@ export class Scene {
       }
     }
     this.changed[at] = this.changed[at + 1] = 1;
+  }
+
+  /**
+   * The gold on the structures collected: a collar round the top of each tower and a cover over each rail, every other
+   * placement at no size. A name the game does not have is not drawn. Written only when the set collected is not what
+   * it was last written for; the check reads and writes in place and makes nothing.
+   */
+  private paintGold(collected: readonly string[]): void {
+    const at = this.goldAt;
+    const was = this.goldFor;
+    let changed = !this.goldWritten;
+    for (let k = 0; k < this.collectable.length; k++) {
+      const now = collected.includes(this.collectable[k].id) ? 1 : 0;
+      if (now !== was[k]) changed = true;
+      was[k] = now;
+    }
+    if (!changed) return;
+    this.goldWritten = true;
+    const m = this.pools[at];
+    m.fill(0);
+    for (let k = 0; k < this.collectable.length; k++) {
+      if (!was[k]) continue;
+      let slot = this.collectable[k].first;
+      for (const b of this.collectable[k].blocks) {
+        if (b.kind === 'tower') {
+          const { across, tall, over } = COLLAR;
+          place(
+            m,
+            slot++,
+            b.x,
+            b.y,
+            b.z + b.height + over - tall,
+            b.yaw,
+            b.length + 2 * across,
+            b.width + 2 * across,
+            tall,
+          );
+        } else if (b.kind === 'deck') {
+          for (let side = -1; side <= 1; side += 2) {
+            const offset = (side * (b.width - DECK.rail)) / 2;
+            const [x, y] = [b.x - Math.sin(b.yaw) * offset, b.y + Math.cos(b.yaw) * offset];
+            const fit = RAIL_COVER;
+            place(
+              m,
+              slot++,
+              x,
+              y,
+              b.z + DECK.slab - fit,
+              b.yaw,
+              b.length + 2 * fit,
+              DECK.rail + 2 * fit,
+              b.height - DECK.slab + 2 * fit,
+            );
+          }
+        }
+      }
+    }
+    this.changed[at] = 1;
+  }
+
+  /** How many placements of gold are drawn now: what the test API says, and nothing the frame uses. */
+  get gold(): number {
+    if (this.goldAt < 0) return 0;
+    const m = this.pools[this.goldAt];
+    let drawn = 0;
+    for (let k = 0; k < this.goldSlots; k++)
+      if (m[k * 16] !== 0 || m[k * 16 + 5] !== 0 || m[k * 16 + 10] !== 0) drawn++;
+    return drawn;
   }
 
   /** Each tree the sway is moving leaned as it says, and each it has let go since the last write stood up again. */

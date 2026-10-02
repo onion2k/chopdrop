@@ -25,7 +25,7 @@
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
-import { TREE_KINDS, type TreeKind } from './arena';
+import { TREE_KINDS, type Collectible, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
 import type { Game, LastLevel } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
@@ -92,10 +92,14 @@ export interface GameState {
   guided: string | null;
   /** The last level done, for the toast, or null until one is. */
   last: LastLevel | null;
-  /** The toast's words while it is shown, "Delivered! 0:38 ★ New best", or null: it goes after three seconds of game time. */
+  /** The toast's words while it is shown, "Delivered! 0:38 ★ New best" or "Collected the gorge bridge · 1 of 7", or null: each goes after three seconds of game time. */
   toast: string | null;
   /** The pad nothing begins from until the helicopter lifts off, by its place in the pads' list; −1 for none. */
   blocked: number;
+  /** The structures collected, by name, in the order they were; one a save brought that the game does not have is in it too. */
+  collected: string[];
+  /** How many placements of gold the scene is drawing: a collar on each tower and a cover over each rail of the structures collected. */
+  gold: number;
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -182,6 +186,8 @@ export interface GameApi {
     pads: PadInfo[];
     home: PadInfo;
     structures: Block[];
+    /** The bridges and pairs of towers that can be collected, each with its opening and the blocks it is solid as. */
+    collectibles: Collectible[];
   };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
@@ -199,7 +205,7 @@ export interface GameApi {
   /**
    * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
    * `delivered 1`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
-   * `abandoned first-delivery`.
+   * `abandoned first-delivery`, `collected gorge-bridge 1 7`.
    */
   events(): string[];
   /** Flying free from home again: landed on the home pad, anything going abandoned (told), nothing guided. */
@@ -222,7 +228,9 @@ export interface GameApi {
   save(): { best: Record<string, number>; refused: string | null };
   /**
    * The autopilot flying in place of the player, or not: what the play-through flies the level by. Given a level `id`,
-   * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going.
+   * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going; given a
+   * structure's `id`, it flies through that structure's opening while nothing else is asked of it. Level ids and
+   * structure ids never clash; one that is neither throws.
    */
   autopilot(on: boolean, id?: string): void;
   /** Every rule that must always hold and does not, as `invariants.ts` says: none, if all is well. */
@@ -269,9 +277,11 @@ export interface DebugHost {
   play(id: string): void;
   /** What is on the screen. */
   screen(): GameState['screen'];
-  /** The toast's words while it is shown, or null. */
+  /** The toast's words while it is shown, a level's or a structure's, or null. */
   toast(): string | null;
-  /** The autopilot flying in place of the keys and touch, or not, told the level to do while nothing is going. */
+  /** How many placements of gold the scene has written. */
+  gold(): number;
+  /** The autopilot flying in place of the keys and touch, or not, told the level or the structure to do while nothing is going. */
   setAutopilot(on: boolean, id?: string): void;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
@@ -341,6 +351,8 @@ export function createApi(host: DebugHost): GameApi {
         last: game.last && { ...game.last },
         toast: host.toast(),
         blocked: game.starts.blocked,
+        collected: [...game.collection.ids],
+        gold: host.gold(),
       };
     },
     content: () => ({
@@ -351,6 +363,12 @@ export function createApi(host: DebugHost): GameApi {
       pads: game.island.pads.map(padInfo),
       home: padInfo(game.island.pads[0]),
       structures: game.solids.blocks.map((block) => ({ ...block })),
+      collectibles: game.collection.collectibles.map(({ id, name, opening, blocks }) => ({
+        id,
+        name,
+        opening: { ...opening, ...(opening.flags && { flags: opening.flags.map((f) => ({ ...f })) }) },
+        blocks: blocks.map((block) => ({ ...block })),
+      })),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
     floorAt: (x, y) => helicopter.floorAt(x, y),

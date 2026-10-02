@@ -9,13 +9,14 @@ rules in `~/.claude/CLAUDE.md` apply too.
 
 The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
-from a recipe, its trees bowing in the rotor's downwash, a bridge and two towers that stand
-solid in every level, and seven levels, four deliveries, two ring trials
+from a recipe, its trees bowing in the rotor's downwash, seven structures
+(two bridges and five pairs of towers) that stand solid in every level and
+are collected by flying through them, and seven levels, four deliveries, two ring trials
 and a course. The game opens flying free from home, nothing locked: a level
 begins where its first step is done, on a pad with a crate waiting or
 through a start ring or the towers, one at a time, and the best time on
-each is kept in a save. Collectible structures and ten hidden packages with
-a radar are still to come (the plan is
+each is kept in a save, with the structures collected. Ten hidden packages
+with a radar are still to come (the plan is
 `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
 physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
@@ -131,12 +132,14 @@ says why. Look at every picture.
   events into words on the screen through `src/hud.ts`: the hint while
   flying free, the way to a start when shown it, the objective, the arrow
   and distance to what is wanted, the loader, the corner button to the
-  panel, and the toast at a level's end, shown for game seconds.
-  `src/panel.ts` is the panel (Esc or the corner button): every level, its
-  best time and where it starts, "Show the way" and "Abandon", holding the
+  panel, and the toasts, a level's end or a structure collected, queued and
+  each shown for game seconds. `src/panel.ts` is the panel (Esc or the
+  corner button): every level, its best time and where it starts, "Show the
+  way" and "Abandon", and the structures ticked as collected, holding the
   game while it is up. `src/scene.ts` draws a crate on the pad of every
-  delivery not going, and a chequered flag at every start. There is no game
-  logic here.
+  delivery not going, a chequered flag at every start, and a gold collar on
+  each collected tower and gold rails on each collected bridge. There is no
+  game logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
   fingers as numbers and tested headless, and drawn and fed by the page in
@@ -187,8 +190,10 @@ bridge` and `landed 6`; `play`, which puts the helicopter at a level's
   island and the helicopter as drawn; `matrix.ts` places, tilts and spins;
   `meshes.ts` builds the shapes.
 - `src/progress.ts` is the save: the best time on each level by its
-  name, kept under `chopdrop-save-v1`, read as if anyone had written it.
-  Which levels are open is worked out from it, never kept.
+  name, and the structures collected by theirs, kept under
+  `chopdrop-save-v1`, read as if anyone had written it.
+  `src/collection.ts` is what has been collected: each structure's opening
+  watched by `crossed`, either way through, whatever is going.
 - There is no physics yet. `artshape-physics` stays pinned in
   `package.json`, and `src/physics.ts` comes back as the one door to it with
   the first body; nothing else imports the package. A change it needs goes
@@ -242,10 +247,17 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   flown through by key and by touch in `smoke/free.spec.ts`, and pictured
   (`level-loading.png`, `level-carrying.png`, `toast.png`, and on a
   phone).
-- **The structures**, for anything that stands on the island: a block in
-  `STRUCTURES` (`arena.ts`), with a name a broken rule says and a kind the
-  scene paints by; the trees cleared from round it by the recipe's
-  `trees.clear`; solid in `solids.ts`, ruled by `checkSolids`; drawn
+- **The structures**, for anything that stands on the island: built by
+  `bridgeAt` or `towersAt` in `arena.ts`, a collectible in `COLLECTIBLES`
+  with an `id` kept in saves, a name for the words, its opening and its
+  blocks, each block in `STRUCTURES` with a name a broken rule says and a
+  kind the scene paints by; placed by script and pinned in
+  `test/levels.test.ts` (dry ground, the feet, the room under a deck, 150
+  apart, every level's way clear of it or through its opening); the trees
+  cleared from round it by the recipe's `trees.clear`; collected by
+  `collection.ts`, told through `GameEvents`, kept by `progress.ts`, ruled
+  by `checkCollection`, and flown through by the fuzzer's "through a
+  structure" and the autopilot's `collect`; solid in `solids.ts`, ruled by `checkSolids`; drawn
   static by `scene.ts` in the chosen paint; kept off by the camera, ruled
   by `checkCamera`; gone round, over or out from under by the autopilot's
   `detour`; read by `debug.ts` (`content().structures`); flown at and set
@@ -253,8 +265,9 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   the ground, clear of the trees, with room under the deck, and clear of
   every other level's way, in `test/levels.test.ts`; pictured
   (`course-bridge.png`, `course-towers.png`, `camera-drawn-in.png`,
-  `camera-over.png`, `course-phone.png`), and every picture that can see
-  one written again.
+  `camera-over.png`, `course-phone.png`, `collected-towers.png`,
+  `collected-bridge.png`, `collected-far.png`, `panel-structures.png`), and
+  every picture that can see one written again.
 - **The course**, for a level of more than one kind of step: `gate` and
   `land` steps in `mission.ts`, a gate passed by the ring's rule with a
   rectangle for its opening; put into words by `hud.ts`; flown by the

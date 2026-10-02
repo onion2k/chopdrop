@@ -29,7 +29,7 @@ import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
-import { LEVELS, TREE_KINDS } from '../src/arena';
+import { COLLECTIBLES, LEVELS, TREE_KINDS } from '../src/arena';
 import { treeSize } from '../src/meshes';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
@@ -80,8 +80,13 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
   try {
     // a player back for another go, with some levels done, any of them as chance says, none or all
     if (level !== undefined && !LEVELS.some((l) => l.id === level)) throw new Error(`there is no level "${level}"`);
+    // and with some structures collected, any of them, and now and then one a later game has that this one does not
     const save = {
       best: Object.fromEntries(LEVELS.flatMap((l, k) => (random() < 0.5 ? [[l.id, 40 + 20 * k]] : []))),
+      collected: [
+        ...COLLECTIBLES.flatMap((c) => (random() < 0.3 ? [c.id] : [])),
+        ...(random() < 0.2 ? ['from-a-later-game'] : []),
+      ],
     };
     const game = new Game({
       random: seeded(seed),
@@ -94,6 +99,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         passed: () => count(happened, 'passed a ring'),
         through: () => count(happened, 'through a gate'),
         landed: () => count(happened, 'landed where wanted'),
+        collected: () => count(happened, 'collected'),
         finished: (_id, _seconds, best) => count(happened, best ? 'finished, a best time' : 'finished'),
       },
     });
@@ -106,6 +112,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
     const sizes = TREE_KINDS.map(treeSize);
     const { bounds } = heli;
     const { ground, pads, trees, treeCount } = game.island;
+    // how many structures were collected at the last check, which only ever goes up within a game
+    let collectedAt = game.collection.count;
     let controls: Controls = { ...IDLE };
     // how many frames the current thing is still held for, whether it is a landing, which ends when the skids touch,
     // the rhythm the lift is tapped at, frames on and frames in all, if it is a hover, and whether it is a run of
@@ -192,6 +200,26 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       hold.busy = 150;
       hold.at = game.mission.next;
       return true;
+    };
+    /**
+     * Lined up on a structure's opening, from either side, 10 to 25 back, its middle at the opening's height and a
+     * little off its middle, and flown at it as `lineUpOn` flies a ring: through it, and on past.
+     */
+    const lineUpOnStructure = (): void => {
+      const { opening } = COLLECTIBLES[Math.floor(random() * COLLECTIBLES.length)];
+      const side = random() < 0.5 ? 1 : -1;
+      const back = between(10, 25);
+      const [ax, ay] = [Math.cos(opening.yaw), Math.sin(opening.yaw)];
+      const off = between(-opening.width / 6, opening.width / 6);
+      const up = between(-opening.height / 8, opening.height / 8);
+      heli.place(
+        opening.x + ax * side * back - ay * off,
+        opening.y + ay * side * back + ax * off,
+        opening.z - HELICOPTER.size.middle + up,
+        opening.yaw + (side > 0 ? Math.PI : 0),
+      );
+      controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
+      hold.busy = 150;
     };
     /** Lined up on the ring or the opening wanted. */
     const lineUp = (): boolean => lineUpOn(game.mission.current);
@@ -399,6 +427,12 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         },
       },
       {
+        name: 'through a structure',
+        places: true,
+        weight: 3,
+        go: lineUpOnStructure,
+      },
+      {
         name: 'structure run',
         places: true,
         weight: 2,
@@ -596,6 +630,12 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       }
       if (frame % CHECK_EVERY === 0) {
         const problems = [...checkInvariants(game), ...checkCamera(rig, game, sizes)];
+        // what is collected only grows within a game, which needs the count from the last check
+        if (game.collection.count < collectedAt)
+          problems.push(
+            `the structures collected went down: ${collectedAt} at the last check, ${game.collection.count} now`,
+          );
+        collectedAt = game.collection.count;
         if (problems.length) return fail(problems);
       }
     }

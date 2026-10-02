@@ -63,6 +63,31 @@ describe('the determinism check', () => {
     expect(hashGame(guidedOther)).not.toBe(hashGame(guided));
   });
 
+  it('sees how many structures are collected, and which, and in what order', () => {
+    const game = () => new Game({ random: seeded(1) });
+    const was = hashGame(game());
+    const one = game();
+    one.progress.collect('gorge-bridge');
+    one.collection.count = 1;
+    expect(hashGame(one)).not.toBe(was);
+    const other = game();
+    other.progress.collect('west-bridge');
+    other.collection.count = 1;
+    expect(hashGame(other), 'which').not.toBe(hashGame(one));
+    const ab = game();
+    ab.progress.collect('gorge-bridge');
+    ab.progress.collect('west-bridge');
+    ab.collection.count = 2;
+    const ba = game();
+    ba.progress.collect('west-bridge');
+    ba.progress.collect('gorge-bridge');
+    ba.collection.count = 2;
+    expect(hashGame(ab), 'in what order').not.toBe(hashGame(ba));
+    const counted = game();
+    counted.collection.count = 1;
+    expect(hashGame(counted), 'how many').not.toBe(was);
+  });
+
   it('sees the helicopter moved a thousandth, turned a millionth, a tree leaned, and the ring a hair fuller', () => {
     const game = () => {
       const g = new Game({ random: seeded(1) });

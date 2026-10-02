@@ -61,6 +61,7 @@ test('the course by the keys: begun between the towers, the bridge gone over and
   expect(await page.evaluate(() => window.game!.events())).toEqual([
     'started under-and-between',
     'through between the towers',
+    'collected shoulder-towers 1 7',
   ]);
   const [towers, bridge] = await gatesOf(page);
   expect([towers.label, bridge.label]).toEqual(['between the towers', 'under the bridge']);
@@ -105,7 +106,12 @@ test('the course by the keys: begun between the towers, the bridge gone over and
   // and under it
   await before(page, bridge, 20);
   await forward(page, 120);
-  expect(await page.evaluate(() => window.game!.events())).toEqual(['through under the bridge']);
+  // the course collects the gorge bridge on its way, whatever the level is doing; the deck gone over and struck did not
+  expect(await page.evaluate(() => window.game!.events())).toEqual([
+    'through under the bridge',
+    'collected gorge-bridge 2 7',
+  ]);
+  expect((await state(page)).collected).toEqual(['shoulder-towers', 'gorge-bridge']);
   await expect(page.locator('#hud .goal')).toHaveText('Fly through ring 1 of 3');
 
   // the rest flown, and the clock stops as the skids touch the pad it ends on
@@ -146,6 +152,7 @@ test.describe('on a phone', () => {
     expect(await page.evaluate(() => window.game!.events())).toEqual([
       'started under-and-between',
       'through between the towers',
+      'collected shoulder-towers 1 7',
     ]);
     await expect(page.locator('#hud .goal')).toHaveText('Fly under the bridge');
     expect(problems).toEqual([]);

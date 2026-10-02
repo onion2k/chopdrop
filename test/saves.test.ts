@@ -25,6 +25,14 @@ const read = (file: string) => readFileSync(new URL(file, DIR), 'utf8');
 const KEPT: Record<string, Record<string, number>> = {
   '01-first.json': {},
   '02-best-times.json': { 'first-delivery': 38.4, 'over-the-water': 61.25 },
+  '03-collected.json': { 'first-delivery': 38.4 },
+};
+
+/** What each save held of the structures collected, in order: none for a shape from before there were any. */
+const COLLECTED: Record<string, string[]> = {
+  '01-first.json': [],
+  '02-best-times.json': [],
+  '03-collected.json': ['gorge-bridge', 'shoulder-towers', 'from-a-later-game'],
 };
 
 describe('saves from every shape the game has written', () => {
@@ -38,6 +46,7 @@ describe('saves from every shape the game has written', () => {
         const p = new Progress(memoryStore(read(file)));
         expect(p.refused).toBeNull();
         expect(Object.fromEntries(p.best)).toEqual(KEPT[file]);
+        expect(p.collected).toEqual(COLLECTED[file]);
       });
 
       it('plays on from where it left off, every level it opens, and breaks no rule', () => {
@@ -48,12 +57,19 @@ describe('saves from every shape the game has written', () => {
         expect(checkInvariants(game)).toEqual([]);
       });
 
+      it('marks what it had collected as collected in the game', () => {
+        const game = new Game({ random: seeded(7), progress: new Progress(memoryStore(read(file))) });
+        for (const id of COLLECTED[file]) expect(game.collection.has(id), id).toBe(true);
+      });
+
       it('comes back as it went, written again in the shape of today', () => {
         const store = memoryStore(read(file));
         const before = new Progress(store);
         expect(store.json, 'loading alone must not write').toBe(read(file));
         before.persist();
-        expect(Object.fromEntries(new Progress(memoryStore(store.json)).best)).toEqual(KEPT[file]);
+        const after = new Progress(memoryStore(store.json));
+        expect(Object.fromEntries(after.best)).toEqual(KEPT[file]);
+        expect(after.collected).toEqual(COLLECTED[file]);
       });
     });
   }
@@ -61,6 +77,7 @@ describe('saves from every shape the game has written', () => {
   it('has the shape the game writes now: a new field means a new file here', () => {
     const progress = new Progress(memoryStore());
     progress.record(LEVELS[0].id, 40);
+    progress.collect('gorge-bridge');
     const now = Object.keys(progress.toJSON()).sort();
     const newest = Object.keys(JSON.parse(read(files[files.length - 1])) as object).sort();
     expect(newest, 'add a save in the new shape to test/saves').toEqual(now);

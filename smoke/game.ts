@@ -54,7 +54,11 @@ export const SAVE_KEY = 'chopdrop-save-v1';
  */
 export async function start(
   page: Page,
-  options: { seed?: number; paused?: boolean; save?: { best: Record<string, number> } | string } = {},
+  options: {
+    seed?: number;
+    paused?: boolean;
+    save?: { best: Record<string, number>; collected?: string[] } | string;
+  } = {},
 ) {
   const { seed, paused, save } = options;
   if (save !== undefined)

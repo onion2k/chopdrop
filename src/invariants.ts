@@ -83,6 +83,7 @@ export function checkInvariants(game: Game): string[] {
   out.push(...checkMission(game));
   out.push(...checkProgress(game));
   out.push(...checkSolids(game));
+  out.push(...checkCollection(game));
   return out;
 }
 
@@ -91,6 +92,26 @@ export function checkSolids(game: Game): string[] {
   const { depth, what } = game.solids.inside(game.helicopter);
   if (depth <= TOLERANCE) return [];
   return [`the helicopter is inside ${what}: its reach ${depth.toFixed(3)} past touching it`];
+}
+
+/**
+ * What must hold of the structures collected: each one is a structure the game has, or one the save brought, as a later
+ * game's save would; none is collected twice; and no more are counted than the game has. That what is collected only
+ * grows within a game needs a history, and is held by the fuzzer, which has one.
+ */
+export function checkCollection(game: Game): string[] {
+  const out: string[] = [];
+  const { collection } = game;
+  const seen = new Set<string>();
+  for (const id of game.progress.collected) {
+    if (seen.has(id)) out.push(`${id} is collected twice`);
+    seen.add(id);
+    if (!collection.brought.has(id) && !collection.collectibles.some((c) => c.id === id))
+      out.push(`${id} is collected, and is no structure of the game's, nor one the save brought`);
+  }
+  if (!Number.isInteger(collection.count) || collection.count < 0 || collection.count > collection.collectibles.length)
+    out.push(`${collection.count} collected, and there are only ${collection.collectibles.length}`);
+  return out;
 }
 
 /**

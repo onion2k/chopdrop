@@ -4,11 +4,13 @@
  * makes it the level it is: over the water, over the range, up the mountain.
  */
 import { describe, expect, it } from 'vitest';
-import { LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { PILOT } from '../src/autopilot';
 import { HELICOPTER } from '../src/helicopter';
-import { TREE_STRIDE } from '../src/island';
+import { SEA, TREE_STRIDE } from '../src/island';
 import { treeSize } from '../src/meshes';
-import { RING, RINGS, type Gate, type Ring } from '../src/mission';
+import { RING, RINGS, crossed, type Gate, type Level, type Ring } from '../src/mission';
+import { Solids, type Block } from '../src/solids';
 
 const { pads, ground, lakes, trees, treeCount, bounds } = theIsland();
 const apart = (a: number, b: number) => Math.hypot(pads[a].x - pads[b].x, pads[a].y - pads[b].y);
@@ -210,90 +212,460 @@ describe('the valley', () => {
   });
 });
 
-describe('what stands on the island', () => {
-  const [bridge, south, north, west, east] = STRUCTURES;
-  /** The ground under a block's footprint, at its lowest and highest. */
-  const under = (b: (typeof STRUCTURES)[number]) => {
-    let lo = Infinity,
-      hi = -Infinity;
-    for (let a = -b.length / 2; a <= b.length / 2; a += 0.5)
-      for (let w = -b.width / 2; w <= b.width / 2; w += 0.5) {
-        const g = ground.heightAt(
-          b.x + a * Math.cos(b.yaw) - w * Math.sin(b.yaw),
-          b.y + a * Math.sin(b.yaw) + w * Math.cos(b.yaw),
-        );
-        [lo, hi] = [Math.min(lo, g), Math.max(hi, g)];
-      }
-    return { lo, hi };
-  };
+/** The seven structures, in the order the island has them, each with the names its blocks go by when a rule says them. */
+const SEVEN = [
+  [
+    'gorge-bridge',
+    'the gorge bridge',
+    ['the gorge bridge', "the gorge bridge's south abutment", "the gorge bridge's north abutment"],
+  ],
+  ['shoulder-towers', 'the shoulder towers', ["the shoulder towers' west tower", "the shoulder towers' east tower"]],
+  [
+    'west-bridge',
+    'the west bridge',
+    ['the west bridge', "the west bridge's west abutment", "the west bridge's east abutment"],
+  ],
+  ['southern-towers', 'the southern towers', ["the southern towers' south tower", "the southern towers' north tower"]],
+  [
+    'southeastern-towers',
+    'the southeastern towers',
+    ["the southeastern towers' west tower", "the southeastern towers' east tower"],
+  ],
+  ['lakeside-towers', 'the lakeside towers', ["the lakeside towers' south tower", "the lakeside towers' north tower"]],
+  ['eastern-towers', 'the eastern towers', ["the eastern towers' south tower", "the eastern towers' north tower"]],
+] as const;
+const collectible = (id: string) => COLLECTIBLES.find((c) => c.id === id)!;
+const BRIDGES = COLLECTIBLES.filter((c) => c.blocks[0].kind === 'deck');
+const PAIRS = COLLECTIBLES.filter((c) => c.blocks[0].kind === 'tower');
+const EDGE = 100;
 
-  it('is a bridge on its abutments and two towers, named as a rule broken says them', () => {
-    expect(STRUCTURES.map((b) => b.name)).toEqual([
-      'the bridge',
-      'the south abutment',
-      'the north abutment',
-      'the west tower',
-      'the east tower',
+/** The ground under a block's footprint, at its lowest and highest. */
+const under = (b: Block) => {
+  let lo = Infinity,
+    hi = -Infinity;
+  for (let a = -b.length / 2; a <= b.length / 2; a += 0.5)
+    for (let w = -b.width / 2; w <= b.width / 2; w += 0.5) {
+      const g = ground.heightAt(
+        b.x + a * Math.cos(b.yaw) - w * Math.sin(b.yaw),
+        b.y + a * Math.sin(b.yaw) + w * Math.cos(b.yaw),
+      );
+      [lo, hi] = [Math.min(lo, g), Math.max(hi, g)];
+    }
+  return { lo, hi };
+};
+
+/**
+ * Whether (x, y) is water, by what the island knows of its water and not by the height of the ground there, which is
+ * the surface of the water: in a lake's squares, in a square of the sea, or within a river's width of its run.
+ */
+const lakeSquares = new Set(theIsland().lakes.flatMap((lake) => Array.from(lake.squares)));
+function wet(x: number, y: number): boolean {
+  const { terrain, sea } = theIsland();
+  const i = Math.floor((x - terrain.originX) / terrain.cell),
+    j = Math.floor((y - terrain.originY) / terrain.cell);
+  const square = j * (terrain.cols - 1) + i;
+  if (lakeSquares.has(square) || sea[square] !== SEA.dry) return true;
+  for (const river of theIsland().rivers)
+    for (let k = 0; k < river.points.length; k += 4)
+      if (Math.hypot(river.points[k] - x, river.points[k + 1] - y) < river.points[k + 3] + 1) return true;
+  return false;
+}
+
+describe('what stands on the island', () => {
+  it('is seven structures, each known by a name that is a name and never its place in the list, and their blocks named as a rule broken says them', () => {
+    expect(COLLECTIBLES.map((c) => [c.id, c.name, c.blocks.map((b) => b.name)])).toEqual(
+      SEVEN.map(([id, name, blocks]) => [id, name, blocks]),
+    );
+    for (const c of COLLECTIBLES) expect(c.id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    expect(new Set(COLLECTIBLES.map((c) => c.id)).size).toBe(7);
+    expect(new Set(COLLECTIBLES.map((c) => c.name)).size).toBe(7);
+    // solid in every level: every block of all seven, the gorge bridge and the shoulder towers first as they were
+    expect(STRUCTURES).toEqual(COLLECTIBLES.flatMap((c) => c.blocks));
+  });
+
+  it('says each opening as the words do: under a bridge, between a pair of towers', () => {
+    expect(COLLECTIBLES.map((c) => c.opening.label)).toEqual([
+      'under the bridge',
+      'between the towers',
+      'under the west bridge',
+      'between the southern towers',
+      'between the southeastern towers',
+      'between the lakeside towers',
+      'between the eastern towers',
+    ]);
+    for (const c of COLLECTIBLES) expect(c.opening.kind).toBe('gate');
+    // only the shoulder towers' opening begins a level, so only it has flags
+    expect(COLLECTIBLES.map((c) => c.opening.flags !== undefined)).toEqual([
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
     ]);
   });
 
-  it('leaves no room under the deck too narrow for the helicopter to stand in, that an abutment does not fill', () => {
+  it('keeps the gorge bridge and the shoulder towers as they were, to the centimetre, so the course and its pictures are untouched', () => {
+    const old = (
+      name: string,
+      kind: Block['kind'],
+      x: number,
+      y: number,
+      z: number,
+      yaw: number,
+      l: number,
+      w: number,
+      h: number,
+    ) => ({
+      name,
+      kind,
+      x,
+      y,
+      z,
+      yaw,
+      length: l,
+      width: w,
+      height: h,
+    });
+    expect(collectible('gorge-bridge').blocks).toEqual([
+      old('the gorge bridge', 'deck', -15.21, 335.67, 87.5, 2.2689, 46.5, 8, 2.7),
+      old("the gorge bridge's south abutment", 'abutment', -5.01, 323.51, 77, 2.2689, 14.75, 10, 10.5),
+      old("the gorge bridge's north abutment", 'abutment', -27.34, 350.13, 77, 2.2689, 8.75, 10, 10.5),
+    ]);
+    expect(collectible('shoulder-towers').blocks).toEqual([
+      old("the shoulder towers' west tower", 'tower', -131.85, 230.33, 71.5, 1.1479, 6, 6, 38.5),
+      old("the shoulder towers' east tower", 'tower', -108.15, 219.67, 71.5, 1.1479, 6, 6, 38.5),
+    ]);
+  });
+
+  it('has no room under any deck too narrow for the helicopter to stand in, that an abutment does not fill', () => {
     const need = HELICOPTER.size.middle + HELICOPTER.size.rotorRadius;
-    const inside = (b: (typeof STRUCTURES)[number], x: number, y: number) => {
+    const inside = (b: Block, x: number, y: number) => {
       const along = (x - b.x) * Math.cos(b.yaw) + (y - b.y) * Math.sin(b.yaw);
       const across = -(x - b.x) * Math.sin(b.yaw) + (y - b.y) * Math.cos(b.yaw);
       return Math.abs(along) <= b.length / 2 + 1e-6 && Math.abs(across) <= b.width / 2 + 1e-6;
     };
-    let open = 0;
-    for (let a = -bridge.length / 2; a <= bridge.length / 2; a += 0.5)
-      for (let w = -bridge.width / 2; w <= bridge.width / 2; w += 0.5) {
-        const x = bridge.x + a * Math.cos(bridge.yaw) - w * Math.sin(bridge.yaw),
-          y = bridge.y + a * Math.sin(bridge.yaw) + w * Math.cos(bridge.yaw);
-        if (inside(south, x, y) || inside(north, x, y)) continue;
-        // the bank meets the deck where there is no room at all, to within the five centimetres the content is said to
-        const room = bridge.z - ground.heightAt(x, y);
-        expect(room <= 0.05 || room >= need, `${a} along, ${w} across: room ${room.toFixed(2)}`).toBe(true);
-        if (room > 0.05) open++;
+    for (const { name, blocks } of BRIDGES) {
+      const [bridge, ...ends] = blocks;
+      let open = 0;
+      for (let a = -bridge.length / 2; a <= bridge.length / 2; a += 0.5)
+        for (let w = -bridge.width / 2; w <= bridge.width / 2; w += 0.5) {
+          const x = bridge.x + a * Math.cos(bridge.yaw) - w * Math.sin(bridge.yaw),
+            y = bridge.y + a * Math.sin(bridge.yaw) + w * Math.cos(bridge.yaw);
+          if (ends.some((end) => inside(end, x, y))) continue;
+          // the bank meets the deck where there is no room at all, to within the five centimetres the content is said to
+          const room = bridge.z - ground.heightAt(x, y);
+          expect(room <= 0.05 || room >= need, `${name}, ${a} along, ${w} across: room ${room.toFixed(2)}`).toBe(true);
+          if (room > 0.05) open++;
+        }
+      // and there is open water under it to fly through
+      expect(open, name).toBeGreaterThan(500);
+    }
+  });
+
+  it('stands each abutment from below the bank up to the deck, as long as its end and a metre past each edge of the deck', () => {
+    for (const { blocks } of BRIDGES) {
+      const [bridge, ...ends] = blocks;
+      expect(ends).toHaveLength(2);
+      for (const end of ends) {
+        expect(end.z, end.name).toBeLessThan(under(end).lo);
+        expect(end.z + end.height, end.name).toBeCloseTo(bridge.z, 6);
+        expect(end.width, end.name).toBe(bridge.width + 2);
+        expect(end.yaw, end.name).toBe(bridge.yaw);
+        // flush with the deck's end, which it fills from
+        const along = (end.x - bridge.x) * Math.cos(bridge.yaw) + (end.y - bridge.y) * Math.sin(bridge.yaw);
+        expect(Math.abs(along) + end.length / 2, end.name).toBeCloseTo(bridge.length / 2, 1);
       }
-    // and there is open water under it to fly through
-    expect(open).toBeGreaterThan(500);
-  });
-
-  it('stands each abutment from below the bank up to the deck', () => {
-    for (const end of [south, north]) {
-      expect(end.z, end.name).toBeLessThan(under(end).lo);
-      expect(end.z + end.height, end.name).toBeCloseTo(bridge.z, 6);
     }
   });
 
-  it('stands each tower on the ground, its foot sunk into it and never floating, its top at 110', () => {
-    for (const tower of [west, east]) {
-      const { lo } = under(tower);
-      expect(tower.z, tower.name).toBeLessThan(lo);
-      expect(lo - tower.z, tower.name).toBeLessThan(3);
-      expect(tower.z + tower.height).toBeCloseTo(110, 6);
+  it('rests each deck on both banks, 13 over the water where the river runs under it', () => {
+    for (const { name, blocks, opening } of BRIDGES) {
+      const [bridge] = blocks;
+      // each end on the bank: the ground under its last metre as high as its underside
+      for (const end of [-1, 1]) {
+        const at = end * (bridge.length / 2 - 1);
+        const g = ground.heightAt(bridge.x + at * Math.cos(bridge.yaw), bridge.y + at * Math.sin(bridge.yaw));
+        expect(g, `${name}, the end ${end}`).toBeGreaterThanOrEqual(bridge.z);
+      }
+      expect(bridge.z - ground.heightAt(opening.x, opening.y), name).toBeCloseTo(13, 0);
+      expect(bridge.height, name).toBe(2.7);
+      expect(bridge.width, name).toBe(8);
     }
   });
 
-  it('rests the deck on both banks, 13 over the water where the river runs under it', () => {
-    // each end on the bank: the ground under its last two metres as high as its underside
-    for (const end of [-1, 1]) {
-      const at = end * (bridge.length / 2 - 1);
-      const g = ground.heightAt(bridge.x + at * Math.cos(bridge.yaw), bridge.y + at * Math.sin(bridge.yaw));
-      expect(g, `the end ${end}`).toBeGreaterThanOrEqual(bridge.z);
+  it("has each bridge's opening from the water to the deck, facing along the river, square to the deck, inside the abutments", () => {
+    for (const { name, blocks, opening: g } of BRIDGES) {
+      const [bridge, south, north] = blocks;
+      expect(g.z + g.height / 2, name).toBeCloseTo(bridge.z, 6);
+      expect(g.z - g.height / 2, name).toBeCloseTo(ground.heightAt(g.x, g.y), 0);
+      expect(Math.cos(g.yaw - bridge.yaw), name).toBeCloseTo(0, 6);
+      // the river under it, near its middle, and between the abutments' inner ends
+      const along = (g.x - bridge.x) * Math.cos(bridge.yaw) + (g.y - bridge.y) * Math.sin(bridge.yaw);
+      const [inner0, inner1] = [south, north]
+        .map((end) => {
+          const at = (end.x - bridge.x) * Math.cos(bridge.yaw) + (end.y - bridge.y) * Math.sin(bridge.yaw);
+          return at - Math.sign(at) * (end.length / 2);
+        })
+        .sort((p, q) => p - q);
+      expect(along - g.width / 2, name).toBeGreaterThanOrEqual(inner0);
+      expect(along + g.width / 2, name).toBeLessThanOrEqual(inner1);
+      expect(Math.abs(along) + g.width / 2, name).toBeLessThan(bridge.length / 2);
+      // wide enough to fly under, about as wide as the gorge is at the helicopter's height
+      expect(g.width, name).toBeGreaterThanOrEqual(20);
     }
-    expect(bridge.z - ground.heightAt(-16.5, 337.2)).toBeCloseTo(13, 0);
   });
 
-  it('has no tree in it, under the deck or beside a tower', () => {
+  it('stands each pair of towers 6 across and 38.5 tall, their inner faces 20 apart, the feet sunk into the ground and never floating', () => {
+    for (const { name, blocks } of PAIRS) {
+      const [a, b] = blocks;
+      for (const tower of blocks) {
+        expect([tower.length, tower.width, tower.height], tower.name).toEqual([6, 6, 38.5]);
+        expect(tower.yaw, tower.name).toBe(a.yaw);
+        const { lo } = under(tower);
+        expect(tower.z, tower.name).toBeLessThan(lo);
+        expect(lo - tower.z, tower.name).toBeLessThan(3);
+      }
+      expect(Math.hypot(a.x - b.x, a.y - b.y) - a.width, name).toBeCloseTo(20, 1);
+      // side by side across the way they face, with the same tops
+      const across = -(b.x - a.x) * Math.sin(a.yaw) + (b.y - a.y) * Math.cos(a.yaw);
+      expect(Math.abs(across), name).toBeCloseTo(26, 1);
+      expect(a.z + a.height, name).toBeCloseTo(b.z + b.height, 6);
+    }
+    // the shoulder towers' tops at 110
+    expect(collectible('shoulder-towers').blocks[0].z + 38.5).toBeCloseTo(110, 6);
+  });
+
+  it("has each pair's opening in the gap between the inner faces, from the ground in it to the tops, facing as the towers do", () => {
+    for (const { name, blocks, opening: g } of PAIRS) {
+      const [a, b] = blocks;
+      expect([g.x, g.y], name).toEqual([(a.x + b.x) / 2, (a.y + b.y) / 2]);
+      expect(g.width, name).toBeCloseTo(20, 1);
+      expect(g.yaw, name).toBe(a.yaw);
+      expect(g.z + g.height / 2, name).toBeCloseTo(a.z + a.height, 6);
+      expect(g.z - g.height / 2, name).toBeLessThanOrEqual(ground.heightAt(g.x, g.y));
+      // from the ground in the gap, and not from far below it
+      expect(ground.heightAt(g.x, g.y) - (g.z - g.height / 2), name).toBeLessThan(3);
+    }
+  });
+
+  it('stands every tower on dry land: its footprint, 6 across, sampled every half metre, is in no lake, no sea and no river', () => {
+    for (const { blocks } of PAIRS)
+      for (const tower of blocks) {
+        const wetAt: string[] = [];
+        for (let a = -tower.length / 2; a <= tower.length / 2; a += 0.5)
+          for (let w = -tower.width / 2; w <= tower.width / 2; w += 0.5) {
+            const x = tower.x + a * Math.cos(tower.yaw) - w * Math.sin(tower.yaw),
+              y = tower.y + a * Math.sin(tower.yaw) + w * Math.cos(tower.yaw);
+            if (wet(x, y)) wetAt.push(`${a},${w}`);
+          }
+        expect(wetAt, tower.name).toEqual([]);
+      }
+  });
+
+  it('has no tree in any structure: none within 8 of a tower, nor within 4 of a deck or an abutment', () => {
     for (const b of STRUCTURES) {
-      const margin = b === west || b === east ? 8 : 4;
+      const margin = b.kind === 'tower' ? 8 : 4;
       const inside = TREES.filter((t) => {
         const along = (t.x - b.x) * Math.cos(b.yaw) + (t.y - b.y) * Math.sin(b.yaw);
         const across = -(t.x - b.x) * Math.sin(b.yaw) + (t.y - b.y) * Math.cos(b.yaw);
         return Math.abs(along) <= b.length / 2 + margin && Math.abs(across) <= b.width / 2 + margin;
       });
       expect(inside, b.name).toEqual([]);
+    }
+  });
+
+  it('keeps every block inside the edge and under the ceiling, and every structure at least 150 from every other', () => {
+    for (const b of STRUCTURES) {
+      expect(b.x - bounds.minX, b.name).toBeGreaterThan(EDGE);
+      expect(bounds.maxX - b.x, b.name).toBeGreaterThan(EDGE);
+      expect(b.y - bounds.minY, b.name).toBeGreaterThan(EDGE);
+      expect(bounds.maxY - b.y, b.name).toBeGreaterThan(EDGE);
+      expect(b.z + b.height, b.name).toBeLessThan(HELICOPTER.ceiling - 20);
+    }
+    COLLECTIBLES.forEach((a, i) =>
+      COLLECTIBLES.slice(i + 1).forEach((b) =>
+        expect(
+          Math.hypot(a.opening.x - b.opening.x, a.opening.y - b.opening.y),
+          `${a.id} and ${b.id}`,
+        ).toBeGreaterThanOrEqual(150),
+      ),
+    );
+  });
+
+  it('stands where the search looked: the west bridge over the gorge west of the range, each pair near its site', () => {
+    const at = (id: string) => collectible(id).opening;
+    expect(Math.hypot(at('west-bridge').x + 282, at('west-bridge').y - 168)).toBeLessThan(5);
+    // the water under it about 37, and the span about 42
+    expect(ground.heightAt(at('west-bridge').x, at('west-bridge').y)).toBeCloseTo(37, 0);
+    expect(collectible('west-bridge').blocks[0].length).toBeCloseTo(42, -1);
+    for (const [id, x, y, near] of [
+      ['eastern-towers', 300, 80, 10],
+      ['southern-towers', -80, -280, 30],
+      ['southeastern-towers', 45, -155, 70],
+      // 0.62 of the way along the ring trial's leg from ring 1 (140, -10) to ring 2 (95, -40), where the pilot has room to line up
+      ['lakeside-towers', 112.1, -28.6, 1],
+    ] as const)
+      expect(Math.hypot(at(id).x - x, at(id).y - y), id).toBeLessThan(near);
+  });
+});
+
+/** A way a level is flown by, the helicopter's middle at each metre of it. */
+interface Spot {
+  x: number;
+  y: number;
+  z: number;
+}
+/** Metre by metre along a straight leg. */
+function leg(a: Spot, b: Spot): Spot[] {
+  const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)));
+  return Array.from({ length: n + 1 }, (_, k) => ({
+    x: a.x + ((b.x - a.x) * k) / n,
+    y: a.y + ((b.y - a.y) * k) / n,
+    z: a.z + ((b.z - a.z) * k) / n,
+  }));
+}
+/**
+ * The legs a level is flown along, as the autopilot flies it: a delivery straight from its pickup pad to its drop at
+ * its cruise, `PILOT.clear` over the highest ground still to come on the way and the pad it comes to, and a trial or
+ * the course from step to step, at the height of the opening or the ring, and down to a pad it lands on.
+ */
+function waysOf(level: Level): { leg: string; spots: Spot[] }[] {
+  const { middle } = HELICOPTER.size;
+  if (level.kind === 'delivery') {
+    const [from, to] = level.steps.map((s) => pads['pad' in s ? s.pad : 0]);
+    const n = Math.ceil(Math.hypot(to.x - from.x, to.y - from.y));
+    const at = (k: number) => [from.x + ((to.x - from.x) * k) / n, from.y + ((to.y - from.y) * k) / n];
+    const spots: Spot[] = [];
+    let top = to.z;
+    const tops: number[] = [];
+    for (let k = n; k >= 0; k--) {
+      top = Math.max(top, ground.heightAt(at(k)[0], at(k)[1]));
+      tops[k] = Math.min(HELICOPTER.ceiling, top + PILOT.clear);
+    }
+    for (let k = 0; k <= n; k++) spots.push({ x: at(k)[0], y: at(k)[1], z: tops[k] + middle });
+    return [{ leg: 'pickup to drop', spots }];
+  }
+  const marks = level.steps.map((s) =>
+    s.kind === 'land' ? { x: pads[s.pad].x, y: pads[s.pad].y, z: pads[s.pad].z + middle + 1 } : (s as Spot),
+  );
+  return marks.slice(1).map((m, k) => ({ leg: `step ${k + 1} to ${k + 2}`, spots: leg(marks[k], m) }));
+}
+
+/** How a way meets a structure: how far its rotor's reach stays from the blocks, less than nothing inside one, and whether it crosses the opening, either way. */
+function meets(solids: Solids, c: (typeof COLLECTIBLES)[number], spots: Spot[]) {
+  let gap = Infinity,
+    through = false,
+    over = false;
+  const back = { ...c.opening, yaw: c.opening.yaw + Math.PI };
+  const top = c.blocks[0].z + c.blocks[0].height;
+  spots.forEach((p, k) => {
+    for (const b of c.blocks) gap = Math.min(gap, solids.gapTo(b, p.x, p.y, p.z - HELICOPTER.size.middle));
+    if (k && (crossed(c.opening, spots[k - 1], p) || crossed(back, spots[k - 1], p))) through = true;
+    if (k && c.blocks[0].kind === 'tower') {
+      // over: across the plane of the opening above the tops
+      const ax = Math.cos(c.opening.yaw),
+        ay = Math.sin(c.opening.yaw);
+      const before = (spots[k - 1].x - c.opening.x) * ax + (spots[k - 1].y - c.opening.y) * ay;
+      const now = (p.x - c.opening.x) * ax + (p.y - c.opening.y) * ay;
+      const across = Math.abs(-(p.x - c.opening.x) * ay + (p.y - c.opening.y) * ax);
+      if (before * now <= 0 && across <= c.opening.width / 2 && p.z > top) over = true;
+    }
+  });
+  return { gap, through, over };
+}
+
+describe('the ways the levels are flown by', () => {
+  const solids = new Solids({ middle: HELICOPTER.size.middle, radius: HELICOPTER.size.rotorRadius }, STRUCTURES);
+
+  it.each(LEVELS.map((l) => l.id))(
+    'takes %s past every structure either clear of it by the rotor and 2, or through its opening',
+    (id) => {
+      const level = LEVELS.find((l) => l.id === id)!;
+      for (const way of waysOf(level))
+        for (const c of COLLECTIBLES) {
+          // a course that begins in an opening or goes under one is flown through it by its own steps
+          if (level.steps.includes(c.opening)) continue;
+          const m = meets(solids, c, way.spots);
+          expect(m.gap >= 2 || m.through, `${id}, ${way.leg}, ${c.id}: ${m.gap.toFixed(1)}`).toBe(true);
+        }
+    },
+  );
+
+  it('passes through the lakeside towers on the ring trial from ring 1 to ring 2, and the southern towers on the way over the water, and no other, the course going through its own two', () => {
+    const through: string[] = [];
+    for (const level of LEVELS)
+      for (const way of waysOf(level))
+        for (const c of COLLECTIBLES)
+          if (!level.steps.includes(c.opening) && meets(solids, c, way.spots).through)
+            through.push(`${level.id} ${way.leg} ${c.id}`);
+    expect(through.sort()).toEqual(
+      ['over-the-water pickup to drop southern-towers', 'ring-trial step 1 to 2 lakeside-towers'].sort(),
+    );
+  });
+
+  it('passes the way over the water between the southern towers, its middle under their tops, and the towers the same 38.5 as the rest', () => {
+    const [way] = waysOf(LEVELS.find((l) => l.id === 'over-the-water')!);
+    const southern = collectible('southern-towers');
+    const m = meets(solids, southern, way.spots);
+    expect(m.through).toBe(true);
+    expect(m.over).toBe(false);
+    // at the plane of the opening the way is at least 0.3 under the tops
+    const at = way.spots.reduce((best, p) =>
+      Math.hypot(p.x - southern.opening.x, p.y - southern.opening.y) <
+      Math.hypot(best.x - southern.opening.x, best.y - southern.opening.y)
+        ? p
+        : best,
+    );
+    expect(southern.blocks[0].z + southern.blocks[0].height - at.z).toBeGreaterThan(0.3);
+    for (const c of PAIRS) expect(c.blocks[0].height, c.id).toBe(38.5);
+  });
+
+  it('turns each pair on a way so that the way passes through its gap: its middle on the way, facing along it, the pair 150 clear of the rest', () => {
+    // the ring trial's leg from ring 1 to ring 2
+    const trialRings = trial('ring-trial').rings;
+    const lines: [string, Spot, Spot][] = [
+      ['lakeside-towers', trialRings[0], trialRings[1]],
+      ['southern-towers', pads[3], pads[2]],
+    ];
+    for (const [id, a, b] of lines) {
+      const { opening } = collectible(id);
+      const heading = Math.atan2(b.y - a.y, b.x - a.x);
+      expect(turn(opening.yaw, heading), id).toBeCloseTo(0, 3);
+      // its middle on the line, between the two ends of it
+      const off = -(opening.x - a.x) * Math.sin(heading) + (opening.y - a.y) * Math.cos(heading);
+      const along =
+        ((opening.x - a.x) * (b.x - a.x) + (opening.y - a.y) * (b.y - a.y)) / Math.hypot(b.x - a.x, b.y - a.y) ** 2;
+      expect(Math.abs(off), id).toBeLessThan(0.05);
+      expect(along, id).toBeGreaterThan(0);
+      expect(along, id).toBeLessThan(1);
+    }
+  });
+
+  it('faces each pair that no way passes across the slope it stands on, 20 clear of every way', () => {
+    for (const id of ['southeastern-towers', 'eastern-towers']) {
+      const c = collectible(id);
+      // the ground's steepest rise over 60 about it, a plane fitted by least squares over the grid of 3
+      let sxx = 0,
+        syy = 0,
+        sxh = 0,
+        syh = 0;
+      for (let a = -30; a <= 30; a += 3)
+        for (let b = -30; b <= 30; b += 3) {
+          const h = ground.heightAt(c.opening.x + a, c.opening.y + b);
+          sxx += a * a;
+          syy += b * b;
+          sxh += a * h;
+          syh += b * h;
+        }
+      const [gx, gy] = [sxh / sxx, syh / syy];
+      expect(Math.hypot(gx, gy), `${id}: a slope`).toBeGreaterThan(0.03);
+      // its opening faces along the contour: square to the way up
+      expect(Math.cos(c.opening.yaw - Math.atan2(gy, gx)), id).toBeCloseTo(0, 3);
+      for (const level of LEVELS)
+        for (const way of waysOf(level))
+          expect(meets(solids, c, way.spots).gap, `${id}, ${level.id} ${way.leg}`).toBeGreaterThanOrEqual(20);
     }
   });
 });
@@ -305,7 +677,8 @@ describe('the course', () => {
   const level = LEVELS.find((l) => l.id === 'under-and-between')!;
   const [between, under, ...rest] = level.steps;
   const rings = rest.filter((s): s is Ring => s.kind === 'ring');
-  const [bridge, , , west, east] = STRUCTURES;
+  const [bridge] = collectible('gorge-bridge').blocks;
+  const [west, east] = collectible('shoulder-towers').blocks;
 
   it('is begun between the towers, goes under the bridge, through three rings, and lands back on the shoulder pad', () => {
     expect(pads[SHOULDER].site).toBe('shoulder');
@@ -318,6 +691,35 @@ describe('the course', () => {
       'land',
     ]);
     expect(level.steps.at(-1)).toEqual({ kind: 'land', pad: SHOULDER });
+  });
+
+  it('has its two openings as they were, to the centimetre: those of the shoulder towers and the gorge bridge, which collect it', () => {
+    expect(between).toEqual({
+      kind: 'gate',
+      x: -120,
+      y: 225,
+      z: 91,
+      yaw: 1.1479,
+      width: 19.987027532982683,
+      height: 38,
+      label: 'between the towers',
+      flags: [
+        { x: -131.85, y: 230.33, z: 110 },
+        { x: -108.15, y: 219.67, z: 110 },
+      ],
+    });
+    expect(under).toEqual({
+      kind: 'gate',
+      x: -16.5,
+      y: 337.2,
+      z: 81,
+      yaw: 0.6981036732051034,
+      width: 20,
+      height: 13,
+      label: 'under the bridge',
+    });
+    expect(between).toBe(collectible('shoulder-towers').opening);
+    expect(under).toBe(collectible('gorge-bridge').opening);
   });
 
   it('has its opening between the towers in the gap between their inner faces, from the ground to their tops', () => {
@@ -381,6 +783,37 @@ describe('every ring', () => {
           expect(ring.z - floor, `${level.id}, step ${k + 1}, ${back} back`).toBeGreaterThanOrEqual(
             HELICOPTER.size.rotorRadius + 2,
           );
+        }
+      });
+  });
+
+  it('keeps its tube and its way in clear of every structure by the rotor and 2, so no structure stands in a ring or on the way to one', () => {
+    const solids = new Solids({ middle: HELICOPTER.size.middle, radius: HELICOPTER.size.rotorRadius }, STRUCTURES);
+    for (const level of LEVELS)
+      level.steps.forEach((ring, k) => {
+        if (ring.kind !== 'ring') return;
+        const line = ring.opening + RING.tube;
+        for (const b of STRUCTURES) {
+          for (let t = 0; t < 360; t += 5) {
+            const a = (t * Math.PI) / 180;
+            const x = ring.x - Math.sin(ring.yaw) * Math.cos(a) * line,
+              y = ring.y + Math.cos(ring.yaw) * Math.cos(a) * line,
+              z = ring.z + Math.sin(a) * line;
+            expect(
+              solids.gapTo(b, x, y, z - HELICOPTER.size.middle),
+              `${level.id}, step ${k + 1}, tube at ${t}, ${b.name}`,
+            ).toBeGreaterThanOrEqual(2 + RING.tube);
+          }
+          for (let back = 0; back <= 35; back += 1)
+            expect(
+              solids.gapTo(
+                b,
+                ring.x - Math.cos(ring.yaw) * back,
+                ring.y - Math.sin(ring.yaw) * back,
+                ring.z - HELICOPTER.size.middle,
+              ),
+              `${level.id}, step ${k + 1}, ${back} back, ${b.name}`,
+            ).toBeGreaterThanOrEqual(2);
         }
       });
   });

@@ -8,7 +8,7 @@
  * Nothing else plays a whole level in the page.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { start, watch } from './game';
+import { SAVE_KEY, start, watch } from './game';
 
 /** `frames` frames played, the rules checked after each `every` of them; what is broken, if anything. */
 async function play(page: Page, frames: number, every = 30) {
@@ -46,16 +46,22 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
   const problems = watch(page);
   await start(page, { seed: 1, paused: true, save: { best: {} } });
   const state = () => page.evaluate(() => window.game!.state());
+  const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
   const levels = await page.evaluate(() => window.game!.levels());
   expect(levels.map((level) => level.best)).toEqual(levels.map(() => null));
   expect((await state()).mission.level, 'flying free').toBeNull();
   await page.evaluate(() => window.game!.step(1));
   await expect(page.locator('#hud .hint')).toBeVisible();
 
-  /** Everything the game has told so far in this level, a read at a time. */
+  /**
+   * Everything the game has told so far in this level, a read at a time, without the structures collected on the way,
+   * which a level's way may pass through whatever the level is: those are kept apart, in the order they were told.
+   */
   let told: string[] = [];
+  const collected: string[] = [];
   const hear = async () => {
-    told = told.concat(await page.evaluate(() => window.game!.events()));
+    for (const line of await page.evaluate(() => window.game!.events()))
+      (line.startsWith('collected ') ? collected : told).push(line);
   };
   /** Played in thirty-frame steps until `done` holds, the rules checked; false if it never did. */
   const until = async (done: () => Promise<boolean>, limit: number) => {
@@ -166,8 +172,65 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
       await info.attach('the last done', { body: await page.screenshot(), contentType: 'image/png' });
   }
 
-  // every level has its time in the panel
+  // what the levels collected on their ways was told in order, each the next of seven
+  await hear();
+  collected.forEach((line, k) =>
+    expect(line, `collected line ${k}`).toMatch(new RegExp(`^collected [a-z-]+ ${k + 1} 7$`)),
+  );
+  expect((await state()).collected).toEqual(collected.map((line) => line.split(' ')[1]));
+
+  // after the levels, each structure not yet collected flown through by the autopilot told its name, with its toast
+  const structures = await page.evaluate(() =>
+    window.game!.content().collectibles.map(({ id, name, blocks }) => ({
+      id,
+      name,
+      gold: blocks.reduce((n, b) => n + (b.kind === 'tower' ? 1 : b.kind === 'deck' ? 2 : 0), 0),
+    })),
+  );
+  expect(structures).toHaveLength(7);
+  for (const structure of structures) {
+    if ((await state()).collected.includes(structure.id)) continue;
+    // the toast before this one has gone, so this one's is the one on the card
+    expect(await until(async () => (await state()).toast === null, 600), 'the last toast gone').toBe(true);
+    const count = (await state()).collected.length;
+    await page.evaluate((id) => window.game!.autopilot(true, id), structure.id);
+    told = [];
+    expect(
+      await until(async () => (await state()).collected.includes(structure.id), 7200),
+      `${structure.id} collected`,
+    ).toBe(true);
+    await hear();
+    expect(collected.at(-1), `${structure.id} told`).toBe(`collected ${structure.id} ${count + 1} 7`);
+    expect(told, 'nothing else told').toEqual([]);
+    const toast = page.locator('#hud .toast');
+    await expect(toast).toBeVisible();
+    await expect(toast.locator('h2')).toHaveText('Collected');
+    await expect(toast.locator('.t')).toHaveText(`${structure.name} · ${count + 1} of 7`);
+    expect((await state()).toast).toBe(`Collected ${structure.name} · ${count + 1} of 7`);
+  }
+  await page.evaluate(() => window.game!.autopilot(false));
+  expect(collected).toHaveLength(7);
+  expect(new Set(collected.map((line) => line.split(' ')[1])).size, 'each told once').toBe(7);
+  expect((await state()).collected.sort()).toEqual(structures.map((s) => s.id).sort());
+  // kept in the save, in the order they were, for a reload
+  const kept = await page.evaluate(
+    (key) => (JSON.parse(localStorage.getItem(key)!) as { collected: string[] }).collected,
+    SAVE_KEY,
+  );
+  expect(kept).toEqual(collected.map((line) => line.split(' ')[1]));
+  // and drawn gold on all of them
+  await step(1);
+  expect((await state()).gold).toBe(structures.reduce((n, s) => n + s.gold, 0));
+
+  // every level has its time in the panel, and the panel shows every structure ticked
   await page.keyboard.press('Escape');
+  await expect(page.locator('#panel .structures h3')).toHaveText('Structures7 of 7');
+  await expect(page.locator('#panel .structures .item.got')).toHaveCount(7);
+  await expect(page.locator('#panel .structures .item.got .mark')).toHaveText(Array(7).fill('✓'));
+  await info.attach('the panel, every structure collected', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  });
   await expect(page.locator('#panel .sub')).toHaveText(
     `${levels.length} of ${levels.length} done · land on a crate or fly a start, anywhere`,
   );

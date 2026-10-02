@@ -173,7 +173,7 @@
   #hud .bar[data-mode='quiet'] {
     display: none;
   }
-  /* the toast under the bar: a small card that tells a level done, and goes of itself; the game is not held */
+  /* the toast under the bar: a small card that tells a level done or a structure collected, and goes of itself; the game is not held */
   #hud .toast {
     text-align: center;
     padding: 10px 22px;
@@ -349,6 +349,49 @@
     color: #1b1208;
     background: linear-gradient(#ffb070, #e8863a 55%, #c96a26);
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  }
+  /* the structures under the levels: a list with a tick circle each, gold once collected, in two columns where there is room and one where there is not */
+  #panel .structures {
+    margin-top: 16px;
+  }
+  #panel .structures h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+  }
+  #panel .structures .n {
+    margin-left: 6px;
+    color: #ffc23a;
+  }
+  #panel .structures .list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 6px 14px;
+  }
+  #panel .structures .item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--dim);
+    font-size: 14px;
+  }
+  #panel .structures .item.got {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  #panel .structures .mark {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    font-size: 11px;
+  }
+  #panel .structures .got .mark {
+    border-color: #f0b429;
+    background: #f0b429;
+    color: #1b1208;
   }
   /* the touch controls: a stick for the left thumb and a lever for the right, orange over the island, shown while flown by touch */
   #touch {

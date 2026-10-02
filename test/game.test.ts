@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LEVELS, theIsland } from '../src/arena';
+import { COLLECTIBLES, LEVELS, theIsland, type Collectible } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
@@ -271,7 +271,7 @@ describe('the levels in play', () => {
     expect(game.last).toEqual({ id: 'first-delivery', seconds, best: true });
     expect(told.at(-1)).toBe(`finished first-delivery ${seconds.toFixed(2)} best`);
     expect(game.progress.best.get('first-delivery')).toBe(seconds);
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': seconds } });
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': seconds }, collected: [] });
     expect(game.mission.level).toBeNull();
     expect(seconds).toBeGreaterThan(1 + DELIVERY.load);
   });
@@ -286,7 +286,7 @@ describe('the levels in play', () => {
     expect(game.last!.seconds).toBeGreaterThan(first);
     expect(told.at(-1)).toBe(`finished first-delivery ${game.last!.seconds.toFixed(2)}`);
     expect(game.progress.best.get('first-delivery')).toBe(first);
-    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first } });
+    expect(JSON.parse(store.json!)).toEqual({ best: { 'first-delivery': first }, collected: [] });
     // a faster run lowers it
     liftOff(game, 0.5);
     deliver(game, 'first-delivery', 0.2);
@@ -539,7 +539,7 @@ describe('the helicopter and the rings', () => {
     expect(checkInvariants(game)).toEqual([]);
   });
 
-  it.each(['the bridge', 'the west tower', 'the east tower'])(
+  it.each(['the gorge bridge', "the shoulder towers' west tower", "the shoulder towers' east tower"])(
     'rests on the top of %s let down onto it, never inside it and never landed, and pushed on, slides off its edge',
     (name) => {
       const { game } = newGame();
@@ -579,4 +579,73 @@ describe('the helicopter and the rings', () => {
     expect(game.progress.best.size).toBe(1);
     expect(new Game({ random: seeded(1) }).progress.best.size).toBe(0);
   });
+});
+
+describe('the structures collected, in the game', () => {
+  const towers = COLLECTIBLES.find((c) => c.id === 'shoulder-towers')!;
+  const gorge = COLLECTIBLES.find((c) => c.id === 'gorge-bridge')!;
+  const played = (json: string | null = null) => {
+    const told: string[] = [];
+    const store = memoryStore(json);
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(store),
+      events: { collected: (id, n, of) => told.push(`collected ${id} ${n} ${of}`) },
+    });
+    return { game, told, store };
+  };
+  const through = (game: Game, c: Collectible) => {
+    before(game, c.opening, 15);
+    game.step(DT);
+    for (let f = 0; f < 90; f++) game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT });
+  };
+
+  it('tells what was collected, how many are collected now and of how many there are, once each', () => {
+    const { game, told } = played();
+    through(game, towers);
+    through(game, gorge);
+    through(game, towers);
+    expect(told).toEqual(['collected shoulder-towers 1 7', 'collected gorge-bridge 2 7']);
+  });
+
+  it('keeps it in the save as it is collected, in order, and not before', () => {
+    const { game, store } = played();
+    expect(store.json).toBeNull();
+    through(game, gorge);
+    through(game, towers);
+    expect(JSON.parse(store.json!)).toEqual({ best: {}, collected: ['gorge-bridge', 'shoulder-towers'] });
+    const again = new Game({ random: seeded(1), progress: new Progress(memoryStore(store.json)) });
+    expect(again.collection.count).toBe(2);
+    expect(again.collection.has('gorge-bridge')).toBe(true);
+  });
+
+  it('counts an id the save brought that the game does not have as no one of the seven', () => {
+    const { game, told } = played('{"best":{},"collected":["from-a-later-game"]}');
+    through(game, towers);
+    expect(told).toEqual(['collected shoulder-towers 1 7']);
+  });
+
+  it('collects with nothing going and with a level going, and goes on with the level', () => {
+    const { game, told } = played();
+    game.begin('ring-trial');
+    through(game, towers);
+    expect(told).toHaveLength(1);
+    expect(game.mission.level?.id).toBe('ring-trial');
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it.each(['home', 'moveToStart', 'begin'] as const)(
+    'forgets where the helicopter was on %s, so a crossing that is only a move is not collected',
+    (how) => {
+      const { game } = played();
+      before(game, towers.opening, 0.5);
+      game.step(DT);
+      if (how === 'home') game.home();
+      else if (how === 'moveToStart') game.moveToStart('first-delivery');
+      else game.begin('first-delivery');
+      before(game, towers.opening, -0.5);
+      game.step(DT);
+      expect(game.collection.count).toBe(0);
+    },
+  );
 });

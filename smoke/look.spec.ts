@@ -17,7 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS } from '../src/arena';
 import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Gate, Ring } from '../src/mission';
@@ -104,7 +104,7 @@ async function besideTower(page: Page, out: number) {
     ([out, hover, lookUp]) => {
       const g = window.game!;
       g.play('under-and-between');
-      const tower = g.content().structures.find((b) => b.name === 'the west tower')!;
+      const tower = g.content().structures.find((b) => b.name === "the shoulder towers' west tower")!;
       const [x, y] = [tower.x + out * Math.cos(tower.yaw), tower.y + out * Math.sin(tower.yaw)];
       g.teleport(x, y, tower.z + tower.height / 2 - lookUp - g.floorAt(x, y), tower.yaw);
       g.fly(0, 0, hover);
@@ -173,6 +173,34 @@ async function before(
     },
     [o, back, up, aside, HELICOPTER.size.middle] as const,
   );
+}
+
+/** The opening of the structure named `id`, which a picture is framed by. */
+const openingOf = (id: string) => COLLECTIBLES.find((c) => c.id === id)!.opening;
+
+/** The structures a picture of the collected look has collected: a pair, a bridge and a pair, as the mock showed them. */
+const SOME = { best: {}, collected: ['shoulder-towers', 'gorge-bridge', 'lakeside-towers'] };
+
+/**
+ * The towers `id` flown through from 25 short of their opening by the controls, until they are collected, the toast up;
+ * and the camera then parked over them, `radius` away, so the collar that has just gone on is in the picture with the
+ * toast, which the chase camera, with the helicopter between the towers, does not show.
+ */
+async function collecting(page: Page, id: string, radius = 140) {
+  const gate = openingOf(id);
+  await before(page, gate, 25);
+  await page.evaluate(
+    ([id, hover, x, y, radius]) => {
+      const g = window.game!;
+      g.fly(1, 0, hover);
+      for (let f = 0; f < 300 && !g.state().collected.includes(id); f += 5) g.step(5);
+      g.release();
+      g.look(x, y, { azimuth: -2.3, polar: 1.1, radius });
+      g.step(1);
+    },
+    [id, HOVER_LIFT, gate.x, gate.y, radius] as const,
+  );
+  await expect(page.locator('#hud .toast h2')).toHaveText('Collected');
 }
 
 test.describe('what it looks like', () => {
@@ -416,6 +444,82 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('the shoulder towers collected: a gold collar round the top of each, from the chase camera', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: SOME });
+    await before(page, openingOf('shoulder-towers'), 70, 8);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).gold).toBe(2 + 2 + 2);
+    await expect(page.locator('#view')).toHaveScreenshot('collected-towers.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the gorge bridge collected: both its rails gold', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: SOME });
+    await before(page, openingOf('gorge-bridge'), 55, 12);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('collected-bridge.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a pair collected and a pair not, in one view', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: SOME });
+    await page.evaluate(() => {
+      const g = window.game!;
+      g.look(122.9, -21.4, { azimuth: -2.3, polar: 1.1, radius: 140 });
+      g.step(1);
+    });
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('collected-far.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a structure just collected: the toast over the pair, its collars just on', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await collecting(page, 'lakeside-towers');
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).toast).toBe('Collected the lakeside towers · 1 of 7');
+    await expect(page.locator('#view')).toHaveScreenshot('collected-toast.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the panel, a list of the structures under the levels, three ticked', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { ...SOME, best: TWO_DONE.best } });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#panel .structures h3')).toHaveText('Structures3 of 7');
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('panel-structures.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the west bridge, which was not on the island before, from the chase camera downstream of it', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    // from downstream, facing back up the river: upstream of it the ground rises steeply, into the range
+    const gate = openingOf('west-bridge');
+    await before(page, { ...gate, yaw: gate.yaw + Math.PI }, 55, 10);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('structure-west-bridge.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the southern towers, a pair that was not on the island before, from the chase camera', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await before(page, openingOf('southern-towers'), 70, 8);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('structure-southern-towers.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('a small thing added to the island is a change', async ({ page }, info) => {
     // while the pictures are being written this would write its own, button and all, over the island's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');
@@ -528,6 +632,26 @@ test.describe('the first level on a phone, upright', () => {
     await expect(page.locator('#panel')).toBeVisible();
     await hideStats(page);
     await expect(page).toHaveScreenshot('panel-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('collected: the toast on the phone, over the pair with its collars', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await collecting(page, 'lakeside-towers');
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('collected-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the panel, the structures in one column under the levels', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { ...SOME, best: TWO_DONE.best } });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#panel')).toBeVisible();
+    await page.locator('#panel .sheet').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await hideStats(page);
+    await expect(page).toHaveScreenshot('panel-structures-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 });

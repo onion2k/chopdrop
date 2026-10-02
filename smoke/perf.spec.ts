@@ -23,6 +23,7 @@ import { expect, test } from '@playwright/test';
 import { LEVELS } from '../src/arena';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Ring } from '../src/mission';
+import { COLLECTIBLES } from '../src/arena';
 import { WOOD, standardView, start, watch } from './game';
 import { moved as hasMoved, type Figures } from './judging';
 
@@ -127,5 +128,37 @@ test('boots, draws and downloads within budget, and as it did before', async ({ 
   expect(now.bootMs, 'boot within budget').toBeLessThanOrEqual(BUDGET.bootMs);
   expect(now.frameMs, 'frame within budget').toBeLessThanOrEqual(BUDGET.frameMs);
   expect(now.bundleBytes, 'download within budget').toBeLessThanOrEqual(BUDGET.bundleBytes);
+  expect(problems).toEqual([]);
+});
+
+test('a view at a pair of towers with all seven structures collected: the frame told, not held', async ({
+  page,
+}, info) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, {
+    seed: 11,
+    paused: true,
+    save: { best: {}, collected: COLLECTIBLES.map((c) => c.id) },
+  });
+  const gate = COLLECTIBLES.find((c) => c.id === 'shoulder-towers')!.opening;
+  const gold = await page.evaluate(
+    async ([g, middle]) => {
+      const game = window.game!;
+      const [x, y] = [g.x - Math.cos(g.yaw) * 70, g.y - Math.sin(g.yaw) * 70];
+      game.teleport(x, y, g.z + 8 - middle - game.floorAt(x, y), g.yaw);
+      game.chase();
+      game.step(1);
+      return { gold: game.state().gold, ms: await game.measureFrame(50) };
+    },
+    [gate, HELICOPTER.size.middle] as const,
+  );
+  // every tower and every rail has its gold, so the pool is written in full and is in the frame
+  expect(gold.gold).toBe(
+    COLLECTIBLES.flatMap((c) => c.blocks).reduce((n, b) => n + (b.kind === 'tower' ? 1 : b.kind === 'deck' ? 2 : 0), 0),
+  );
+  const ms = Math.round(gold.ms * 1000) / 1000;
+  info.annotations.push({ type: 'perf-collected', description: `${ms} ms, not held to the baseline or the budget` });
+  console.log(`perf: collected view frame ${ms} ms (not held)`);
   expect(problems).toEqual([]);
 });

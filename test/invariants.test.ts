@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
-import { LEVELS } from '../src/arena';
+import { COLLECTIBLES, LEVELS } from '../src/arena';
 import { DELIVERY, RING, type Ring } from '../src/mission';
-import { checkCamera, checkInvariants } from '../src/invariants';
+import { checkCamera, checkCollection, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
+import { Game } from '../src/game';
+import { Progress, memoryStore } from '../src/progress';
+import { seeded } from '../src/random';
 import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
 
 function flown() {
@@ -174,8 +177,10 @@ describe('what must always hold', () => {
       cam.position[2] = tower.z + tower.height / 2;
       return checkCamera(cam, game, canopyKinds()).join('\n');
     };
-    expect(at(-1)).toMatch(/in a structure: the camera .* is 0.00 from the (west|east) tower/);
-    expect(at(CHASE.near - 0.1)).toMatch(/in a structure: the camera .* is 1.90 from the (west|east) tower/);
+    expect(at(-1)).toMatch(/in a structure: the camera .* is 0.00 from the shoulder towers' (west|east) tower/);
+    expect(at(CHASE.near - 0.1)).toMatch(
+      /in a structure: the camera .* is 1.90 from the shoulder towers' (west|east) tower/,
+    );
     expect(at(CHASE.near + 0.01)).not.toMatch(/in a structure/);
     expect(at(CHASE.offBlocks)).toBe('');
   });
@@ -321,3 +326,45 @@ function hovered() {
   for (let f = 0; f < 120; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
   return game;
 }
+
+describe('what must hold of the structures collected', () => {
+  it('holds of a new game, and of one that has collected some', () => {
+    const { game } = newGame();
+    expect(checkCollection(game)).toEqual([]);
+    game.progress.collect('gorge-bridge');
+    game.collection.count = 1;
+    expect(checkCollection(game)).toEqual([]);
+  });
+
+  it('is part of every check', () => {
+    const { game } = newGame();
+    game.progress.collected.push('not-a-structure');
+    expect(checkInvariants(game).join('\n')).toMatch(/collected/);
+  });
+
+  it('reports an id collected that the game does not have and the save did not bring', () => {
+    const { game } = newGame();
+    game.progress.collected.push('not-a-structure');
+    expect(checkCollection(game).join('\n')).toMatch(/not-a-structure is collected, and is no structure of the game's/);
+  });
+
+  it('does not report an id the save brought that the game does not have', () => {
+    const game = new Game({
+      random: seeded(1),
+      progress: new Progress(memoryStore('{"best":{},"collected":["from-a-later-game"]}')),
+    });
+    expect(checkCollection(game)).toEqual([]);
+  });
+
+  it('reports a count over the number of structures there are', () => {
+    const { game } = newGame();
+    game.collection.count = COLLECTIBLES.length + 1;
+    expect(checkCollection(game).join('\n')).toMatch(/8 collected, and there are only 7/);
+  });
+
+  it('reports one collected twice', () => {
+    const { game } = newGame();
+    game.progress.collected.push('gorge-bridge', 'gorge-bridge');
+    expect(checkCollection(game).join('\n')).toMatch(/gorge-bridge is collected twice/);
+  });
+});

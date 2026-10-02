@@ -4,7 +4,7 @@
  * once for the file, since it takes most of a second.
  */
 import { describe, expect, it } from 'vitest';
-import { ISLAND, LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, ISLAND, LEVELS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { Mission, RING, RINGS, type Level, type Ring } from '../src/mission';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
@@ -452,8 +452,8 @@ describe('the trees', () => {
 
   it('move, after the helicopter, and are not among what stands still', () => {
     expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
-    expect(scene.movers.slice(6, -7)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
-    expect(scene.movers.slice(-7)).toEqual([
+    expect(scene.movers.slice(6, -8)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.movers.slice(-8)).toEqual([
       'crate',
       'crate straps',
       'beacon',
@@ -461,6 +461,7 @@ describe('the trees', () => {
       'ring next',
       'flags dark',
       'flags light',
+      'collected',
     ]);
     expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
     expect(scene.pools).toHaveLength(movers.length);
@@ -1077,5 +1078,151 @@ describe('the start flags', () => {
     expect([flagScene.changed[a], flagScene.changed[b]]).toEqual([0, 0]);
     flagScene.write(far, undefined, nothing);
     expect([flagScene.changed[a], flagScene.changed[b]]).toEqual([1, 1]);
+  });
+});
+
+describe('the collected look', () => {
+  const goldScene = new Scene();
+  const groups = goldScene.dynamic(island);
+  const at = goldScene.movers.indexOf('collected');
+  const pool = () => groups[at].matrices;
+  const far = pose({ x: island.pads[0].x, y: island.pads[0].y, z: island.pads[0].z });
+  const collectible = (id: string) => COLLECTIBLES.find((c) => c.id === id)!;
+  /** The placements drawn, each as the box it is: its foot's middle, its yaw and its size along, across and up. */
+  const drawn = () => {
+    const out: { x: number; y: number; z: number; yaw: number; length: number; width: number; height: number }[] = [];
+    for (let k = 0; k < pool().length / 16; k++) {
+      if (noSize(pool(), k)) continue;
+      const m = pool().subarray(16 * k, 16 * k + 16);
+      out.push({
+        x: m[12],
+        y: m[13],
+        z: m[14],
+        yaw: Math.atan2(m[1], m[0]),
+        length: Math.hypot(m[0], m[1]),
+        width: Math.hypot(m[4], m[5]),
+        height: m[10],
+      });
+    }
+    return out;
+  };
+  const collect = (...ids: string[]) => goldScene.write(far, undefined, nothing, ids);
+  /** Where along and across `block` a placement's middle is, in the block's own frame. */
+  const across = (box: { x: number; y: number }, block: { x: number; y: number; yaw: number }) =>
+    -(box.x - block.x) * Math.sin(block.yaw) + (box.y - block.y) * Math.cos(block.yaw);
+
+  it('is a pool sized once, with a placement for each tower and each rail of every structure, in the one group', () => {
+    const slots = COLLECTIBLES.flatMap((c) => c.blocks).reduce(
+      (n, b) => n + (b.kind === 'tower' ? 1 : b.kind === 'deck' ? 2 : 0),
+      0,
+    );
+    expect(slots).toBeGreaterThan(10);
+    expect(groups[at].count).toBe(slots);
+    expect(pool().length).toBe(slots * 16);
+    const again = new Scene();
+    const twice = again.dynamic(island);
+    again.dynamic(island);
+    expect(again.movers.filter((m) => m === 'collected')).toHaveLength(1);
+    expect(twice[again.movers.indexOf('collected')].count).toBe(slots);
+    // writing it never grows or replaces it
+    const before = pool();
+    collect(...COLLECTIBLES.map((c) => c.id));
+    expect(pool()).toBe(before);
+    expect(pool().length).toBe(slots * 16);
+  });
+
+  it('is gold, a little brighter than a surface can be, so the glow takes it', () => {
+    const [r, g, b] = groups[at].albedo!;
+    const linear = (c: number) => (c / 255) ** 2.2 * 1.2;
+    expect([r, g, b].map((v) => +v.toFixed(5))).toEqual(
+      [linear(0xf0), linear(0xb4), linear(0x29)].map((v) => +v.toFixed(5)),
+    );
+  });
+
+  it('draws nothing with nothing collected, and nothing for a name it does not know', () => {
+    collect();
+    expect(drawn()).toEqual([]);
+    collect('from-a-later-game');
+    expect(drawn()).toEqual([]);
+  });
+
+  it('puts a collar round the top of each tower of a pair collected: 0.4 wider on every side, 2.2 tall, its top 0.2 over the tower', () => {
+    const pair = collectible('shoulder-towers');
+    collect('shoulder-towers');
+    const collars = drawn();
+    expect(collars).toHaveLength(2);
+    for (const tower of pair.blocks) {
+      const collar = collars.find((c) => Math.hypot(c.x - tower.x, c.y - tower.y) < 1e-4)!;
+      expect(collar, tower.name).toBeDefined();
+      expect(Math.sin(collar.yaw - tower.yaw)).toBeCloseTo(0, 5);
+      expect(collar.length).toBeCloseTo(tower.length + 0.8, 4);
+      expect(collar.width).toBeCloseTo(tower.width + 0.8, 4);
+      expect(collar.height).toBeCloseTo(2.2, 5);
+      expect(collar.z + collar.height).toBeCloseTo(tower.z + tower.height + 0.2, 4);
+    }
+  });
+
+  it('covers each rail of a bridge collected in gold, 0.02 larger than the rail on every face, and nothing else of it', () => {
+    const bridge = collectible('gorge-bridge');
+    const deck = bridge.blocks.find((b) => b.kind === 'deck')!;
+    collect('gorge-bridge');
+    const covers = drawn();
+    expect(covers).toHaveLength(2);
+    const railHeight = deck.height - 1.5;
+    for (const side of [-1, 1]) {
+      const middle = (side * (deck.width - 0.3)) / 2;
+      const cover = covers.find((c) => Math.abs(across(c, deck) - middle) < 1e-4)!;
+      expect(cover, `rail at ${side}`).toBeDefined();
+      expect(Math.sin(cover.yaw - deck.yaw)).toBeCloseTo(0, 5);
+      expect(cover.length).toBeCloseTo(deck.length + 0.04, 4);
+      expect(cover.width).toBeCloseTo(0.3 + 0.04, 4);
+      expect(cover.z).toBeCloseTo(deck.z + 1.5 - 0.02, 4);
+      expect(cover.height).toBeCloseTo(railHeight + 0.04, 4);
+    }
+    // none stands on an abutment, nor on the slab of the deck
+    for (const cover of covers) expect(cover.z).toBeGreaterThanOrEqual(deck.z + 1.5 - 0.02 - 1e-4);
+  });
+
+  it('draws nothing for a structure not collected, however many others are', () => {
+    collect('gorge-bridge', 'lakeside-towers');
+    const bridge = collectible('gorge-bridge');
+    const lake = collectible('lakeside-towers');
+    expect(drawn()).toHaveLength(2 + 2);
+    for (const other of COLLECTIBLES.filter((c) => c !== bridge && c !== lake))
+      for (const block of other.blocks)
+        for (const box of drawn())
+          expect(Math.hypot(box.x - block.x, box.y - block.y), `${other.id}`).toBeGreaterThan(1);
+    // each draws its own: a pair's two, a bridge's two
+    collect('shoulder-towers');
+    expect(drawn()).toHaveLength(2);
+    collect(...COLLECTIBLES.map((c) => c.id));
+    expect(drawn()).toHaveLength(groups[at].count!);
+  });
+
+  it('is written only when what is collected changes', () => {
+    collect();
+    collect('gorge-bridge');
+    expect(goldScene.changed[at]).toBe(1);
+    collect('gorge-bridge');
+    expect(goldScene.changed[at]).toBe(0);
+    goldScene.write(far, undefined, undefined, ['gorge-bridge']);
+    expect(goldScene.changed[at]).toBe(0);
+    collect('gorge-bridge', 'shoulder-towers');
+    expect(goldScene.changed[at]).toBe(1);
+    // a game begun again, with less collected, is written again, and a read with nothing handed leaves it alone
+    collect();
+    expect(goldScene.changed[at]).toBe(1);
+    expect(drawn()).toEqual([]);
+    collect('gorge-bridge');
+    goldScene.write(far);
+    expect(goldScene.changed[at]).toBe(0);
+    expect(drawn()).toHaveLength(2);
+  });
+
+  it('counts what is drawn, for the test API', () => {
+    collect();
+    expect(goldScene.gold).toBe(0);
+    collect('gorge-bridge', 'shoulder-towers');
+    expect(goldScene.gold).toBe(4);
   });
 });

@@ -16,10 +16,11 @@ hills and meadows, a snowy range in the north-west, gullies and valleys
 cut where the rain would cut them, lakes, rivers from the hills to the sea,
 some seven thousand trees of five kinds, which bow away from the rotor's
 downwash when the helicopter comes down low over them and spring back when
-it has gone, and nine landing pads with home on the south coast. A bridge
-in red steel crosses the gorge at the head of the northern river, and two
-red and white towers stand on the high ground by the shoulder pad: they
-are there in every level, and solid.
+it has gone, and nine landing pads with home on the south coast. Two
+bridges in red steel cross gorges, and five pairs of red and white towers
+stand on open ground: they are there in every level, and solid, and each is
+collected the first time the helicopter flies under or between it, a toast
+telling which and how many, a gold collar or gold rails left to show it.
 
 The game opens flying free from home, with seven levels to find and
 nothing locked. A level begins where its first step is done, one at a time,
@@ -36,8 +37,8 @@ between the flagged towers: up the gorge and under the bridge, through three
 rings over the hills, and down onto the shoulder pad. A level's end is told
 in a toast with its time, and flight carries on. Esc, or the corner button,
 brings up the panel: every level, its best time and where it starts, a way
-shown to any of them, and the one going given up. Collectible structures
-and ten hidden packages with a radar come next, through `/feature`. The template's stub,
+shown to any of them, the one going given up, and the structures ticked as
+collected. Ten hidden packages with a radar come next, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -88,7 +89,8 @@ is fixed, and no baseline is moved to make it green.
     src/solids.ts      what the helicopter cannot fly into: the bridge, the towers and the rings' tubes, which knock it back
     src/hud.ts         the words on the screen: the hint, what is wanted and where, and the toast at a level's end
     src/panel.ts       the panel: every level, its best time and where it starts, the way shown, and abandon
-    src/progress.ts    the save: the best time on each level, kept in the browser
+    src/progress.ts    the save: the best time on each level and the structures collected, kept in the browser
+    src/collection.ts  the structures collected: an opening flown through, either way
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
