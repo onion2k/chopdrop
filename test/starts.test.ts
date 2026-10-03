@@ -6,7 +6,7 @@
  * first in the list wins.
  */
 import { describe, expect, it } from 'vitest';
-import { LEVELS, RESCUE_SPOTS, theIsland } from '../src/arena';
+import { FIRES, LEVELS, RESCUE_SPOTS, theIsland } from '../src/arena';
 import { HELICOPTER } from '../src/helicopter';
 import { DELIVERY, WINCH, type Gate, type Lander, type Level, type Ring } from '../src/mission';
 import { Starts } from '../src/starts';
@@ -294,5 +294,37 @@ describe('starting a rescue', () => {
     const h: Lander = { x: spot.x, y: spot.y, z: groundAt(spot.x, spot.y) + 10, landed: false };
     for (let f = 0; f < 400; f++) expect(none.step(DT, h)).toBeNull();
     expect(none.loading).toBe(0);
+  });
+});
+
+describe('starting a fire', () => {
+  const west = level('west-lake-fire');
+
+  it('begins the level of the fire a drop put out a patch of', () => {
+    expect(starts().s.dropped('west-lake-fire', 1)).toBe(west);
+    expect(starts().s.dropped('south-lake-fire', 4)).toBe(level('south-lake-fire'));
+    expect(starts().s.dropped('north-wood-fire', 6)).toBe(level('north-wood-fire'));
+  });
+
+  it('is not begun by a drop that put nothing out, which is a drop that missed', () => {
+    expect(starts().s.dropped('west-lake-fire', 0)).toBeNull();
+  });
+
+  it('is not begun by a drop on no fire, or on a fire no level is made of', () => {
+    expect(starts().s.dropped('', 3)).toBeNull();
+    expect(starts().s.dropped('no-such-fire', 3)).toBeNull();
+    expect(starts([]).s.dropped('west-lake-fire', 3)).toBeNull();
+  });
+
+  it('is begun by the first level in the list whose first step is a douse of that fire', () => {
+    const second: Level = { ...west, id: 'west-lake-fire-again' };
+    expect(starts([west, second]).s.dropped('west-lake-fire', 2)).toBe(west);
+  });
+
+  it('is begun by nothing the helicopter does on its own: not hovering over the fire, nor landing in it', () => {
+    const { s } = starts();
+    const [p] = FIRES[0].patches;
+    for (let f = 0; f < 600; f++) expect(s.step(DT, { x: p.x, y: p.y, z: p.z + 10, landed: false })).toBeNull();
+    expect(s.loading).toBe(0);
   });
 });

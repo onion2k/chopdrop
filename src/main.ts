@@ -15,9 +15,10 @@ import { noFog } from 'artshape-render/game/fog';
 import { LightPool } from 'artshape-render/game/lights';
 import { GameRenderer, type Look, type Post } from 'artshape-render/game/renderer';
 import { CHASE, ChaseCamera, fovFor } from './chase';
-import { COLLECTIBLES, PACKAGES } from './arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES } from './arena';
 import { Autopilot } from './autopilot';
 import { createApi, levelRows } from './debug';
+import { PARTICLES, Effects, rescuePeople, waitingFlares } from './effects';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
 import { Hud } from './hud';
@@ -25,7 +26,7 @@ import { Input } from './input';
 import { Panel } from './panel';
 import { Progress, browserStore } from './progress';
 import { seeded } from './random';
-import { Scene } from './scene';
+import { Scene, type Drawn } from './scene';
 import { TouchView } from './touch-view';
 
 /** How many millimetres a world unit is: the renderer fixes a few real sizes by it. */
@@ -33,8 +34,7 @@ const MM_PER_UNIT = 100;
 /** The most of what the game has told that the page keeps for the test API to read. */
 const EVENTS_KEPT = 500;
 const LIGHT_CAPACITY = 16,
-  EFFECT_CAPACITY = 16,
-  PARTICLE_CAPACITY = 1024;
+  EFFECT_CAPACITY = 16;
 
 /**
  * How far the camera sees, in world units. The island is 1,500 across and the sea runs on to the horizon past it,
@@ -130,7 +130,7 @@ async function main() {
 
   const ctx = await createContext(canvas);
   bootMsg.textContent = 'compiling shaders…';
-  const renderer = new GameRenderer(ctx, LIGHT_CAPACITY, EFFECT_CAPACITY, PARTICLE_CAPACITY, MM_PER_UNIT);
+  const renderer = new GameRenderer(ctx, LIGHT_CAPACITY, EFFECT_CAPACITY, PARTICLES.capacity, MM_PER_UNIT);
   renderer.look = { ...renderer.look, ...LOOK };
   renderer.post = { ...renderer.post, ...POST };
   renderer.fog = { ...noFog(MM_PER_UNIT), ...HAZE };
@@ -163,6 +163,9 @@ async function main() {
     console.warn(
       `The save could not be read (${progress.refused}), so the game starts afresh, and writes over it once a level is done.`,
     );
+  // what is emitted into the renderer's particles; the game's events tell it a drop, so it is built before the game
+  const people = rescuePeople(LEVELS);
+  const effects = new Effects(FIRES, people);
   // built before the game, which tells it the end; what its button does is below, where the game is put back
   const hud = new Hud({ panel: showPanel }, COLLECTIBLES.length + PACKAGES.length);
   const game = new Game({
@@ -177,6 +180,14 @@ async function main() {
       passed: (ring, of) => tell(`passed ${ring} ${of}`),
       through: (label) => tell(`through ${label}`),
       landed: (pad) => tell(`landed ${pad}`),
+      scooped: () => tell('scooped'),
+      dropped: (fire, out) => {
+        tell(`dropped ${fire} ${out}`);
+        // the water falls from the bucket's bottom, over the ground there
+        const h = game.helicopter;
+        effects.drop(h.x, h.y, game.bucket.bottom, game.island.ground.heightAt(h.x, h.y));
+      },
+      fireOut: (id) => tell(`fire out ${id}`),
       collected: (id, n, of) => {
         tell(`collected ${id} ${n} ${of}`);
         hud.collected(COLLECTIBLES.find((c) => c.id === id)!.name, n, of, game.t);
@@ -276,9 +287,28 @@ async function main() {
   addEventListener('resize', resize);
   resize();
 
+  /** What the scene draws besides what is going, handed to it each frame: written in place, so nothing is made. */
+  const drawn: Drawn = { fires: game.fires };
+  /** Which people are waiting, for their flares, written each frame in place. */
+  const waiting = new Uint8Array(people.length);
+  /** How many bursts the renderer has refused, for the test API: none, while the budget holds. */
+  let refused = 0;
+
+  /**
+   * What the effects emit for a frame of `dt` seconds, handed to the renderer, and the rotor's air for it: a frame of no
+   * time, as when the game is paused or held behind the panel, emits nothing and the particles do not move.
+   */
+  function emitEffects(dt: number) {
+    waitingFlares(people, game.mission.level?.id ?? null, game.winch.spot, waiting);
+    const n = effects.step(dt, game.fires, waiting, rig.position);
+    for (let k = 0; k < n; k++) if (!renderer.emit(effects.records[k])) refused++;
+    renderer.setWash(effects.wash(game.helicopter));
+  }
+
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter, game.sway, game.mission, game.collection.ids, game.finds.ids, game.winch);
+    drawn.bucket = game.bucket;
+    scene.write(game.helicopter, game.sway, game.mission, game.collection.ids, game.finds.ids, game.winch, drawn);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });
@@ -305,6 +335,7 @@ async function main() {
       return await frameCost(
         () => {
           upload();
+          emitEffects(1 / 60);
           return renderer.frame(view, 'redraw', 1 / 60);
         },
         () => ctx.device.queue.onSubmittedWorkDone(),
@@ -340,13 +371,17 @@ async function main() {
     if (game.finds.pinged) hud.ping(game.t);
     rig.step(dt, game.helicopter);
   }
-  function draw(dt: number) {
+  function draw(dt: number, emit = true) {
     touchView.draw(panel.shown);
     hud.draw(game, rig);
     upload();
     cam.update();
+    // held behind the panel, as when paused, the particles neither are born nor move; a frame drawn with no `emit`, which
+    // is the test API's `step`, moves them and bears none
+    const held = panel.shown ? 0 : dt;
+    emitEffects(emit ? held : 0);
     const t = performance.now();
-    renderer.frame(ctx.context.getCurrentTexture().createView(), 'redraw', dt);
+    renderer.frame(ctx.context.getCurrentTexture().createView(), 'redraw', held);
     smoothed += (performance.now() - t - smoothed) * 0.05;
     if (frames % 30 === 0) stats.textContent = `${smoothed.toFixed(1)} ms`;
   }
@@ -383,7 +418,11 @@ async function main() {
     gold: () => scene.gold,
     crates: () => scene.packagesDrawn,
     people: () => scene.peopleDrawn,
-    smoke: () => scene.smokeDrawn,
+    smoke: () => effects.flaring,
+    particles: () => ({ live: renderer.particles.live, refused, ...effects.counts }),
+    ground: () => scene.groundDrawn,
+    bucket: () => scene.bucketDrawn,
+    badge: () => hud.badge,
     rope: () => scene.ropeDrawn,
     radar: () => hud.radarShown,
     setAutopilot: (on, id) => {

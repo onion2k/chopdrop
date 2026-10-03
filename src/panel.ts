@@ -26,16 +26,26 @@ export function panelSubtitle(rows: readonly { best: number | null }[]): string 
 }
 
 /**
- * The label a kind of level wears on its row, or null for one that wears none: only a rescue does, "Rescue", since its
- * name ("Wood rescue") says where and not what, and its start is a person and not a pad.
+ * The label a kind of level wears on its row, or null for one that wears none: a rescue, "Rescue", and a fire, "Fire",
+ * since their names ("Wood rescue", "Fire by the west lake") say where and not always what, and their starts are a
+ * person and a fire and not a pad.
  */
 export function kindLabel(kind: LevelKind): string | null {
-  return kind === 'rescue' ? 'Rescue' : null;
+  return kind === 'rescue' ? 'Rescue' : kind === 'fire' ? 'Fire' : null;
 }
 
-/** The rescue label's icon, a figure with one arm up, drawn as the HUD's button is: strokes and fills in the text's own colour. */
-const RESCUE_ICON =
-  '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="5" r="2.2" /><path d="M9 8.2v5.3M9 13.5l-2.6 4.5M9 13.5l2.6 4.5M9 10.2L5.8 12.6M9 10.2l3.4-5.4" /></svg>';
+/**
+ * The icon beside a kind's label, drawn as the HUD's button is: strokes and fills in the text's own colour. A rescue's is
+ * a figure with one arm up and a fire's a flame; the kinds with no label have none.
+ */
+const ICONS: Partial<Record<LevelKind, string>> = {
+  rescue:
+    '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="5" r="2.2" /><path d="M9 8.2v5.3M9 13.5l-2.6 4.5M9 13.5l2.6 4.5M9 10.2L5.8 12.6M9 10.2l3.4-5.4" /></svg>',
+  fire: '<svg viewBox="0 0 20 20" aria-hidden="true"><path class="flame" d="M10 1.8c.6 3-1.8 4.4-3.2 6.4C5.5 10 5.2 11.6 5.8 13.2c.6 1.6 2 2.7 4.2 2.9 2.6.2 4.6-1.5 4.6-4.1 0-1.5-.6-2.5-1.3-3.5.1 1-.4 1.8-1.1 2.2.3-2.6-.1-6.2-2.2-8.9z" /></svg>',
+};
+export function kindIcon(kind: LevelKind): string {
+  return ICONS[kind] ?? '';
+}
 
 /** The structures section as words: its heading, how many are collected, and each by name without "the" with whether it is. */
 export interface StructureRows {
@@ -117,7 +127,7 @@ export class Panel {
       row.className = 'row';
       const kind = kindLabel(level.kind);
       if (kind) row.classList.add(level.kind);
-      row.innerHTML = `<div class="name"><span class="label"></span>${kind ? `<span class="kind">${RESCUE_ICON}${kind}</span>` : ''}<span class="best" hidden></span><span class="now" hidden>· going</span></div><div class="where"></div><button type="button"></button>`;
+      row.innerHTML = `<div class="name"><span class="label"></span>${kind ? `<span class="kind">${kindIcon(level.kind)}${kind}</span>` : ''}<span class="best" hidden></span><span class="now" hidden>· going</span></div><div class="where"></div><button type="button"></button>`;
       row.querySelector('.label')!.textContent = level.name;
       row.querySelector('.where')!.textContent = startWords(level, pads);
       row.querySelector('button')!.addEventListener('click', () => this.press(k));

@@ -5,6 +5,7 @@ import { LEVELS, RESCUE_SPOTS } from '../src/arena';
 import { Game } from '../src/game';
 import { HOVER_LIFT } from '../src/helicopter';
 import { seeded } from '../src/random';
+import { SLOW, sweep } from './slow';
 
 describe('the fuzzer', () => {
   it('plays a seed through without breaking a rule, and does everything a player can', () => {
@@ -36,6 +37,8 @@ describe('the fuzzer', () => {
       'through a structure',
       'to a package',
       'to a rescue',
+      'skim',
+      'over a fire',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
@@ -59,8 +62,24 @@ describe('the fuzzer', () => {
       'collected',
       'found',
       'winched',
+      'scooped',
+      'dropped',
     ])
       expect(seen, happening).toContain(happening);
+  });
+
+  it('puts a fire out, on a fire level begun at once, over the seeds `npm run fuzz` plays', () => {
+    const fire = LEVELS.find((level) => level.kind === 'fire')!.id;
+    const seen = new Set<string>();
+    // a fire takes a scoop and a drop or three, each by chance, so the run is longer than the others: 12000 frames put it
+    // out three times over these seeds. The quick check runs one seed for the rules, and the slow run all twelve for the fire out
+    const seeds = sweep(Array.from({ length: 12 }, (_, k) => k + 1));
+    for (const seed of seeds) {
+      const r = fuzz(seed, 12000, fire);
+      expect(r.failure, JSON.stringify(r.failure)).toBe(null);
+      for (const key of Object.keys(r.happened)) seen.add(key);
+    }
+    if (SLOW) expect(seen).toContain('fire out');
   });
 
   it('flies the course through to its landing, begun at once with the level asked for', () => {
@@ -94,10 +113,12 @@ describe('the fuzzer', () => {
 
   it('comes back with a save of some levels done, and starts every level by itself, over the seeds `npm run fuzz` plays', () => {
     const started = new Set<string>();
-    // held by design: each seed's own level is gone to first, until it has begun
+    // held by design: each seed's own level is gone to first, until it has begun; the first level is no seed's own, and is
+    // begun by chance, which takes 5000 frames over these seeds
     for (let seed = 1; seed <= 12; seed++)
-      for (const key of Object.keys(fuzz(seed, 4000).happened)) if (key.startsWith('started ')) started.add(key);
+      for (const key of Object.keys(fuzz(seed, 5000).happened)) if (key.startsWith('started ')) started.add(key);
     expect([...started].sort()).toEqual(LEVELS.map((level) => `started ${level.id}`).sort());
+    expect(LEVELS).toHaveLength(13);
     for (const { id } of RESCUE_SPOTS) expect(started, id).toContain(`started ${id}`);
   });
 

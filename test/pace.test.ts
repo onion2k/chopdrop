@@ -49,6 +49,13 @@ describe('the pace gate', () => {
     expect(run.minutes).toBe(Math.round((game.last!.seconds / 60) * 100) / 100);
   });
 
+  it('times a fire level flown to its end, from home, by the drop that begins it and the last that puts it out', () => {
+    const run = paceRun('west-lake-fire', 1);
+    expect(run).toMatchObject({ level: 'west-lake-fire', finished: true });
+    expect(run.minutes).toBeGreaterThan(0);
+    expect(run.minutes).toBeLessThan(2);
+  });
+
   it('gives up at the cap, and says so', () => {
     const run = paceRun('first-delivery', 1, 0.05);
     expect(run.finished).toBe(false);

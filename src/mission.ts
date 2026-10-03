@@ -5,8 +5,8 @@
  * done here. A parcel is picked up by landing on its pad and staying while it
  * is loaded, and set down on another the same way; a ring or an opening is
  * passed by flying the helicopter's middle through it the way it faces, in
- * its turn; a person is winched up by hovering in a window low over them for a while; and a landing is done as
- * the skids touch the pad. With nothing
+ * its turn; a person is winched up by hovering in a window low over them for a while; a landing is done as
+ * the skids touch the pad; and a fire is put out when none of its patches burns. With nothing
  * going there is nothing to do, and the mission reads as nothing. What
  * happens is told through the events it is handed; how it is drawn and put
  * into words is the page's. Without it there is nothing on the island to do.
@@ -91,12 +91,37 @@ export interface Winch {
 }
 
 /**
+ * What a fire level begins with and ends on, each by the fire's id: `douse` is the first drop that puts out a patch of
+ * the fire, which begins the level as a winch or a crate does, and `fire` is done when none of its patches burns.
+ */
+export interface DouseStep {
+  kind: 'douse';
+  fire: string;
+}
+export interface FireStep {
+  kind: 'fire';
+  fire: string;
+}
+
+/**
  * What a level asks for, a step at a time: a parcel picked up from a pad, or set down on one, by its place in the
- * island's list; a ring or an opening flown through; a person winched up; or a pad landed on, which is done the moment
- * the skids touch it.
+ * island's list; a ring or an opening flown through; a person winched up; a pad landed on, which is done the moment
+ * the skids touch it; a fire dropped on; or a fire put out.
  */
 export type Step =
-  { kind: 'pickup'; pad: number } | { kind: 'drop'; pad: number } | { kind: 'land'; pad: number } | Ring | Gate | Winch;
+  | { kind: 'pickup'; pad: number }
+  | { kind: 'drop'; pad: number }
+  | { kind: 'land'; pad: number }
+  | Ring
+  | Gate
+  | Winch
+  | DouseStep
+  | FireStep;
+
+/** The id of the fire a step is about, or null for a step that is not about one. */
+export function fireOf(step: Step | undefined): string | null {
+  return step && (step.kind === 'douse' || step.kind === 'fire') ? step.fire : null;
+}
 
 /**
  * How long a step's loader takes to fill, in seconds: a parcel's load, or a winch's hold. It is said once, so that the
@@ -108,9 +133,9 @@ export function loadFor(step: Step): number {
 
 /**
  * What sort of level it is, as the list of levels names it: parcels to deliver, rings to fly through, a course of
- * openings and rings flown round to a landing, or a person to winch up and fly home.
+ * openings and rings flown round to a landing, a person to winch up and fly home, or a fire to put out.
  */
-export type LevelKind = 'delivery' | 'rings' | 'course' | 'rescue';
+export type LevelKind = 'delivery' | 'rings' | 'course' | 'rescue' | 'fire';
 
 export interface Level {
   /** What it is known by in the save: a name, never its place in the list, so a level slotted in before it changes nothing. */
@@ -131,7 +156,9 @@ export interface Point3 {
 /**
  * What a mission tells as it happens: a level begun or abandoned, by its name; a parcel loaded on a pad, one
  * delivered to a pad, a person winched up (by the level's name), a ring passed (which of how many, counting from one), an opening flown through (by where it is),
- * a pad landed on, and the level done, with its time.
+ * a pad landed on, a fire put out (by the fire's name), and the level done, with its time. The water's own events, which
+ * the game tells and a mission does not, are here too: a tank scooped full, and a drop with the fire it fell on and how
+ * many patches it put out.
  */
 export interface MissionEvents {
   started?(id: string): void;
@@ -142,8 +169,23 @@ export interface MissionEvents {
   passed?(ring: number, of: number): void;
   through?(label: string): void;
   landed?(pad: number): void;
+  scooped?(): void;
+  dropped?(fire: string, out: number): void;
+  fireOut?(id: string): void;
   finished?(seconds: number): void;
 }
+
+/**
+ * What a mission reads of the fires: how many patches of the fire named `id` burn, and the nearest of them to a point,
+ * written into `out`. Handed in, as the ground is, so a mission knows nothing of how a fire is kept.
+ */
+export interface FireWatch {
+  burning(id: string): number;
+  nearest(id: string, x: number, y: number, out: Point3): boolean;
+}
+
+/** A watch that knows no fire, for a mission handed none: every fire is out. */
+const NO_FIRES: FireWatch = { burning: () => 0, nearest: () => false };
 
 /** What it reads of the helicopter: where it is, and whether it is on the ground. */
 export interface Lander {
@@ -224,6 +266,7 @@ export class Mission {
     readonly pads: readonly Pad[],
     private readonly events: MissionEvents = {},
     private readonly groundAt: GroundAt = FLAT,
+    private readonly fires: FireWatch = NO_FIRES,
   ) {}
 
   /** The level going, or null when nothing is. */
@@ -236,7 +279,7 @@ export class Mission {
     return this.flying?.steps[this.next];
   }
 
-  /** The pad the helicopter is wanted on now, or −1 for a ring, an opening or a person, and with nothing going. */
+  /** The pad the helicopter is wanted on now, or −1 for a ring, an opening, a person or a fire, and with nothing going. */
   get target(): number {
     const s = this.current;
     return s && 'pad' in s ? s.pad : -1;
@@ -244,11 +287,13 @@ export class Mission {
 
   /**
    * Where the step being done wants the helicopter, for the arrow and the pilot: the top of its pad, or the middle of
-   * its ring or its opening, or the person's place; null with nothing going.
+   * its ring or its opening, or the person's place, or the nearest patch burning of the fire from where the helicopter
+   * was last seen; null with nothing going, and with no patch to put out.
    */
   get goal(): Readonly<Point3> | null {
     const s = this.current;
-    if (!s) return null;
+    if (!s || s.kind === 'douse') return null;
+    if (s.kind === 'fire') return this.fires.nearest(s.fire, this.was.x, this.was.y, this.wanted) ? this.wanted : null;
     const at = 'pad' in s ? this.pads[s.pad] : s;
     this.wanted.x = at.x;
     this.wanted.y = at.y;
@@ -308,6 +353,16 @@ export class Mission {
     this.events.started?.(level.id);
     this.tell(level.steps[0]);
     if (this.next >= level.steps.length) this.finish();
+    else this.settle();
+  }
+
+  /**
+   * A drop told, with the fire it fell on and how many patches it put out: the step being done, if it is the douse of that
+   * fire and the drop put a patch out, is done. Nothing to do with nothing going or another step.
+   */
+  dropped(fire: string, out: number): void {
+    const s = this.current;
+    if (s?.kind === 'douse' && s.fire === fire && out > 0) this.stepDone(s);
   }
 
   /** Nothing going: told, if a level was. The parcel aboard is put back by there being no level for it to be aboard in. */
@@ -328,6 +383,12 @@ export class Mission {
       return;
     }
     this.remember(h);
+    // a fire is out when none of its patches burns; the douse that begins it is the game's to say, through `dropped`
+    if (s.kind === 'douse') return;
+    if (s.kind === 'fire') {
+      this.settle();
+      return;
+    }
     // a landing is done as the skids touch the pad, with no wait
     if (s.kind === 'land') {
       if (onPad(h, this.pads[s.pad])) this.stepDone(s);
@@ -349,6 +410,17 @@ export class Mission {
     this.next++;
     this.tell(s);
     if (this.next >= this.flying!.steps.length) this.finish();
+    else this.settle();
+  }
+
+  /**
+   * A fire step whose fire has no patch burning is done at once: a level whose fire is out as it begins has nothing to
+   * do. Play never comes here, since no single drop reaches every patch a fire is lit with, which the fires' content test
+   * holds; it is a guard for a level begun by hand on a fire already out.
+   */
+  private settle(): void {
+    const s = this.current;
+    if (s?.kind === 'fire' && this.fires.burning(s.fire) === 0) this.stepDone(s);
   }
 
   /** The step `s` told as done, the ring counted as the one just passed. */
@@ -357,6 +429,8 @@ export class Mission {
     else if (s.kind === 'drop') this.events.delivered?.(s.pad);
     else if (s.kind === 'land') this.events.landed?.(s.pad);
     else if (s.kind === 'winch') this.events.winched?.(this.flying!.id);
+    else if (s.kind === 'fire') this.events.fireOut?.(s.fire);
+    else if (s.kind === 'douse') return;
     else if (s.kind === 'gate') this.events.through?.(s.label);
     else this.events.passed?.(this.ringsTo(this.next - 1), this.ringCount);
   }

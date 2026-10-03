@@ -4,14 +4,15 @@
  * about it than about the game.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES } from '../src/arena';
-import { Autopilot, PILOT } from '../src/autopilot';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES } from '../src/arena';
+import { Autopilot, FIGHT, PILOT } from '../src/autopilot';
 import { FIND } from '../src/finds';
 import { Game } from '../src/game';
 import { HELICOPTER } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
+import { DROP, SCOOP } from '../src/water';
 import { DT } from './helpers';
 import { sweep } from './slow';
 
@@ -30,6 +31,14 @@ function flown(game: Game, seconds: number, knocks?: { count: number }, pilot = 
     if (game.last !== before) return game.t - from;
   }
   return null;
+}
+
+/**
+ * How long a level begun where it need not be, from some awkward place, is allowed: 150 s, and for a fire 600, since a fire
+ * begun at once is already spreading while the helicopter flies to its water, and a far one needs scoop after scoop.
+ */
+function within(id: string): number {
+  return LEVELS.find((l) => l.id === id)?.kind === 'fire' ? 600 : 150;
 }
 
 /** A game flown from home by a pilot told to do the level `id`. */
@@ -71,7 +80,8 @@ describe('the autopilot', () => {
     (id) => {
       const { game, pilot } = told(id);
       const knocks = { count: 0 };
-      const took = flown(game, 180, knocks, pilot);
+      // the far fire takes seven scoops and 410 s from home
+      const took = flown(game, id === 'north-wood-fire' ? 450 : 180, knocks, pilot);
       expect(took).not.toBeNull();
       expect(game.last!.id).toBe(id);
       // a careful player flies clear of the rings and the bridge and the towers, and so does the pilot the gates fly
@@ -192,7 +202,7 @@ describe('the autopilot', () => {
           game.begin(id);
         }
         game.helicopter.place(x, y, z, 1);
-        expect(flown(game, 150, undefined, pilot), `from ${x}, ${y}, ${z} up`).not.toBeNull();
+        expect(flown(game, within(id), undefined, pilot), `from ${x}, ${y}, ${z} up`).not.toBeNull();
       }
     },
   );
@@ -570,4 +580,169 @@ describe('the autopilot and the rescues', () => {
     for (let f = 0; f < 180; f++) pilot.step(DT);
     expect(game.mission.level?.id).toBe('wood-rescue');
   });
+});
+
+describe('the autopilot and the fires', () => {
+  const ids = FIRES.map((f) => f.id);
+  /** The longest a fire level takes from home, in game seconds: the far fire, which needs seven scoops, takes 410. */
+  const LIMIT = 450;
+
+  /** A game that counts what it is told of the water, flown by a pilot told the fire level `id`. */
+  function bombing(id: string) {
+    const counts = { scoops: 0, drops: 0, out: 0 };
+    const heights: number[] = [];
+    const game: Game = new Game({
+      random: seeded(1),
+      events: {
+        scooped: () => counts.scoops++,
+        dropped: () => {
+          counts.drops++;
+          heights.push(game.helicopter.height);
+        },
+        fireOut: () => counts.out++,
+      },
+    });
+    const pilot = new Autopilot(game);
+    pilot.wanted = id;
+    return { game, pilot, counts, heights };
+  }
+
+  it.each(ids)(
+    'flies %s from home, touching nothing, scooping and dropping until the fire is out, within a limit',
+    (id) => {
+      const { game, pilot, counts, heights } = bombing(id);
+      const knocks = { count: 0 };
+      expect(flown(game, LIMIT, knocks, pilot), `${id} done`).not.toBeNull();
+      expect(game.last?.id).toBe(id);
+      expect(knocks.count).toBe(0);
+      expect(counts.out).toBe(1);
+      expect(counts.scoops).toBeGreaterThanOrEqual(1);
+      expect(counts.drops).toBeGreaterThanOrEqual(1);
+      // the water it carried was dropped every time at a height inside the window and clear of the trees
+      for (const h of heights) {
+        expect(h).toBeLessThanOrEqual(DROP.high);
+        expect(h).toBeGreaterThan(17);
+      }
+      expect(game.t).toBeLessThan(LIMIT);
+    },
+  );
+
+  it('is begun by its first drop, as a player would, with nothing going until the water falls', () => {
+    const { game, pilot } = bombing('west-lake-fire');
+    let before = -1;
+    for (let f = 0; f < 200 * 60 && game.last === null; f++) {
+      pilot.step(DT);
+      if (before < 0 && game.mission.level) before = game.t;
+    }
+    expect(before).toBeGreaterThan(SCOOP.time);
+    expect(game.mission.level).toBeNull();
+  });
+
+  it.each(ids)('skims %s with the speed and the height held for the whole scoop, along its run', (id) => {
+    const { game, pilot } = bombing(id);
+    const place = FIRES.find((f) => f.id === id)!;
+    const { from, to, z } = place.run;
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    const [ux, uy] = [(to.x - from.x) / length, (to.y - from.y) / length];
+    let scoops = 0;
+    let wasFilling = false;
+    for (let f = 0; f < 200 * 60 && scoops === 0; f++) {
+      pilot.step(DT);
+      const h = game.helicopter;
+      if (game.tank.filling > 0) {
+        wasFilling = true;
+        // along the run, within the water and low and fast
+        const along = (h.x - from.x) * ux + (h.y - from.y) * uy;
+        const off = Math.abs(-(h.x - from.x) * uy + (h.y - from.y) * ux);
+        expect(off, 'off the run').toBeLessThan(6);
+        expect(along, 'on the run').toBeGreaterThan(-FIGHT.lead - 5);
+        expect(along, 'on the run').toBeLessThan(length + FIGHT.lead);
+        expect(h.z - z).toBeLessThanOrEqual(SCOOP.low);
+      }
+      if (game.tank.full) scoops++;
+    }
+    expect(wasFilling).toBe(true);
+    expect(game.tank.full).toBe(true);
+    // never lower than the water: it is skimming and not landed on it
+    expect(game.helicopter.landed).toBe(false);
+  });
+
+  it('comes round again for more water until the fire is out: some fire takes more than one scoop', () => {
+    let most = 0;
+    for (const id of ids) {
+      const { game, pilot, counts } = bombing(id);
+      expect(flown(game, LIMIT, undefined, pilot), id).not.toBeNull();
+      expect(counts.drops, id).toBe(counts.scoops);
+      most = Math.max(most, counts.scoops);
+    }
+    expect(most).toBeGreaterThan(1);
+  });
+
+  it('goes to the nearer end of the run and turns along it: from beyond either end it skims toward the other', () => {
+    const place = FIRES[0];
+    const { from, to } = place.run;
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    const [ux, uy] = [(to.x - from.x) / length, (to.y - from.y) / length];
+    for (const side of [1, -1]) {
+      const { game, pilot } = bombing(place.id);
+      const end = side > 0 ? to : from;
+      game.helicopter.placeAbove(end.x + ux * side * 50, end.y + uy * side * 50, 60, 0);
+      let along = 0;
+      for (let f = 0; f < 90 * 60 && !(game.tank.filling > 0.5); f++) pilot.step(DT);
+      expect(game.tank.filling, `from the ${side > 0 ? 'far' : 'near'} end`).toBeGreaterThan(0.5);
+      along = game.helicopter.vx * ux + game.helicopter.vy * uy;
+      expect(Math.sign(along), `skimming ${side > 0 ? 'back' : 'on'} along the run`).toBe(-side);
+    }
+  });
+
+  it('makes nothing as it flies a fire: the records it writes into are the same objects every step', () => {
+    const { game, pilot } = bombing('west-lake-fire');
+    const inside = pilot as unknown as Record<string, object>;
+    const records = ['line', 'approach', 'patch', 'controls', 'via'].map((k) => inside[k]);
+    for (let f = 0; f < 60 * 70; f++) pilot.step(DT);
+    expect(game.t).toBeGreaterThan(60);
+    ['line', 'approach', 'patch', 'controls', 'via'].forEach((k, i) => expect(inside[k], k).toBe(records[i]));
+  });
+
+  it('asks for nothing with the fire out and nothing told it', () => {
+    const { game, pilot } = bombing('west-lake-fire');
+    expect(flown(game, LIMIT, undefined, pilot)).not.toBeNull();
+    pilot.wanted = null;
+    expect(pilot.drive()).toEqual({ forward: 0, turn: 0, lift: 0 });
+  });
+
+  it.each(sweep(ids))(
+    'flies %s from three awkward places: high over the sea, low in the west, and in the far corner',
+    (id) => {
+      const { bounds } = new Game().helicopter;
+      for (const [x, y, height] of [
+        [0, 0, 200],
+        [-300, 200, 3],
+        [bounds.maxX - 10, bounds.minY + 10, 20],
+      ] as const) {
+        const { game, pilot } = bombing(id);
+        game.helicopter.placeAbove(x, y, height, 1);
+        expect(flown(game, LIMIT * 1.5, undefined, pilot), `from ${x}, ${y}, ${height} up`).not.toBeNull();
+        expect(game.last!.id).toBe(id);
+      }
+    },
+  );
+
+  it.each(sweep(ids))(
+    'finishes %s begun, from where a player might leave it: over its trees, on its run, and landed',
+    (id) => {
+      const place = FIRES.find((f) => f.id === id)!;
+      const [p] = place.patches;
+      for (const [x, y, height] of [
+        [p.x, p.y, 40],
+        [place.run.from.x, place.run.from.y, 0],
+        [0, 0, 150],
+      ] as const) {
+        const game = new Game({ random: seeded(1) });
+        game.begin(id);
+        game.helicopter.placeAbove(x, y, height, 1);
+        expect(flown(game, within(id)), `from ${x}, ${y}, ${height} up`).not.toBeNull();
+      }
+    },
+  );
 });

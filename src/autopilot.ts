@@ -21,6 +21,12 @@
  * With nothing going, and no structure to collect, it can be told a package by name, and flies to it as it flies to a
  * pad, over the treetops, and comes straight down onto the clearing's middle: the play-through finds the packages by it.
  *
+ * A fire level is flown by the tank. With it empty, it flies to the nearer end of the fire's run, turned along it, comes
+ * down to skim the water a metre over it at ten metres a second until the tank is full, and climbs away along the
+ * run's line; with it full, it flies to the nearest burning patch at the drop's height and passes over it, and then
+ * round again until the fire is out. It chooses which end to skim from once and keeps to it until the scoop is done, so
+ * the nearer end changing as it passes the middle does not turn it round.
+ *
  * The gates play the game through it: the pace of a level, the same game
  * twice, nothing kept for ever over a long play, and the play-through in the
  * page. Without it none of them has anything to time or watch.
@@ -28,7 +34,9 @@
 import type { Collectible, PackagePlace } from './arena';
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
-import { RING, WINCH_MIDDLE, onPad, type Gate, type Level, type Ring } from './mission';
+import { RING, WINCH_MIDDLE, onPad, type Gate, type Level, type Point3, type Ring } from './mission';
+import { SCOOP } from './water';
+import type { Fire } from './fire';
 
 /** How it flies. Distances are world units, speeds a second. */
 export const PILOT = {
@@ -68,6 +76,46 @@ export const PILOT = {
   margin: 3,
 };
 
+/**
+ * How it fights a fire. To skim: `skim` over the water, at `speed` across it, which is above the scoop's least with room to
+ * spare; it comes on to the run from `lead` before its near end, at `come` over the ground there (and on the run only within `low` more of it), within `lane` across of
+ * the line; it looks `ahead` along the run for a bank, and keeps `bank` over it; and it has done with a run `past` beyond
+ * its far end, and it leaves the water along the line once it is `out` over the ground. To drop: the skids `drop` over the ground, the middle of the drop's window and clear of the crowns by
+ * `crown`, within `far` of the patch, at `through` across the ground as it comes in, and down a slope of `slope` from `dive`
+ * short of it, so the window is entered as it reaches it; the way there is made `above` the crowns. `grip` and `settle` are how hard it holds a height, which a metre over the water must do closely.
+ */
+export const FIGHT = {
+  skim: 1,
+  speed: SCOOP.speed + 2,
+  lead: 20,
+  come: 6,
+  low: 4,
+  out: 22,
+  lane: 5,
+  ahead: 8,
+  bank: 0.8,
+  past: 8,
+  drop: 21,
+  far: 80,
+  through: 16,
+  dive: 3,
+  slope: 0.8,
+  above: 9,
+  gate: 8,
+  samples: 8,
+  crown: 4,
+  grip: 0.5,
+  settle: 0.05,
+};
+/** A run to skim, from its near end (sx, sy) along the unit vector (ux, uy) for `length`. */
+interface RunLine {
+  sx: number;
+  sy: number;
+  ux: number;
+  uy: number;
+  length: number;
+}
+
 export class Autopilot {
   /** The controls it asks for, written in place each step. */
   private readonly controls: Controls = { forward: 0, turn: 0, lift: 0 };
@@ -81,6 +129,18 @@ export class Autopilot {
   private collecting: Collectible | null = null;
   /** The package it is told to land by while nothing else is asked of it, found once when it is told; null for none. */
   private seeking: PackagePlace | null = null;
+  /**
+   * Which way it skims the run it chose: 1 from the run's first end to its last, −1 the other way, 0 for none chosen yet;
+   * and which run that is, so a different fire's is chosen afresh. Kept until the tank is full or the run is passed.
+   */
+  private skimming = 0;
+  private skimRun: Fire['place']['run'] | null = null;
+  /** The patch it is flying to drop on, written in place when it is chosen, and whether one is chosen. */
+  private readonly patch: Point3 = { x: 0, y: 0, z: 0 };
+  private aimed = false;
+  /** The run it skims, from its near end along its line, and the point it comes on to it from: written in place each step. */
+  private readonly line: RunLine = { sx: 0, sy: 0, ux: 0, uy: 0, length: 0 };
+  private readonly approach: Point3 = { x: 0, y: 0, z: 0 };
   /** Each collectible's opening and the same turned about, built once, so that choosing a side makes nothing. */
   private readonly sides: { id: string; ahead: Gate; behind: Gate }[];
 
@@ -137,6 +197,8 @@ export class Autopilot {
     const level = this.game.levels.find((l) => l.id === id);
     if (!level) throw new Error(`no such level: ${id}`);
     this.told = level;
+    this.skimming = 0;
+    this.aimed = false;
   }
 
   /** One step of the game, flown by it. */
@@ -162,6 +224,8 @@ export class Autopilot {
       return c;
     }
     if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
+    // a fire: the tank filled and emptied on it, round and round until it is out
+    if (step.kind === 'douse' || step.kind === 'fire') return this.fightFire(this.game.fire(step.fire));
     // a person: flown to over the treetops, and held in the middle of the window over them while the winch runs; never
     // landed, which is too low for it
     if (step.kind === 'winch') return this.flyTo(step, true, WINCH_MIDDLE);
@@ -180,9 +244,10 @@ export class Autopilot {
    * To a place and down onto it: up to its cruise, turned toward it, across at speed, braked to arrive slowly over it, and
    * straight down once it is over it and all but stopped. A pad is flown to over the highest ground on the way; a package,
    * which lies in a wood, over the treetops too, since a crown is no ground it can fly through. With `holdAt`, a height
-   * over the ground, it comes down to that and holds there, still, in place of landing: a person is winched up from it.
+   * over the ground, it comes down to that and holds there, still, in place of landing: a person is winched up from it. With `glide` as well, it comes down a slope of that much toward the height it holds at,
+   * and not at the end of the way.
    */
-  private flyTo(to: { x: number; y: number; z: number }, overTrees: boolean, holdAt?: number): Controls {
+  private flyTo(to: { x: number; y: number; z: number }, overTrees: boolean, holdAt?: number, glide = 0): Controls {
     const c = this.controls;
     const { helicopter: h } = this.game;
     let dx = to.x - h.x,
@@ -190,6 +255,15 @@ export class Autopilot {
     const far = Math.hypot(dx, dy);
     let cruise = this.cruise(to.x, to.y, to.z);
     if (overTrees) cruise = Math.min(HELICOPTER.ceiling, Math.max(cruise, this.treetops(to.x, to.y) + PILOT.clear / 2));
+    // gliding in: down a slope toward the height it is to arrive at, as far as the way ahead leaves room, and not held up
+    // at a cruise over ground that is behind it
+    if (glide > 0 && holdAt !== undefined) {
+      const profile = to.z + holdAt + Math.max(0, far - PILOT.over) * glide;
+      cruise = Math.max(
+        Math.min(cruise, profile),
+        this.highestAhead(dx / (far || 1), dy / (far || 1), FIGHT.ahead * 8) + PILOT.clear / 2,
+      );
+    }
     // round a tower or over the deck, where one is in the way
     if (this.detour(null, to.x, to.y, cruise)) {
       dx = this.via.x - h.x;
@@ -222,6 +296,191 @@ export class Autopilot {
     // no climb, and a helicopter that had settled on the ground there would sit pressing forward for ever
     c.lift = h.landed ? 1 : clamp(HOVER_LIFT + (cruise - h.z) * PILOT.hold, -1, 1);
     return c;
+  }
+
+  /**
+   * A fire: with the tank full, to the nearest burning patch and over it at the drop's height; with it empty, to skim the
+   * fire's run until it is full. Nothing with none burning, which is a fire out that has not yet been lit again.
+   */
+  private fightFire(fire: Fire): Controls {
+    const c = this.controls;
+    const { tank, helicopter: h } = this.game;
+    if (fire.burning === 0) return c;
+    if (tank.full) {
+      // off the water first, along the line it skimmed, until it is up and well clear of the run's end
+      if (this.skimming !== 0 && this.climbOut(fire)) return c;
+      this.skimming = 0;
+      // the patch it is to drop on, kept once chosen: chosen afresh each step it would run on ahead of itself, from patch
+      // to patch, and never come down. The first drop is the nearest patch, as a pilot who has come to a fire drops on
+      // the first of it; once the level is going it is the place a drop puts out the most, since a fire that spreads a
+      // patch in a beat is not got the better of by its edge
+      if (!this.aimed)
+        this.aimed = this.game.mission.level ? fire.bestDrop(this.patch) : fire.nearestBurning(h.x, h.y, this.patch);
+      if (this.aimed) this.dropOn(this.patch);
+      return c;
+    }
+    this.aimed = false;
+    return this.skim(fire);
+  }
+
+  /** The run's near end and its direction, from where it is, chosen once. The run's end it starts from, and its unit vector. */
+  private runOf(fire: Fire): Readonly<RunLine> {
+    const { run } = fire.place;
+    const h = this.game.helicopter;
+    if (this.skimRun !== run || this.skimming === 0) {
+      this.skimRun = run;
+      const toFrom = Math.hypot(h.x - run.from.x, h.y - run.from.y);
+      const toTo = Math.hypot(h.x - run.to.x, h.y - run.to.y);
+      this.skimming = toFrom <= toTo ? 1 : -1;
+    }
+    const s = this.skimming > 0 ? run.from : run.to;
+    const e = this.skimming > 0 ? run.to : run.from;
+    const length = Math.hypot(e.x - s.x, e.y - s.y);
+    const r = this.line;
+    r.sx = s.x;
+    r.sy = s.y;
+    r.ux = (e.x - s.x) / length;
+    r.uy = (e.y - s.y) / length;
+    r.length = length;
+    return r;
+  }
+
+  /**
+   * Skimming the run: on to it from before its near end and turned along it, then along it a metre over the water at
+   * speed. Where it is not yet on the run, to a point `lead` before its near end at a height over the ground there, and
+   * turned along it once it is there; past the run's far end it is done with this run and chooses again.
+   */
+  private skim(fire: Fire): Controls {
+    const c = this.controls;
+    const h = this.game.helicopter;
+    const { z } = fire.place.run;
+    const { sx, sy, ux, uy, length } = this.runOf(fire);
+    const along = (h.x - sx) * ux + (h.y - sy) * uy;
+    const across = -(h.x - sx) * uy + (h.y - sy) * ux;
+    const heading = Math.atan2(uy, ux);
+    const off = wrap(heading - h.yaw);
+    if (along > length + FIGHT.past) {
+      // flown the run and not filled the tank: round again, from the end it has come to
+      this.skimming = 0;
+      return this.skim(fire);
+    }
+    // and low enough to come down to the water in the run's length, which it comes to the near end at `come` over
+    const low = h.z - z <= FIGHT.come + FIGHT.low;
+    const on = along > -(FIGHT.lead + 4) && Math.abs(across) < FIGHT.lane && Math.abs(off) < PILOT.aimed && low;
+    if (!on) {
+      // to before the near end, at the height asked over the ground there, and turned along the run once it is there
+      const px = sx - ux * FIGHT.lead,
+        py = sy - uy * FIGHT.lead;
+      const to = this.approach;
+      to.x = px;
+      to.y = py;
+      to.z = z;
+      this.flyTo(to, true, FIGHT.come, FIGHT.slope);
+      if (Math.hypot(px - h.x, py - h.y) < PILOT.over && h.speed < PILOT.slow) c.turn = clamp(off * PILOT.steer, -1, 1);
+      return c;
+    }
+    // along the run: the way on a little ahead of where it is on the line, which brings it back to the line
+    const aim = Math.atan2(sy + uy * (along + FIGHT.lead) - h.y, sx + ux * (along + FIGHT.lead) - h.x);
+    c.turn = clamp(wrap(aim - h.yaw) * PILOT.steer, -1, 1);
+    const ahead = h.vx * Math.cos(h.yaw) + h.vy * Math.sin(h.yaw);
+    c.forward = clamp((FIGHT.speed - ahead) / 4, -1, 1);
+    // a metre over the water, and over any bank before it, which the run's ends are allowed to have
+    const g = this.game.island.ground;
+    const bank = Math.max(g.heightAt(h.x, h.y), g.heightAt(h.x + ux * FIGHT.ahead, h.y + uy * FIGHT.ahead));
+    // off the ground first, which a bank at the run's end may have set it down on, and which it cannot move across
+    c.lift = h.landed ? 1 : this.hold(Math.max(z + FIGHT.skim, bank + FIGHT.bank));
+    return c;
+  }
+
+  /**
+   * Off the water along the line of the run it skimmed, climbing; whether it is still doing so. Done once it is `out` over
+   * the ground, or has left the run's end behind.
+   */
+  private climbOut(fire: Fire): boolean {
+    const c = this.controls;
+    const h = this.game.helicopter;
+    const { sx, sy, ux, uy, length } = this.runOf(fire);
+    const along = (h.x - sx) * ux + (h.y - sy) * uy;
+    // done once it is over the crowns and any bank at the run's end, which is as far along the line as it need go
+    if (h.height > FIGHT.out || along > length + FIGHT.lead) return false;
+    const aim = Math.atan2(sy + uy * (along + FIGHT.lead) - h.y, sx + ux * (along + FIGHT.lead) - h.x);
+    c.turn = clamp(wrap(aim - h.yaw) * PILOT.steer, -1, 1);
+    const ahead = h.vx * Math.cos(h.yaw) + h.vy * Math.sin(h.yaw);
+    c.forward = clamp((FIGHT.speed - ahead) / 4, -1, 1);
+    c.lift = 1;
+    return true;
+  }
+
+  /**
+   * To the nearest burning patch, and over it at the drop's height, and on: it does not stop, since the
+   * water falls as it passes. Far off, high over the crowns and the ground on the way and turned toward it; within
+   * `far`, coming down a slope that has it at the skids `drop` over the ground under it as it reaches the place, and
+   * above the drop's reach until then, so the water falls on the patch it is aimed at, with the patches round it in the splash, and not on the edge of the
+   * fire the moment it comes within the splash of it, which puts out one patch where a patch is spread a beat.
+   */
+  private dropOn(patch: Readonly<Point3>): Controls {
+    const c = this.controls;
+    const { helicopter: h, island, canopy } = this.game;
+    let dx = patch.x - h.x,
+      dy = patch.y - h.y;
+    const far = Math.hypot(dx, dy);
+    let want: number;
+    if (far > FIGHT.far) {
+      want = Math.min(
+        HELICOPTER.ceiling,
+        Math.max(this.cruise(patch.x, patch.y, patch.z), this.treetops(patch.x, patch.y) + FIGHT.above),
+      );
+      if (this.detour(null, patch.x, patch.y, want)) {
+        dx = this.via.x - h.x;
+        dy = this.via.y - h.y;
+        want = this.via.z;
+      }
+    } else {
+      const ux = dx / (far || 1),
+        uy = dy / (far || 1);
+      const g = island.ground;
+      const ground = Math.max(g.heightAt(h.x, h.y), g.heightAt(h.x + ux * FIGHT.ahead, h.y + uy * FIGHT.ahead));
+      // the crowns here, and a little ahead, which it keeps over as it goes in
+      const crown = Math.max(
+        canopy.heightAt(h.x, h.y),
+        canopy.heightAt(h.x + ux * FIGHT.ahead, h.y + uy * FIGHT.ahead),
+      );
+      want = Math.max(ground + FIGHT.drop + Math.max(0, far - FIGHT.dive) * FIGHT.slope, crown + FIGHT.crown);
+    }
+    const heading = Math.atan2(dy, dx);
+    const off = wrap(heading - h.yaw);
+    c.turn = clamp(off * PILOT.steer, -1, 1);
+    const along = h.vx * Math.cos(h.yaw) + h.vy * Math.sin(h.yaw);
+    // clear of the ground and the crowns for the next stretch before it goes on, when it is far, since it climbs as it goes;
+    // and in, aimed, when it is near
+    const ready =
+      far <= FIGHT.far || h.z > this.highestAhead(dx / (far || 1), dy / (far || 1), FIGHT.ahead * 8) + FIGHT.gate;
+    const speed = far > FIGHT.far ? HELICOPTER.maxSpeed : FIGHT.through;
+    if (Math.abs(off) < PILOT.aimed && ready) c.forward = clamp((speed - along) / 4, -1, 1);
+    else if (along > 1) c.forward = -1;
+    c.lift = h.landed ? 1 : this.hold(want);
+    return c;
+  }
+
+  /** The top of the highest ground or crown on the way of `dist` from here along the unit vector (ux, uy). Makes nothing. */
+  private highestAhead(ux: number, uy: number, dist: number): number {
+    const { helicopter: h, island, canopy } = this.game;
+    let top = -Infinity;
+    for (let k = 0; k <= FIGHT.samples; k++) {
+      const x = h.x + (ux * dist * k) / FIGHT.samples,
+        y = h.y + (uy * dist * k) / FIGHT.samples;
+      top = Math.max(top, island.ground.heightAt(x, y), canopy.heightAt(x, y));
+    }
+    return top;
+  }
+
+  /**
+   * The lift that brings the skids to `want` and holds them there, tighter than the way it holds a cruise: a metre over
+   * the water has a window of a metre and a half, and the climb it asks for is eased by the climb it already has.
+   */
+  private hold(want: number): number {
+    const h = this.game.helicopter;
+    return clamp(HOVER_LIFT + (want - h.z) * FIGHT.grip - h.vz * FIGHT.settle, -1, 1);
   }
 
   /** The top of the highest crown on the straight way from here to (x, y), or −Infinity over no wood. Makes nothing. */

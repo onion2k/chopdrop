@@ -20,7 +20,8 @@ import { Game } from '../src/game';
 import { seeded } from '../src/random';
 
 const DT = 1 / 60;
-export const CHECK = { seeds: [1, 2, 3, 4], capMinutes: 3 };
+/** The cap is on the game's clock from home, flight to the start included: the far fire is put out 410 s in (6.8 min), so seven and a half. */
+export const CHECK = { seeds: [1, 2, 3, 4], capMinutes: 7.5 };
 /**
  * How far a figure may move from the baseline, as a share of it, before the check fails. The autopilot flies the
  * same way every run and on every seed, so the figure does not wobble at all, and anything that moves it (a quicker

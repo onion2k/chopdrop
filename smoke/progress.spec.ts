@@ -38,12 +38,13 @@ const TITLE: Record<string, string> = {
   rings: 'Trial complete!',
   course: 'Course complete!',
   rescue: 'Rescued!',
+  fire: 'Fire out!',
 };
 
 test('every level, shown the way from the panel and flown to the end in turn, with the toasts and then every time', async ({
   page,
 }, info) => {
-  test.setTimeout(300_000);
+  test.setTimeout(900_000);
   const problems = watch(page);
   await start(page, { seed: 1, paused: true, save: { best: {} } });
   const state = () => page.evaluate(() => window.game!.state());
@@ -84,7 +85,9 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
     await expect(page.locator('#panel')).toBeHidden();
     await page.evaluate(() => window.game!.step(1));
     expect((await state()).guided, `level ${k + 1} guided`).toBe(level.id);
-    await expect(page.locator('#hud .goal')).toHaveText(`To the start · ${level.name}`);
+    await expect(page.locator('#hud .goal')).toHaveText(
+      level.kind === 'fire' ? 'To the fire' : `To the start · ${level.name}`,
+    );
     await expect(page.locator('#hud .arrow')).toBeVisible();
     // the autopilot, told the level, flies from wherever it is to the start, which begins it
     await page.evaluate((id) => window.game!.autopilot(true, id), level.id);
@@ -93,22 +96,31 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
     // smoke gone and the person off the ground, seen on the way
     let winched: { words: string; rope: boolean; smoke: number; people: number } | null = null;
     expect(
-      await until(async () => {
-        const now = await state();
-        if (level.kind === 'rescue' && now.winch.spot === level.id && now.winch.share > 0.2 && !winched) {
-          winched = {
-            words: (await page.locator('#hud .loader .what').textContent()) ?? '',
-            rope: now.rope,
-            smoke: now.smoke,
-            people: now.people,
-          };
-        }
-        return now.mission.level === level.id;
-      }, 7200),
+      await until(
+        async () => {
+          const now = await state();
+          if (level.kind === 'rescue' && now.winch.spot === level.id && now.winch.share > 0.2 && !winched) {
+            winched = {
+              words: (await page.locator('#hud .loader .what').textContent()) ?? '',
+              rope: now.rope,
+              smoke: now.smoke,
+              people: now.people,
+            };
+          }
+          return now.mission.level === level.id;
+          // a fire is begun by a drop on it, after the tank is scooped from the nearest water
+        },
+        level.kind === 'fire' ? 18_000 : 7200,
+      ),
       `${level.id} begun`,
     ).toBe(true);
     await hear();
-    expect(told[0], `${level.id}: told begun first`).toBe(`started ${level.id}`);
+    if (level.kind === 'fire') {
+      // begun by its first drop, which is told first: the tank scooped, the water dropped, then the level started
+      const dropped = told.findIndex((line) => line.startsWith(`dropped ${level.id} `));
+      expect(dropped, `${level.id}: told dropped`).toBeGreaterThanOrEqual(0);
+      expect(told[dropped + 1], `${level.id}: begun by the drop`).toBe(`started ${level.id}`);
+    } else expect(told[0], `${level.id}: told begun first`).toBe(`started ${level.id}`);
     expect((await state()).guided, 'the guide is gone once it has begun').toBeNull();
     await expect(page.locator('#hud .clock')).toBeVisible();
     await expect(page.locator('#hud .hint')).toBeHidden();
@@ -133,6 +145,31 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
       expect(told.slice(0, 3)).toEqual([`started ${level.id}`, `winched ${level.id}`, 'landed 0']);
       expect(told[3]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
       expect(told).toHaveLength(4);
+    } else if (level.kind === 'fire') {
+      // the drop emptied the tank, so the bar says to scoop, the bucket hangs and the badge is an outline
+      const begun = await state();
+      expect(begun.tank.full, `${level.id}: the drop emptied the tank`).toBe(false);
+      await expect(page.locator('#hud .goal')).toHaveText('Scoop water');
+      expect([begun.badge, begun.bucket.hung]).toEqual(['empty', true]);
+      expect(begun.fires.find((f) => f.id === level.id)!.burning).toBeGreaterThan(0);
+      // put out by the water scooped and dropped, round and round: at least one more drop, and the bar says how many burn
+      let sawBurning = false;
+      expect(
+        await until(async () => {
+          const now = await state();
+          if (now.tank.full && !sawBurning) {
+            await expect(page.locator('#hud .goal')).toHaveText(/^Put out the fire · \d+ burning$/);
+            sawBurning = true;
+          }
+          return now.mission.level === null;
+        }, 36_000),
+        `${level.id}: put out`,
+      ).toBe(true);
+      await hear();
+      expect(sawBurning, `${level.id}: seen with the tank full`).toBe(true);
+      expect(told.filter((line) => line.startsWith(`dropped ${level.id} `)).length).toBeGreaterThanOrEqual(2);
+      expect(told).toContain(`fire out ${level.id}`);
+      expect(told.at(-1)).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
     } else if (level.kind === 'rings') {
       // each ring in turn, the words following it, and the last ends it
       const of = (await state()).mission.steps.length;

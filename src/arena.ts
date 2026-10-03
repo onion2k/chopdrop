@@ -390,6 +390,138 @@ export const RESCUE_SPOTS: readonly RescueSpot[] = [
   },
 ];
 
+/** A place in a fire's wood that can burn: `z` is the ground under it. */
+export interface FirePatch {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** A fire: its middle, its patches, how many burn at its start, and the stretch of open water to scoop from. Its `id` is the fire level's, in players' saves and never changed. */
+export interface FirePlace {
+  id: string;
+  /** What the panel calls the fire level: "Fire by the west lake". */
+  name: string;
+  x: number;
+  y: number;
+  /** Eight apart on a grid from the middle, nearest the middle first, so that the lit ones are the first `lit`. */
+  patches: readonly FirePatch[];
+  lit: number;
+  /** A straight run over one open water, at its level `z`, for the autopilot to skim along; the water's own level, never a river's. */
+  run: { from: { x: number; y: number }; to: { x: number; y: number }; z: number };
+}
+
+/**
+ * How many of a fire's patches burn at its start, the same for all three: the first ten of the twenty, nearest the middle.
+ * Ten spread over more than a splash across, so no one drop can put a fire out as it begins, which a test holds.
+ */
+const FIRE_LIT = 10;
+
+/**
+ * The three fires, found by a script on a grid of 5 for the middles and 8 for the patches, and kept here as the numbers
+ * it found. Each middle is on dry land in a wood (25 or more trees' feet within 30), 100 or more from every pad, 60 or
+ * more from every structure's blocks, package and rescue spot, and 150 or more from each other. Two are by a lake each,
+ * the densest woods within 150 of one (81 and 77 trees); the third is the farthest from every lake and the sea that a
+ * wood of 25 allows, 252. The patches are the twenty grid points nearest the middle, joined to each other, that are dry
+ * and have three or more trees' feet within 10. A run is the longest straight stretch, 80 or more, nearest the fire that
+ * is over one water at every metre, with no crown or structure within the rotor's reach and 2 of it at the skim, and
+ * with 20 beyond each end no more than 3 over the water: the low approach comes in at 6 and clears the ground by 3. A
+ * strict three above a skim of one would leave no lake's shore. The ground is the island's as it stands, so an island
+ * made again otherwise moves every one, and the tests that pin them say so.
+ */
+export const FIRES: readonly FirePlace[] = [
+  {
+    id: 'west-lake-fire',
+    name: 'Fire by the west lake',
+    x: -353,
+    y: -108,
+    patches: [
+      { x: -353, y: -108, z: 54.1 },
+      { x: -361, y: -108, z: 51.97 },
+      { x: -353, y: -116, z: 48.99 },
+      { x: -353, y: -100, z: 54.16 },
+      { x: -345, y: -108, z: 54.8 },
+      { x: -361, y: -116, z: 48.23 },
+      { x: -361, y: -100, z: 51.57 },
+      { x: -345, y: -116, z: 50.36 },
+      { x: -345, y: -100, z: 54.89 },
+      { x: -369, y: -108, z: 49.13 },
+      { x: -353, y: -124, z: 42.47 },
+      { x: -353, y: -92, z: 51.35 },
+      { x: -337, y: -108, z: 54.46 },
+      { x: -369, y: -116, z: 46.62 },
+      { x: -369, y: -100, z: 48.88 },
+      { x: -361, y: -124, z: 41.86 },
+      { x: -361, y: -92, z: 48.33 },
+      { x: -345, y: -124, z: 44.89 },
+      { x: -345, y: -92, z: 52.94 },
+      { x: -337, y: -116, z: 51.53 },
+    ],
+    lit: FIRE_LIT,
+    run: { from: { x: -191.1, y: -226.3 }, to: { x: -244.5, y: -162.7 }, z: 34.69 },
+  },
+  {
+    id: 'south-lake-fire',
+    name: 'Fire by the south lake',
+    x: -48,
+    y: -33,
+    patches: [
+      { x: -48, y: -33, z: 52.75 },
+      { x: -56, y: -33, z: 56.13 },
+      { x: -48, y: -41, z: 49.82 },
+      { x: -48, y: -25, z: 53.99 },
+      { x: -40, y: -33, z: 49.15 },
+      { x: -56, y: -41, z: 53.58 },
+      { x: -56, y: -25, z: 56.99 },
+      { x: -40, y: -41, z: 46.11 },
+      { x: -40, y: -25, z: 49.59 },
+      { x: -64, y: -33, z: 58.67 },
+      { x: -48, y: -49, z: 47.48 },
+      { x: -48, y: -17, z: 51.72 },
+      { x: -32, y: -33, z: 46.06 },
+      { x: -64, y: -41, z: 56.23 },
+      { x: -64, y: -25, z: 58.59 },
+      { x: -56, y: -49, z: 51.02 },
+      { x: -56, y: -17, z: 55.35 },
+      { x: -40, y: -49, z: 44.62 },
+      { x: -40, y: -17, z: 46.55 },
+      { x: -32, y: -41, z: 43.88 },
+    ],
+    lit: FIRE_LIT,
+    run: { from: { x: 89.1, y: -151.1 }, to: { x: 33.2, y: -84.5 }, z: 25.63 },
+  },
+  {
+    id: 'north-wood-fire',
+    name: 'Fire in the northern wood',
+    x: -23,
+    y: 217,
+    patches: [
+      { x: -23, y: 217, z: 94.6 },
+      { x: -23, y: 209, z: 100.05 },
+      { x: -23, y: 225, z: 92.01 },
+      { x: -15, y: 217, z: 96.67 },
+      { x: -31, y: 225, z: 80.75 },
+      { x: -15, y: 209, z: 98.94 },
+      { x: -15, y: 225, z: 88.3 },
+      { x: -23, y: 201, z: 101.05 },
+      { x: -23, y: 233, z: 86.91 },
+      { x: -7, y: 217, z: 93.37 },
+      { x: -39, y: 225, z: 70.29 },
+      { x: -31, y: 233, z: 78.56 },
+      { x: -15, y: 201, z: 98.07 },
+      { x: -15, y: 233, z: 87.24 },
+      { x: -7, y: 209, z: 95.8 },
+      { x: -39, y: 233, z: 70.77 },
+      { x: -7, y: 201, z: 93.63 },
+      { x: 1, y: 217, z: 98 },
+      { x: 1, y: 209, z: 96.86 },
+      { x: -47, y: 233, z: 66.66 },
+    ],
+    lit: FIRE_LIT,
+    run: { from: { x: 99, y: 483.7 }, to: { x: 11.3, y: 476 }, z: 0 },
+  },
+];
+
 /** The ground kept clear of trees under and round each structure. */
 const CLEARINGS: readonly Clearing[] = BUILT.flatMap((b) => b.clearings);
 
@@ -652,6 +784,19 @@ function rescue({ id, name, who, where, x, y, z }: RescueSpot): Level {
   };
 }
 
+/** A level that is a fire put out: begun by the first drop that hits it, and ended when none of its patches burns. Its id is the fire's. */
+function fireLevel({ id, name }: FirePlace): Level {
+  return {
+    id,
+    name,
+    kind: 'fire',
+    steps: [
+      { kind: 'douse', fire: id },
+      { kind: 'fire', fire: id },
+    ],
+  };
+}
+
 /**
  * A level that is a run of rings to fly through, the first of them where it begins: each ring at its middle
  * `[x, y, z]`, an `opening` wide, facing the way from the ring before it, and the first the way from the point `from`,
@@ -726,6 +871,9 @@ function course(): Level {
  *
  * The three rescues follow, one for each place a person waits, in the order wood, beach, ledge: each begun by hovering
  * in the window over the person for as long as the winch takes, and ended by landing on the home pad.
+ *
+ * The three fires come last, in the order west lake, south lake, north wood: each begun by the first drop of water that
+ * puts out one of its patches, and ended when none burns. The water is scooped from the lakes and the sea.
  */
 export const LEVELS: readonly Level[] = [
   delivery('first-delivery', 'First delivery', 4, 1),
@@ -753,6 +901,7 @@ export const LEVELS: readonly Level[] = [
   delivery('mountain-drop', 'Mountain drop', 2, 6),
   course(),
   ...RESCUE_SPOTS.map(rescue),
+  ...FIRES.map(fireLevel),
 ];
 
 /**

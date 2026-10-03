@@ -3,7 +3,7 @@
  * a level starts and how it is put, what the bar shows and the toast's life against game time.
  */
 import { describe, expect, it } from 'vitest';
-import { LEVELS, PACKAGES, COLLECTIBLES, theIsland } from '../src/arena';
+import { FIRES, LEVELS, PACKAGES, COLLECTIBLES, theIsland } from '../src/arena';
 import { RADAR } from '../src/finds';
 import {
   TOAST,
@@ -15,14 +15,18 @@ import {
   RADAR_STEPS,
   collectedWords,
   foundWords,
+  guideWords,
+  loaderKind,
   loaderSteps,
   loaderWords,
   pointer,
   radarBadge,
   radarRing,
   startPoint,
+  wantsWater,
   startWords,
   stepWords,
+  tankBadge,
   toastShown,
   toastWords,
 } from '../src/hud';
@@ -456,5 +460,78 @@ describe('the words of a rescue', () => {
     expect(startWords(wood, pads)).toBe('Winch up the walker in the western wood');
     expect(startWords(level('beach-rescue'), pads)).toBe('Winch up the stranded swimmer on the east beach');
     expect(startWords(level('ledge-rescue'), pads)).toBe('Winch up the climber on the southern ledge');
+  });
+});
+
+describe('the words of a fire', () => {
+  const { pads } = theIsland();
+  const fire = (id: string) => LEVELS.find((l) => l.id === id)!;
+  const west = fire('west-lake-fire');
+  const going = west.steps[1];
+
+  it('guides to a fire with "To the fire", the way to its middle and not to a pad', () => {
+    expect(guideWords(west)).toBe('To the fire');
+    for (const f of FIRES) expect(guideWords(fire(f.id))).toBe('To the fire');
+    // the other kinds keep their own
+    expect(guideWords(fire('first-delivery'))).toBe('To the start · First delivery');
+    expect(startPoint(west, pads, FIRES)).toEqual({ x: FIRES[0].x, y: FIRES[0].y });
+    expect(startPoint(fire('north-wood-fire'), pads, FIRES)).toEqual({ x: FIRES[2].x, y: FIRES[2].y });
+  });
+
+  it('says what a level going wants by the tank: put out the fire and how many burn with it full, scoop water empty', () => {
+    const ring = { n: 0, of: 0 };
+    expect(stepWords(west, going, pads, ring, { burning: 5, full: true })).toBe('Put out the fire · 5 burning');
+    expect(stepWords(west, going, pads, ring, { burning: 1, full: true })).toBe('Put out the fire · 1 burning');
+    expect(stepWords(west, going, pads, ring, { burning: 5, full: false })).toBe('Scoop water');
+    // the douse that begins it says the same, and the fire alone is not words for the other kinds
+    expect(stepWords(west, west.steps[0], pads, ring, { burning: 12, full: true })).toBe(
+      'Put out the fire · 12 burning',
+    );
+    expect(
+      stepWords(fire('first-delivery'), fire('first-delivery').steps[0], pads, ring, { burning: 5, full: true }),
+    ).toBe('Pick up the parcel at the meadow pad');
+  });
+
+  it('aims the arrow at the nearest water with the tank empty, and at the fire with it full, and only for a fire', () => {
+    expect(wantsWater(going, false)).toBe(true);
+    expect(wantsWater(going, true)).toBe(false);
+    expect(wantsWater(west.steps[0], false)).toBe(true);
+    const delivery = fire('first-delivery');
+    expect(wantsWater(delivery.steps[0], false)).toBe(false);
+    expect(wantsWater(fire('wood-rescue').steps[0], false)).toBe(false);
+    expect(wantsWater(undefined, false)).toBe(false);
+  });
+
+  it('names the loader "Scooping" for the tank filling, and a winch or a parcel as before', () => {
+    expect(loaderWords(null, undefined, true)).toBe('Scooping');
+    expect(loaderWords(null, going, true)).toBe('Scooping');
+    expect(loaderWords(null, undefined, false)).toBe('Loading the parcel');
+    // the winch's words are first: a person on the rope is the loader's whatever the tank does
+    expect(loaderWords('the walker', undefined, true)).toBe('Winching up the walker');
+    expect(loaderKind(null, 0)).toBe('parcel');
+    expect(loaderKind(null, 0.3)).toBe('scoop');
+    expect(loaderKind('the walker', 0.3)).toBe('winch');
+    expect(loaderKind('the walker', 0)).toBe('winch');
+  });
+
+  it('shows the tank on the badge: none while the bucket is stowed, an outline empty and blue full', () => {
+    expect(tankBadge(false, false)).toBe('none');
+    expect(tankBadge(false, true)).toBe('none');
+    expect(tankBadge(true, false)).toBe('empty');
+    expect(tankBadge(true, true)).toBe('full');
+  });
+
+  it('tells the end with "Fire out!", the time and "New best" as the others do', () => {
+    expect(toastWords('fire', 54.2, true)).toBe('Fire out! 0:54 ★ New best');
+    expect(toastWords('fire', 322, false)).toBe('Fire out! 5:22');
+    const queue = new ToastQueue(0);
+    queue.level('fire', 54.2, true, 10);
+    expect(queue.update(10)).toMatchObject({ title: 'Fire out!', left: '0:54', sep: ' · ', right: '★ New best' });
+  });
+
+  it('says the panel its rows from the fire’s name, in the mock’s words', () => {
+    expect(startWords(west, pads)).toBe('Drop water on the fire by the west lake');
+    expect(startWords(fire('south-lake-fire'), pads)).toBe('Drop water on the fire by the south lake');
+    expect(startWords(fire('north-wood-fire'), pads)).toBe('Drop water on the fire in the northern wood');
   });
 });

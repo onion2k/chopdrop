@@ -266,6 +266,41 @@
     border: 2px solid #ffc23a;
     border-radius: 50%;
   }
+  /* the tank's badge, beside the radar's and the same size: a water drop, an outline while the tank is empty and filled blue when it is full, shown only while the bucket is in use */
+  #hud .tank {
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top));
+    right: calc(14px + 44px + 8px + env(safe-area-inset-right));
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    background: rgba(14, 12, 20, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  #hud .tank[hidden] {
+    display: none;
+  }
+  #hud .tank svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.55);
+    stroke-width: 1.6;
+    stroke-linejoin: round;
+  }
+  #hud .tank[data-state='full'] svg {
+    fill: #3f8fe0;
+    stroke: #8cc4ff;
+    filter: drop-shadow(0 0 4px #3f8fe0);
+  }
+  /* the loader fills in blue while the tank is scooped, as it fills in gold for a parcel and a person */
+  #hud .loader[data-kind='scoop'] .fill {
+    stroke: #3f8fe0;
+  }
   #hud.away {
     display: none;
   }
@@ -279,6 +314,14 @@
     }
     #hud .toast h2 {
       font-size: 20px;
+    }
+    /* under the radar, since the bar takes the room beside it, and the frame time under that */
+    #hud .tank {
+      right: calc(14px + env(safe-area-inset-right));
+      top: calc(14px + 44px + 8px + env(safe-area-inset-top));
+    }
+    #stats {
+      top: calc(14px + 2 * (44px + 8px) + env(safe-area-inset-top));
     }
   }
   /* the panel, over the island dimmed, the game held behind it: a row a level, one column at any width */
@@ -350,7 +393,7 @@
   #panel .row .name {
     font-weight: 700;
   }
-  /* a rescue's label, a small figure with an arm up and "Rescue", in the orange of the jackets and the smoke */
+  /* a rescue's label, a small figure with an arm up and "Rescue", or a fire's, a small flame and "Fire", in the orange of the jackets and the smoke */
   #panel .row .kind {
     /* the figure and the word wrap together, to a second line where the row is narrow */
     display: inline-block;
@@ -359,6 +402,10 @@
     color: #ff8a3e;
     font-size: 12px;
     font-weight: 700;
+  }
+  #panel .row .kind svg .flame {
+    fill: currentColor;
+    stroke: none;
   }
   #panel .row .kind svg {
     display: inline-block;

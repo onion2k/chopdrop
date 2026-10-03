@@ -4,7 +4,9 @@
  * once for the file, since it takes most of a second.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, ISLAND, LEVELS, PACKAGES, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, FIRES, ISLAND, LEVELS, PACKAGES, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { BUCKET, type BucketPose } from '../src/bucket';
+import { PATCH } from '../src/fire';
 import { Mission, RING, RINGS, type Level, type Ring } from '../src/mission';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
@@ -34,6 +36,27 @@ const pose = (over: Partial<HelicopterPose> = {}): HelicopterPose => ({
 });
 
 const translation = (m: Float32Array) => [m[12], m[13], m[14]];
+
+/** The groups that come after the trees, in order: the crates, the rings and flags, the gold, the packages, the rescues, the fires' ground and the bucket. */
+const TAIL = [
+  'crate',
+  'crate straps',
+  'beacon',
+  'rings',
+  'ring next',
+  'flags dark',
+  'flags light',
+  'collected',
+  'packages',
+  'package straps',
+  'people',
+  'winch',
+  'burning ground',
+  'burnt ground',
+  'bucket line',
+  'bucket',
+  'bucket water',
+];
 
 describe('dynamic', () => {
   it('gives six groups, each over its own pool of one placement', () => {
@@ -452,22 +475,10 @@ describe('the trees', () => {
 
   it('move, after the helicopter, and are not among what stands still', () => {
     expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
-    expect(scene.movers.slice(6, -13)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
-    expect(scene.movers.slice(-13)).toEqual([
-      'crate',
-      'crate straps',
-      'beacon',
-      'rings',
-      'ring next',
-      'flags dark',
-      'flags light',
-      'collected',
-      'packages',
-      'package straps',
-      'people',
-      'smoke',
-      'winch',
-    ]);
+    expect(scene.movers.slice(6, -TAIL.length)).toEqual(
+      TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]),
+    );
+    expect(scene.movers.slice(-TAIL.length)).toEqual(TAIL);
     expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
     expect(scene.pools).toHaveLength(movers.length);
     movers.forEach((g, k) => expect(g.matrices).toBe(scene.pools[k]));
@@ -1363,24 +1374,23 @@ describe('the rescues', () => {
     return { x: m[12], y: m[13], z: m[14], w: Math.hypot(m[0], m[1]), d: Math.hypot(m[4], m[5]), h: m[10] };
   };
 
-  it('are three spots, a person of five boxes and smoke of nine at each, in pools sized once', () => {
+  it('are three spots, a person of five boxes at each, in pools sized once, with no boxes of smoke: the flare is particles', () => {
     expect(rescues).toHaveLength(3);
     expect(rescueGroups[at('people')].count).toBe(15);
-    expect(rescueGroups[at('smoke')].count).toBe(27);
     expect(rescueGroups[at('winch')].count).toBe(6);
     expect(poolOf('people')).toHaveLength(15 * 16);
-    expect(poolOf('smoke')).toHaveLength(27 * 16);
     expect(poolOf('winch')).toHaveLength(6 * 16);
+    expect(rescueScene.movers).not.toContain('smoke');
     const again = new Scene();
     again.dynamic(island);
     again.dynamic(island);
     expect(again.movers.filter((m) => m === 'people')).toHaveLength(1);
-    const before = [poolOf('people'), poolOf('smoke'), poolOf('winch')];
+    const before = [poolOf('people'), poolOf('winch')];
     show();
     show(rescues[0], { spot: rescues[0].id, share: 0.5 });
     show();
-    expect([poolOf('people'), poolOf('smoke'), poolOf('winch')]).toEqual(before);
-    before.forEach((p, k) => expect(rescueScene.pools[at(['people', 'smoke', 'winch'][k])]).toBe(p));
+    expect([poolOf('people'), poolOf('winch')]).toEqual(before);
+    before.forEach((p, k) => expect(rescueScene.pools[at(['people', 'winch'][k])]).toBe(p));
   });
 
   it('stands a person at each spot, about 1.8 tall, in dark legs and an orange jacket, one arm up', () => {
@@ -1404,35 +1414,12 @@ describe('the rescues', () => {
     expect(rescueScene.peopleDrawn).toBe(3);
   });
 
-  it('sends up smoke from each spot: nine boxes rising 27 m, widening and paling from orange to cream', () => {
-    show();
-    spots.forEach((s, k) => {
-      const boxes = Array.from({ length: 9 }, (_, b) => boxOf(poolOf('smoke'), 9 * k + b));
-      expect(boxes[0].z).toBeCloseTo(s.z, 4);
-      expect(boxes[8].z + boxes[8].h - s.z).toBeCloseTo(27, 3);
-      for (let b = 1; b < 9; b++) {
-        expect(boxes[b].w).toBeGreaterThan(boxes[b - 1].w);
-        expect(boxes[b].z).toBeGreaterThan(boxes[b - 1].z);
-      }
-      expect(colourOf('smoke', 9 * k)).toEqual(linear(0xff7a2e));
-      expect(colourOf('smoke', 9 * k + 8)).toEqual(linear(0xffecd4));
-      // paler as it rises: the blue only grows
-      for (let b = 1; b < 9; b++)
-        expect(colourOf('smoke', 9 * k + b)[2]).toBeGreaterThan(colourOf('smoke', 9 * k + b - 1)[2]);
-    });
-  });
-
-  it('draws neither the person nor the smoke of the level going, and still those of the others', () => {
+  it('draws no person at the level going, and still those of the others', () => {
     show(rescues[1]);
     for (let b = 0; b < 5; b++) {
       expect(noSize(poolOf('people'), 5 + b), `person box ${b}`).toBe(true);
       expect(noSize(poolOf('people'), b)).toBe(false);
       expect(noSize(poolOf('people'), 10 + b)).toBe(false);
-    }
-    for (let b = 0; b < 9; b++) {
-      expect(noSize(poolOf('smoke'), 9 + b), `smoke box ${b}`).toBe(true);
-      expect(noSize(poolOf('smoke'), b)).toBe(false);
-      expect(noSize(poolOf('smoke'), 18 + b)).toBe(false);
     }
     expect(rescueScene.peopleDrawn).toBe(2);
     // a level that is not a rescue takes none away
@@ -1440,15 +1427,14 @@ describe('the rescues', () => {
     expect(rescueScene.peopleDrawn).toBe(3);
   });
 
-  it('puts the smoke out, and the person off the ground, of the spot being winched, and no other', () => {
+  it('takes the person off the ground at the spot being winched, and no other', () => {
     show(null, { spot: rescues[0].id, share: 0.4 });
     for (let b = 0; b < 5; b++) expect(noSize(poolOf('people'), b)).toBe(true);
-    for (let b = 0; b < 9; b++) expect(noSize(poolOf('smoke'), b)).toBe(true);
-    for (let b = 0; b < 9; b++) expect(noSize(poolOf('smoke'), 9 + b)).toBe(false);
+    for (let b = 0; b < 5; b++) expect(noSize(poolOf('people'), 5 + b)).toBe(false);
     expect(rescueScene.peopleDrawn).toBe(2);
-    // broken off, the smoke and the person are back
+    // broken off, the person is back
     show(null, { spot: null, share: 0 });
-    expect(noSize(poolOf('smoke'), 0)).toBe(false);
+    expect(noSize(poolOf('people'), 0)).toBe(false);
     expect(rescueScene.peopleDrawn).toBe(3);
   });
 
@@ -1489,53 +1475,299 @@ describe('the rescues', () => {
     for (let k = 0; k < 6; k++) expect(noSize(poolOf('winch'), k), `winch box ${k}`).toBe(true);
   });
 
-  it('writes the waiting people and the smoke only when what is going or what is winched changes, and the rope every frame it is out', () => {
-    const [people, smoke, winch] = [at('people'), at('smoke'), at('winch')];
-    const changed = () => [rescueScene.changed[people], rescueScene.changed[smoke], rescueScene.changed[winch]];
+  it('writes the waiting people only when what is going or what is winched changes, and the rope every frame it is out', () => {
+    const [people, winch] = [at('people'), at('winch')];
+    const changed = () => [rescueScene.changed[people], rescueScene.changed[winch]];
     show();
     show();
-    expect(changed()).toEqual([0, 0, 0]);
+    expect(changed()).toEqual([0, 0]);
     show(rescues[0]);
-    expect(changed().slice(0, 2)).toEqual([1, 1]);
+    expect(changed()[0]).toBe(1);
     show(rescues[0]);
-    expect(changed()).toEqual([0, 0, 0]);
+    expect(changed()).toEqual([0, 0]);
     show(null, { spot: rescues[0].id, share: 0.1 });
-    expect(changed()).toEqual([1, 1, 1]);
+    expect(changed()).toEqual([1, 1]);
     // the share moves, and so does the helicopter: the rope is written, the rest is not
     show(null, { spot: rescues[0].id, share: 0.2 });
-    expect(changed()).toEqual([0, 0, 1]);
+    expect(changed()).toEqual([0, 1]);
     rescueScene.write({ ...hover, x: hover.x + 1 }, undefined, going(null), [], [], {
       spot: rescues[0].id,
       share: 0.2,
     });
-    expect(changed()).toEqual([0, 0, 1]);
+    expect(changed()).toEqual([0, 1]);
     // broken off: written once to put it away, and then not again
     show();
-    expect(changed()).toEqual([1, 1, 1]);
+    expect(changed()).toEqual([1, 1]);
     show();
-    expect(changed()).toEqual([0, 0, 0]);
+    expect(changed()).toEqual([0, 0]);
     // and a read with nothing handed leaves them be
     rescueScene.write(hover);
-    expect(changed()).toEqual([0, 0, 0]);
+    expect(changed()).toEqual([0, 0]);
   });
 
-  it('counts what is drawn, for the test API: the people, the smoke and the rope', () => {
+  it('counts what is drawn, for the test API: the people and the rope', () => {
     show();
-    expect([rescueScene.peopleDrawn, rescueScene.smokeDrawn, rescueScene.ropeDrawn]).toEqual([3, 3, false]);
+    expect([rescueScene.peopleDrawn, rescueScene.ropeDrawn]).toEqual([3, false]);
     show(null, { spot: rescues[0].id, share: 0.5 });
-    expect([rescueScene.peopleDrawn, rescueScene.smokeDrawn, rescueScene.ropeDrawn]).toEqual([2, 2, true]);
+    expect([rescueScene.peopleDrawn, rescueScene.ropeDrawn]).toEqual([2, true]);
     show(rescues[2]);
-    expect([rescueScene.peopleDrawn, rescueScene.smokeDrawn, rescueScene.ropeDrawn]).toEqual([2, 2, false]);
-    expect([new Scene().peopleDrawn, new Scene().smokeDrawn, new Scene().ropeDrawn]).toEqual([0, 0, false]);
+    expect([rescueScene.peopleDrawn, rescueScene.ropeDrawn]).toEqual([2, false]);
+    expect([new Scene().peopleDrawn, new Scene().ropeDrawn]).toEqual([0, false]);
   });
 
   it('draws none where there are no rescues', () => {
     const bare = new Scene(LEVELS.filter((l) => l.kind !== 'rescue'));
     bare.dynamic(island);
     expect(bare.movers).not.toContain('people');
-    expect(bare.movers).not.toContain('smoke');
     expect(bare.movers).not.toContain('winch');
     bare.write(hover, undefined, nothing, [], [], { spot: null, share: 0 });
     expect(bare.peopleDrawn).toBe(0);
+  });
+});
+
+describe('the fires on the ground', () => {
+  const fireScene = new Scene();
+  const groups = fireScene.dynamic(island);
+  const patches = FIRES.flatMap((f) => f.patches);
+  const at = (name: string) => fireScene.movers.indexOf(name);
+  const poolOf = (name: string) => fireScene.pools[at(name)];
+  const hover = pose({ x: 0, y: 0, z: 40 });
+  /** Each fire's patches as these say, written to the scene, with nothing going. */
+  const show = (states: (fire: number, patch: number) => number) =>
+    fireScene.write(hover, undefined, nothing, [], [], undefined, {
+      fires: FIRES.map((f, i) => ({ states: Uint8Array.from(f.patches, (_, k) => states(i, k)) })),
+    });
+  const burningAll = () => show(() => PATCH.burning);
+  const linear = (hex: number) => [hex >> 16, (hex >> 8) & 255, hex & 255].map((c) => (c / 255) ** 2.2);
+  const boxOf = (pool: Float32Array, k: number) => {
+    const m = pool.subarray(16 * k, 16 * k + 16);
+    return {
+      x: m[12],
+      y: m[13],
+      z: m[14],
+      w: Math.hypot(m[0], m[1]),
+      d: Math.hypot(m[4], m[5]),
+      h: m[10],
+      yaw: Math.atan2(m[1], m[0]),
+    };
+  };
+
+  it('are two pools sized once to every fire’s patches, the same pools whatever is written', () => {
+    expect(patches).toHaveLength(60);
+    for (const name of ['burning ground', 'burnt ground']) {
+      expect(groups[at(name)].count).toBe(60);
+      expect(poolOf(name)).toHaveLength(60 * 16);
+    }
+    const before = [poolOf('burning ground'), poolOf('burnt ground')];
+    burningAll();
+    show(() => PATCH.out);
+    show(() => PATCH.unburnt);
+    expect([poolOf('burning ground'), poolOf('burnt ground')]).toEqual(before);
+    before.forEach((p, k) => expect(fireScene.pools[at(['burning ground', 'burnt ground'][k])]).toBe(p));
+    const again = new Scene();
+    again.dynamic(island);
+    again.dynamic(island);
+    expect(again.movers.filter((m) => m === 'burning ground')).toHaveLength(1);
+  });
+
+  it('glows under a burning patch: orange ground 7 across and a quarter thick on the ground there, its colour raised so that it blooms', () => {
+    burningAll();
+    patches.forEach((p, k) => {
+      const b = boxOf(poolOf('burning ground'), k);
+      expect([b.x, b.y, b.z]).toEqual([expect.closeTo(p.x, 4), expect.closeTo(p.y, 4), expect.closeTo(p.z, 4)]);
+      expect([b.w, b.d, b.h]).toEqual([expect.closeTo(7, 4), expect.closeTo(7, 4), expect.closeTo(0.25, 4)]);
+      expect(noSize(poolOf('burnt ground'), k)).toBe(true);
+    });
+    const orange = linear(0xd8461f);
+    groups[at('burning ground')].albedo!.forEach((c, k) => expect(c).toBeCloseTo(orange[k] * 1.5, 5));
+  });
+
+  it('leaves burnt ground under a patch that is out: dark, 7.5 across and a hair thick, just over the ground', () => {
+    show(() => PATCH.out);
+    patches.forEach((p, k) => {
+      const b = boxOf(poolOf('burnt ground'), k);
+      expect([b.x, b.y]).toEqual([expect.closeTo(p.x, 4), expect.closeTo(p.y, 4)]);
+      expect(b.z).toBeGreaterThan(p.z);
+      expect(b.z - p.z).toBeLessThan(0.1);
+      expect([b.w, b.d, b.h]).toEqual([expect.closeTo(7.5, 4), expect.closeTo(7.5, 4), expect.closeTo(0.06, 4)]);
+      expect(noSize(poolOf('burning ground'), k)).toBe(true);
+    });
+    const dark = linear(0x2a241f);
+    groups[at('burnt ground')].albedo!.forEach((c, k) => expect(c).toBeCloseTo(dark[k], 5));
+  });
+
+  it('draws nothing for a patch not yet lit, and only the patches there are in each state', () => {
+    show((_, k) => [PATCH.burning, PATCH.out, PATCH.unburnt][k % 3]);
+    patches.forEach((_, k) => {
+      const state = (k % 20) % 3;
+      expect(noSize(poolOf('burning ground'), k), `burning ${k}`).toBe(state !== 0);
+      expect(noSize(poolOf('burnt ground'), k), `burnt ${k}`).toBe(state !== 1);
+    });
+  });
+
+  it('turns each patch by a fixed yaw of its own, the same in both pools and every time it is written', () => {
+    burningAll();
+    const yaws = patches.map((_, k) => +boxOf(poolOf('burning ground'), k).yaw.toFixed(4));
+    expect(new Set(yaws.slice(0, 20)).size).toBe(20);
+    show(() => PATCH.out);
+    expect(patches.map((_, k) => +boxOf(poolOf('burnt ground'), k).yaw.toFixed(4))).toEqual(yaws);
+    burningAll();
+    expect(patches.map((_, k) => +boxOf(poolOf('burning ground'), k).yaw.toFixed(4))).toEqual(yaws);
+  });
+
+  it('is written only when a patch changes state, and not at all when none is handed', () => {
+    const changed = () => [fireScene.changed[at('burning ground')], fireScene.changed[at('burnt ground')]];
+    burningAll();
+    burningAll();
+    expect(changed()).toEqual([0, 0]);
+    show((f, k) => (f === 1 && k === 3 ? PATCH.out : PATCH.burning));
+    expect(changed()).toEqual([1, 1]);
+    show((f, k) => (f === 1 && k === 3 ? PATCH.out : PATCH.burning));
+    expect(changed()).toEqual([0, 0]);
+    // the helicopter moving writes nothing of them
+    fireScene.write({ ...hover, x: 50 }, undefined, nothing, [], [], undefined, {
+      fires: FIRES.map((f, i) => ({ states: Uint8Array.from(f.patches, (_, k) => (i === 1 && k === 3 ? 2 : 1)) })),
+    });
+    expect(changed()).toEqual([0, 0]);
+    fireScene.write(hover);
+    expect(changed()).toEqual([0, 0]);
+    // the first write, for a scene that has not seen any, is a write
+    const fresh = new Scene();
+    fresh.dynamic(island);
+    fresh.write(hover, undefined, nothing, [], [], undefined, {
+      fires: FIRES.map((f) => ({ states: new Uint8Array(f.patches.length) })),
+    });
+    expect(fresh.changed[fresh.movers.indexOf('burning ground')]).toBe(1);
+  });
+
+  it('counts what is drawn, for the test API: the patches glowing and the patches burnt', () => {
+    show((_, k) => [PATCH.burning, PATCH.out, PATCH.unburnt][k % 3]);
+    // twenty patches a fire: seven burning, seven burnt and six not yet lit in a fire, as k % 3 falls
+    const of = (state: number) => FIRES.reduce((n, f) => n + f.patches.filter((_, k) => k % 3 === state).length, 0);
+    expect(fireScene.groundDrawn).toEqual({ burning: of(0), burnt: of(1) });
+    burningAll();
+    expect(fireScene.groundDrawn).toEqual({ burning: 60, burnt: 0 });
+    show(() => PATCH.unburnt);
+    expect(fireScene.groundDrawn).toEqual({ burning: 0, burnt: 0 });
+    expect(new Scene().groundDrawn).toEqual({ burning: 0, burnt: 0 });
+  });
+
+  it('draws none where there are no fires', () => {
+    const bare = new Scene(LEVELS, COLLECTIBLES, PACKAGES, []);
+    bare.dynamic(island);
+    expect(bare.movers).not.toContain('burning ground');
+    expect(bare.movers).not.toContain('burnt ground');
+    bare.write(hover);
+  });
+});
+
+describe('the bucket', () => {
+  const bucketScene = new Scene();
+  const groups = bucketScene.dynamic(island);
+  const at = (name: string) => bucketScene.movers.indexOf(name);
+  const poolOf = (name: string) => bucketScene.pools[at(name)];
+  const heli = pose({ x: 100, y: -50, z: 60, yaw: 0.7 });
+  const hang = (over: Partial<BucketPose> = {}): BucketPose => ({
+    wanted: true,
+    hung: true,
+    full: false,
+    line: BUCKET.line,
+    bottom: heli.z - BUCKET.line - BUCKET.height,
+    ...over,
+  });
+  const show = (bucket: BucketPose, p = heli) =>
+    bucketScene.write(p, undefined, nothing, [], [], undefined, { bucket });
+  const linear = (hex: number) => [hex >> 16, (hex >> 8) & 255, hex & 255].map((c) => (c / 255) ** 2.2);
+  const boxOf = (pool: Float32Array) => ({
+    x: pool[12],
+    y: pool[13],
+    z: pool[14],
+    w: Math.hypot(pool[0], pool[1]),
+    d: Math.hypot(pool[4], pool[5]),
+    h: pool[10],
+  });
+
+  it('is three single placements, sized once: a dark line, an orange bucket and the water in it', () => {
+    for (const name of ['bucket line', 'bucket', 'bucket water']) {
+      expect(groups[at(name)].count).toBe(1);
+      expect(poolOf(name)).toHaveLength(16);
+    }
+    const [line, bucket, water] = ['bucket line', 'bucket', 'bucket water'].map((n) => groups[at(n)].albedo!);
+    line.forEach((c, k) => expect(c).toBeCloseTo(linear(0x2b3440)[k], 5));
+    bucket.forEach((c, k) => expect(c).toBeCloseTo(linear(0xff6a1a)[k], 5));
+    // the water glows, a fifth over its own blue
+    water.forEach((c, k) => expect(c).toBeCloseTo(linear(0x3f8fe0)[k] * BUCKET.water.glow, 5));
+  });
+
+  it('hangs plumb under the helicopter: the line from the skids down to the bucket, which stands under it', () => {
+    show(hang());
+    const line = boxOf(poolOf('bucket line'));
+    const bucket = boxOf(poolOf('bucket'));
+    expect([line.x, line.y]).toEqual([expect.closeTo(heli.x, 4), expect.closeTo(heli.y, 4)]);
+    expect([bucket.x, bucket.y]).toEqual([expect.closeTo(heli.x, 4), expect.closeTo(heli.y, 4)]);
+    expect([line.w, line.d]).toEqual([expect.closeTo(BUCKET.rope, 5), expect.closeTo(BUCKET.rope, 5)]);
+    expect([bucket.w, bucket.d, bucket.h]).toEqual([
+      expect.closeTo(BUCKET.width, 5),
+      expect.closeTo(BUCKET.width, 5),
+      expect.closeTo(BUCKET.height, 5),
+    ]);
+    // the bucket's bottom where it is told, its top where the line starts, and the line up to the skids
+    expect(bucket.z).toBeCloseTo(heli.z - BUCKET.line - BUCKET.height, 4);
+    expect(line.z).toBeCloseTo(bucket.z + BUCKET.height, 4);
+    expect(line.z + line.h).toBeCloseTo(heli.z, 4);
+    expect(line.h).toBeCloseTo(BUCKET.line, 4);
+  });
+
+  it('shortens its line with the helicopter coming down, and is written every frame it hangs', () => {
+    show(hang({ line: 2, bottom: heli.z - 2 - BUCKET.height }));
+    expect(boxOf(poolOf('bucket line')).h).toBeCloseTo(2, 4);
+    expect(boxOf(poolOf('bucket line')).z + 2).toBeCloseTo(heli.z, 4);
+    expect([
+      bucketScene.changed[at('bucket line')],
+      bucketScene.changed[at('bucket')],
+      bucketScene.changed[at('bucket water')],
+    ]).toEqual([1, 1, 1]);
+    show(hang({ line: 2, bottom: heli.z - 2 - BUCKET.height }));
+    expect(bucketScene.changed[at('bucket line')]).toBe(1);
+  });
+
+  it('shows water at its rim with the tank full, a flat blue top a little narrower than the bucket, and none when empty', () => {
+    show(hang({ full: false }));
+    expect(noSize(poolOf('bucket water'), 0)).toBe(true);
+    show(hang({ full: true }));
+    const bucket = boxOf(poolOf('bucket'));
+    const water = boxOf(poolOf('bucket water'));
+    expect([water.w, water.d, water.h]).toEqual([
+      expect.closeTo(BUCKET.water.across, 5),
+      expect.closeTo(BUCKET.water.across, 5),
+      expect.closeTo(BUCKET.water.thick, 5),
+    ]);
+    expect(water.w).toBeLessThan(bucket.w);
+    expect(water.z + water.h).toBeCloseTo(bucket.z + bucket.h, 4);
+    expect([water.x, water.y]).toEqual([expect.closeTo(bucket.x, 4), expect.closeTo(bucket.y, 4)]);
+  });
+
+  it('is stowed when it does not hang: drawn at no size, written once to put it away and then not again', () => {
+    show(hang());
+    show(hang({ hung: false, wanted: false, line: 0, bottom: heli.z }));
+    for (const name of ['bucket line', 'bucket', 'bucket water']) {
+      expect(noSize(poolOf(name), 0), name).toBe(true);
+      expect(bucketScene.changed[at(name)], name).toBe(1);
+    }
+    show(hang({ hung: false, wanted: false, line: 0, bottom: heli.z }));
+    for (const name of ['bucket line', 'bucket', 'bucket water']) expect(bucketScene.changed[at(name)], name).toBe(0);
+    // a read with none handed leaves it be
+    bucketScene.write(heli);
+    expect(bucketScene.changed[at('bucket')]).toBe(0);
+  });
+
+  it('says what is drawn, for the test API: whether it hangs, how long its line is and whether it holds water', () => {
+    show(hang({ full: true, line: 3, bottom: heli.z - 3 - BUCKET.height }));
+    expect(bucketScene.bucketDrawn.hung).toBe(true);
+    expect(bucketScene.bucketDrawn.full).toBe(true);
+    expect(bucketScene.bucketDrawn.line).toBeCloseTo(3, 4);
+    show(hang({ hung: false, line: 0, bottom: heli.z }));
+    expect(bucketScene.bucketDrawn).toEqual({ hung: false, full: false, line: 0 });
+    expect(new Scene().bucketDrawn).toEqual({ hung: false, full: false, line: 0 });
   });
 });

@@ -22,7 +22,7 @@ stand on open ground: they are there in every level, and solid, and each is
 collected the first time the helicopter flies under or between it, a toast
 telling which and how many, a gold collar or gold rails left to show it.
 
-The game opens flying free from home, with ten levels to find and
+The game opens flying free from home, with thirteen levels to find and
 nothing locked. A level begins where its first step is done, one at a time,
 and the best time on each is kept in the browser, the clock at the top of
 the screen running from that first step. Four are deliveries: a crate waits
@@ -37,14 +37,19 @@ between the flagged towers: up the gorge and under the bridge, through three
 rings over the hills, and down onto the shoulder pad. Three are rescues: a
 walker in a wood, a swimmer cut off on a beach and a climber on a ledge each
 wait under orange smoke, and holding a low hover over one for three seconds
-winches them up, to be flown to the home pad. A level's end is told
+winches them up, to be flown to the home pad. Three are fires, two in woods
+by the lakes and one in the northern wood far from water, each under a
+column of dark smoke the rotor's air pushes about: a bucket hangs on a line
+while one is wanted, skimming a lake or the sea low and fast fills it, and
+passing low over the flames lets it go, the first drop that hits beginning
+the level. A fire spreads while it is fought, and is out when no patch
+burns. A level's end is told
 in a toast with its time, and flight carries on. Esc, or the corner button,
 brings up the panel: every level, its best time and where it starts, a way
 shown to any of them, the one going given up, and the structures ticked as
 collected. Ten packages are hidden in woods across the island, in blue
 crates: a radar in the corner pings when one is within 100 m, faster as it
-is neared, and landing within 15 m of one finds it. Water bombing comes
-next, through `/feature`. The template's stub,
+is neared, and landing within 15 m of one finds it. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
 
@@ -98,6 +103,8 @@ is fixed, and no baseline is moved to make it green.
     src/progress.ts    the save: the best time on each level and the structures collected, kept in the browser
     src/collection.ts  the structures collected: an opening flown through, either way
     src/finds.ts       the hidden packages found, and the radar that hears the nearest
+    src/water.ts       the tank: filled by skimming open water, emptied by a drop on a fire
+    src/fire.ts        a fire's patches burning, out or not yet caught, spreading while its level is going
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
     src/main.ts        the page: the frame drawn
@@ -116,6 +123,8 @@ is fixed, and no baseline is moved to make it green.
     src/heightfield.ts heights on a grid, and the algorithms that read one
     src/noise.ts       seeded noise, the same in Node and in the page
     src/scene.ts       the island and the helicopter as they are drawn
+    src/effects.ts     the particles the page emits: flames, smoke, the rescue's flare, the water's spray
+    src/bucket.ts      where the bucket hangs on its line, and when
     src/meshes.ts      the shapes: the helicopter, five trees, a landing pad
     src/random.ts      chance, from one seed
     scripts/           the fuzzer, and the determinism, leak and pace gates

@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { WATCH, grew, leakRun, sizes, trouble } from '../scripts/leaks';
-import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES } from '../src/arena';
+import { PATCH } from '../src/fire';
 import { RINGS } from '../src/mission';
 import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
@@ -52,6 +53,21 @@ describe('what must stay bounded', () => {
     expect(trouble({ 'structures collected': [COLLECTIBLES.length + SAVE.kept + 1] }).join('\n')).toMatch(
       /structures collected went to/,
     );
+  });
+
+  it('counts the patches burning of each fire, under a ceiling of the patches it has', () => {
+    const { game } = newGame();
+    for (const place of FIRES) {
+      const key = `patches burning, ${place.id}`;
+      expect(sizes(game)[key], key).toBe(place.lit);
+      expect(WATCH[key]!.ceiling, key).toBe(place.patches.length);
+      // all of them burning is the most there can be, and is no trouble
+      game.fire(place.id).states.fill(PATCH.burning);
+      game.fire(place.id).burning = place.patches.length;
+      expect(sizes(game)[key], key).toBe(place.patches.length);
+      expect(trouble({ [key]: [place.patches.length] })).toEqual([]);
+      expect(trouble({ [key]: [place.patches.length + 1] }).join('\n')).toMatch(/went to/);
+    }
   });
 
   it('knows a size that grows from one that wanders', () => {

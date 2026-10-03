@@ -25,6 +25,7 @@ import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Ring } from '../src/mission';
 import { COLLECTIBLES, PACKAGES } from '../src/arena';
 import { WOOD, standardView, start, watch } from './game';
+import { DROP_HEIGHT, EDGE, WEST, hoverOver, scoop, settle } from './fire';
 import { moved as hasMoved, type Figures } from './judging';
 
 const BASELINE = 'smoke/perf-baseline.json';
@@ -272,5 +273,62 @@ test('a view over the western wood with a person and smoke in it, and the winch 
     description: `${waitMs} ms waiting, ${winchMs} ms winching, not held to the baseline or the budget`,
   });
   console.log(`perf: rescue view frame ${waitMs} ms waiting, ${winchMs} ms winching (not held)`);
+  expect(problems).toEqual([]);
+});
+
+test('a view over the west fire, every patch burning and then a drop pouring on it, the flames and smoke at their most: the frames told, not held', async ({
+  page,
+}, info) => {
+  test.setTimeout(240_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  await settle(page, 60);
+  // the tank filled and the level begun with it full, the helicopter held well off, so the fire spreads while it waits
+  // and the water is kept: ten patches lit at the start, one more every eight seconds, all twenty by a minute and a half
+  await scoop(page);
+  const yaw = 0.9;
+  await page.evaluate(
+    ([id, x, y, hover]) => {
+      const g = window.game!;
+      g.begin(id);
+      g.chase();
+      g.teleport(x, y, 26, 0.9);
+      g.fly(0, 0, hover);
+      g.step(5700);
+    },
+    [WEST.id, WEST.x - Math.cos(yaw) * 70, WEST.y - Math.sin(yaw) * 70, HOVER_LIFT] as const,
+  );
+  await settle(page, 400);
+  const all = await page.evaluate(async () => {
+    const g = window.game!;
+    const s = g.state();
+    return { burning: s.fires[0].burning, full: s.tank.full, live: s.particles.live, ms: await g.measureFrame(50) };
+  });
+  expect([all.burning, all.full], 'every patch burning, the water still in the tank').toEqual([20, true]);
+  // the drop on the fire's edge, and the frame while it pours: the spray and the mist over what is left burning
+  await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, yaw, 3);
+  const pouring = await page.evaluate(async () => {
+    const g = window.game!;
+    const s = g.state();
+    g.fly(0, 0, 0.53);
+    return {
+      burning: s.fires[0].burning,
+      spray: s.particles.spray,
+      live: s.particles.live,
+      ms: await g.measureFrame(4),
+    };
+  });
+  await page.evaluate(() => window.game!.release());
+  expect(pouring.spray, 'a drop pouring').toBeGreaterThan(0);
+  expect(pouring.burning, 'part of the fire put out').toBeLessThan(20);
+  expect((await page.evaluate(() => window.game!.state())).particles.refused).toBe(0);
+  const [allMs, pourMs] = [all.ms, pouring.ms].map((v) => Math.round(v * 1000) / 1000);
+  info.annotations.push({
+    type: 'perf-fire',
+    description: `${allMs} ms with 20 patches burning (${all.live} live), ${pourMs} ms pouring with ${pouring.burning} burning (${pouring.live} live); not held to the baseline or the budget`,
+  });
+  console.log(
+    `perf: fire view frame ${allMs} ms with every patch burning (${all.live} live), ${pourMs} ms with a drop pouring (${pouring.burning} burning, ${pouring.live} live) (not held)`,
+  );
   expect(problems).toEqual([]);
 });

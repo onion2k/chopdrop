@@ -1,7 +1,7 @@
 /**
  * Every seed played twice, side by side: see `determinism.ts`.
  *
- *   npm run determinism                      seeds 1-10, 3600 frames each
+ *   npm run determinism                      seeds 1-13, 5400 frames each
  *   npm run determinism -- --seeds 1-12 --frames 7200 --every 600
  *
  * Fails, and says at which frame, if any seed does not play out the same way

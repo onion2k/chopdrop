@@ -189,10 +189,11 @@ export async function finish(page: Page) {
           g.fly(0, 0, hover);
           g.step(240);
           g.release();
-        } else {
+        } else if ('pad' in step) {
           g.teleport(pads[step.pad].x, pads[step.pad].y, 0);
           g.step(100);
         }
+        // a fire is begun by a drop on it, which the browser tests do not yet fly: it is begun by nothing here
       }
     },
     [HELICOPTER.size.middle, HOVER_LIFT, WINCH_MIDDLE],

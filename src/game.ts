@@ -12,22 +12,40 @@
  * Node, and what the tests try is what is played. Chance is handed in here
  * before anything uses it, so that the first thing that does is seeded from
  * its first line.
+ *
+ * The tank is the helicopter's: it is filled over open water and emptied on a burning patch in the middle of whatever else
+ * is going, and a fire level is one begun by the first drop that puts a patch out. The fires burn at their start until
+ * their level is begun, spread while it is going, and are lit again by their own rule once they are left.
  */
-import { COLLECTIBLES, LEVELS, PACKAGES, STRUCTURES, TREE_GIVE, TREE_KINDS, theIsland } from './arena';
+import {
+  COLLECTIBLES,
+  FIRES,
+  LEVELS,
+  PACKAGES,
+  STRUCTURES,
+  TREE_GIVE,
+  TREE_KINDS,
+  theIsland,
+  type FirePlace,
+} from './arena';
+import { bucketAt, bucketWanted, type BucketPose } from './bucket';
 import { Canopy } from './canopy';
 import { Collection } from './collection';
 import { Finds } from './finds';
+import { Fire } from './fire';
 import { HELICOPTER, Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
 import {
   Mission,
   WINCH_MIDDLE,
+  fireOf,
   loadFor,
   onPad,
   type Gate,
   type Level,
   type MissionEvents,
+  type Point3,
   type Ring,
   type Winch,
 } from './mission';
@@ -36,11 +54,13 @@ import type { Random } from './random';
 import { Solids, type Block } from './solids';
 import { Starts } from './starts';
 import { Sway, reachedLean } from './sway';
+import { NO_WATER, OpenWater, SCOOP, Tank, openWaterOf } from './water';
 
 /**
  * What the game tells the page as it happens, so the page can put it into words: a level begun or abandoned, a parcel
  * loaded and delivered, a level done, by its name, with the time it took and whether that is the best time on it yet,
- * a structure collected and a package found.
+ * a structure collected and a package found; and the water: a tank scooped full, a drop with the fire it fell on and how
+ * many patches it put out, and a fire out.
  */
 export interface GameEvents extends Omit<MissionEvents, 'finished'> {
   finished?(level: string, seconds: number, best: boolean): void;
@@ -70,6 +90,9 @@ export interface WinchState {
 /** How far back from its first opening a helicopter put at a level's start hovers, on the opening's axis. */
 export const START_BACK = 30;
 
+/** How high over the water a helicopter put at the start of a fire level hovers: in the scoop's reach, for it to fly on along. */
+const SCOOP_START = SCOOP.low;
+
 export interface GameOptions {
   /** What happens, told as it does; nothing is told unless something is listening. */
   events?: GameEvents;
@@ -81,6 +104,8 @@ export interface GameOptions {
   levels?: readonly Level[];
   /** What stands on the island in every level, solid: the arena's unless told otherwise. */
   structures?: readonly Block[];
+  /** The fires, by the places they burn; the arena's unless told otherwise. A level that puts one out is in `levels`. */
+  fires?: readonly FirePlace[];
   /** What the player has done, and where it is kept; a save in memory unless told otherwise, so nothing is written. */
   progress?: Progress;
 }
@@ -111,8 +136,20 @@ export class Game {
   readonly finds: Finds;
   /** What the helicopter cannot fly into: what stands on the island, and the rings that are drawn. */
   readonly solids: Solids;
+  /** The water in the helicopter's tank: scooped over open water, dropped on a fire, whatever level is going. It is the helicopter's, so no level takes it away. */
+  readonly tank = new Tank();
+  /** Where the open water is: the lakes and the sea, never a river. */
+  readonly water: OpenWater;
+  /** The fires, in the order of their places: each burning at its start until its level is begun. */
+  readonly fires: readonly Fire[];
   /** The last level done, for the toast and the invariants; null until one is. */
   last: LastLevel | null = null;
+  /** The fires by their ids, so that asking for one each frame makes nothing. Built once. */
+  private readonly fireIds = new Map<string, Fire>();
+  /** What `bucket` says, written in place so that reading it each frame makes nothing. */
+  private readonly bucketPose: BucketPose = { wanted: false, hung: false, full: false, line: 0, bottom: 0 };
+  /** The nearest open water to the helicopter, written in place by `nearestWater`, so reading it each frame makes nothing. */
+  private readonly watered: Point3 = { x: 0, y: 0, z: 0 };
   /** What `winch` says, written in place so that reading it each frame makes nothing. */
   private readonly winching: WinchState = { spot: null, who: '', share: 0 };
   /** The level the HUD shows the way to the start of, until any level begins; null for none. */
@@ -123,6 +160,8 @@ export class Game {
   random: Random;
   /** Who is told what happens, if anyone. */
   private readonly events: GameEvents;
+  /** The height of the ground, bound once, which a drop is measured over. */
+  private readonly groundAt: (x: number, y: number) => number;
   /** The first ring of every level that begins at a ring: what is solid with nothing going. Built once. */
   private readonly startRings: Ring[];
 
@@ -137,6 +176,7 @@ export class Game {
     this.solids.set(this.startRings);
     // the grid reads itself through `this`, so it is bound once here and not each time the helicopter asks the height
     const heightAt = ground.heightAt.bind(ground);
+    this.groundAt = heightAt;
     this.starts = new Starts(pads, this.levels, heightAt);
     this.helicopter = new Helicopter({ bounds, heightAt }, pads[0], this.solids);
     const { trees, treeCount } = this.island;
@@ -146,6 +186,10 @@ export class Game {
       { trees, stride: TREE_STRIDE, count: treeCount, bounds },
       TREE_KINDS.map((kind, k) => ({ ...treeSize(kind), lean: reachedLean(give[k]) })),
     );
+    this.water = openWaterOf(this.island);
+    this.fires = (options.fires ?? FIRES).map((place) => new Fire(place));
+    for (const fire of this.fires) this.fireIds.set(fire.id, fire);
+    const fireIds = this.fireIds;
     this.progress = options.progress ?? new Progress();
     this.collection = new Collection(COLLECTIBLES, this.progress);
     this.finds = new Finds(PACKAGES, this.progress);
@@ -162,6 +206,7 @@ export class Game {
         through: events.through,
         landed: events.landed,
         winched: events.winched,
+        fireOut: events.fireOut,
         // the time kept before it is told, so what is told is what is kept; a level that ended as it began, which has no
         // time, is not timed. Then nothing begins from the pad it ended on until the helicopter has lifted off
         finished: (seconds) => {
@@ -176,6 +221,10 @@ export class Game {
         },
       },
       heightAt,
+      {
+        burning: (id) => fireIds.get(id)?.burning ?? 0,
+        nearest: (id, x, y, out) => fireIds.get(id)?.nearestBurning(x, y, out) ?? false,
+      },
     );
   }
 
@@ -209,6 +258,45 @@ export class Game {
       w.spot = level.id;
       w.who = first.who;
       w.share = Math.min(1, loading / loadFor(first));
+    }
+    return w;
+  }
+
+  /**
+   * The bucket under the helicopter: whether it is in use (a fire level going or shown the way, or the tank filling or
+   * full), whether it hangs (in use, and with room), how long its line is and where its bottom is, where it hangs or
+   * would, which a drop falls from. A read for the page and the test API, so the scene, the badge and the spray agree.
+   * Written in place, the same object each time.
+   */
+  get bucket(): Readonly<BucketPose> {
+    const h = this.helicopter;
+    const b = this.bucketPose;
+    b.wanted = bucketWanted(this.mission.level?.kind ?? null, this.guided?.kind ?? null, this.tank);
+    b.full = this.tank.full;
+    // where it hangs, or would: a drop is told as the tank is emptied, when it may no longer be in use, and falls from here
+    bucketAt(h, this.groundAt(h.x, h.y), this.water.levelAt(h.x, h.y) !== NO_WATER, b);
+    if (!b.wanted) b.hung = false;
+    return b;
+  }
+
+  /** The fire named `id`; a name the game does not have is refused. */
+  fire(id: string): Fire {
+    const fire = this.fireIds.get(id);
+    if (!fire) throw new Error(`no such fire: ${id}`);
+    return fire;
+  }
+
+  /**
+   * Where the nearest open water is, from where the helicopter is, at its level: what the arrow points to while the tank
+   * is empty. Written in place and the same object each time; where there is none, the helicopter's own place.
+   */
+  nearestWater(): Readonly<Point3> {
+    const h = this.helicopter;
+    const w = this.watered;
+    if (!this.water.nearest(h.x, h.y, w)) {
+      w.x = h.x;
+      w.y = h.y;
+      w.z = h.z;
     }
     return w;
   }
@@ -294,7 +382,8 @@ export class Game {
    * The helicopter put at the start of the level named `id`, with nothing begun and anything going abandoned: landed on
    * the pickup pad of a delivery, which then loads and begins as the helicopter is stepped; hovering in the middle of
    * the window over the person of a rescue, which holding begins; hovering `START_BACK` back on the axis of a ring or an
-   * opening, its middle at the opening's height and facing it.
+   * opening, its middle at the opening's height and facing it; hovering low over the start of the run of a fire, ready
+   * to skim it, since a fire is begun by a drop and the tank is empty.
    */
   moveToStart(id: string): void {
     const level = this.named(id);
@@ -302,10 +391,14 @@ export class Game {
     this.holdRings(null);
     const first = level.steps[0];
     if (first.kind === 'ring' || first.kind === 'gate') this.hoverBefore(first);
-    else if (first.kind === 'winch') {
+    else if (first.kind === 'douse') {
+      // with the tank to fill first: hovering over the start of the fire's run, low, ready to skim along it
+      const { from, to, z } = this.fire(first.fire).place.run;
+      this.helicopter.place(from.x, from.y, z + SCOOP_START, Math.atan2(to.y - from.y, to.x - from.x));
+    } else if (first.kind === 'winch') {
       // in the middle of the window over the person, which holding it begins the level from
       this.helicopter.placeAbove(first.x, first.y, WINCH_MIDDLE, 0);
-    } else {
+    } else if ('pad' in first) {
       const pad = this.island.pads[first.pad];
       this.helicopter.place(pad.x, pad.y, 0, pad.yaw);
     }
@@ -324,17 +417,63 @@ export class Game {
     );
   }
 
+  /** The id of the fire the level going is about, or null with none going or a level that is not about one. Makes nothing. */
+  private fireGoing(): string | null {
+    const level = this.mission.level;
+    if (!level) return null;
+    for (const step of level.steps) {
+      const id = fireOf(step);
+      if (id !== null) return id;
+    }
+    return null;
+  }
+
+  /**
+   * The water dropped, if the tank is full and the helicopter is over a burning patch within the drop's reach: the
+   * patches in the splash put out, the tank emptied, the drop told, and with nothing going, the level of that fire begun.
+   * Whether it began one. Makes nothing.
+   */
+  private drop(): boolean {
+    if (!this.tank.full) return false;
+    const h = this.helicopter;
+    for (const fire of this.fires) {
+      if (!fire.dropReaches(h, this.groundAt)) continue;
+      const out = fire.douse(h.x, h.y);
+      this.tank.drop();
+      this.events.dropped?.(fire.id, out);
+      if (this.mission.level) {
+        this.mission.dropped(fire.id, out);
+        return false;
+      }
+      const level = this.starts.dropped(fire.id, out);
+      if (!level) return false;
+      this.beginLevel(level);
+      return true;
+    }
+    return false;
+  }
+
   /** One frame of `dt` seconds, flown so. */
   step(dt: number, controls: Readonly<Controls> = IDLE) {
     this.t += dt;
-    this.helicopter.step(dt, controls);
+    const h = this.helicopter;
+    h.step(dt, controls);
     // the trees after the helicopter, so they take the wash from where it is now
-    this.sway.step(dt, this.helicopter, this.t);
+    this.sway.step(dt, h, this.t);
+    // the tank, whatever is going: filled over open water as the helicopter is now
+    if (this.tank.step(dt, h, this.water.levelAt(h.x, h.y))) this.events.scooped?.();
+    // a drop, if one falls: it may begin the level of its fire
+    const began = this.drop();
+    // the fires, after the drop: the level going spreads its own, and the rest are lit again by the rule
+    const going = this.fireGoing();
+    for (const fire of this.fires) fire.step(dt, fire.id === going);
     // the level going, which goes by where the helicopter has landed and what it has flown through; or, with none,
-    // whether the helicopter has just done the first step of one
-    if (this.mission.level) this.mission.step(dt, this.helicopter);
-    else {
-      const level = this.starts.step(dt, this.helicopter);
+    // whether the helicopter has just done the first step of one. A level a drop has just begun is not stepped on
+    // the frame it began, as none is: its clock starts with the next
+    if (this.mission.level) {
+      if (!began) this.mission.step(dt, h);
+    } else {
+      const level = this.starts.step(dt, h);
       if (level) this.beginLevel(level);
     }
     // every step, whatever is going, after the level or the starts: a structure is collected by what was just flown

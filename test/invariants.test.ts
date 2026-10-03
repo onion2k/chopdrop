@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
-import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS } from '../src/arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS } from '../src/arena';
+import { FIRE, PATCH } from '../src/fire';
+import { SCOOP } from '../src/water';
 import { DELIVERY, RING, WINCH, type Level, type Ring } from '../src/mission';
-import { checkCamera, checkCollection, checkFinds, checkInvariants } from '../src/invariants';
+import { checkCamera, checkCollection, checkFinds, checkFires, checkInvariants, checkTank } from '../src/invariants';
 import { RADAR } from '../src/finds';
 import { TREE_STRIDE } from '../src/island';
 import { Game } from '../src/game';
@@ -513,5 +515,137 @@ describe('what must hold of a winch', () => {
     expect(checkInvariants(game).join('\n')).toMatch(/the loading runs out of the winch's window/);
     game.helicopter.placeAbove(spot2.x + 6, spot2.y, 10, 0);
     expect(checkInvariants(game).join('\n')).toMatch(/the loading runs out of the winch's window/);
+  });
+});
+
+describe('what must hold of the tank', () => {
+  const [west] = FIRES;
+  /** Skimming the run of the west fire, a step from the window: filling, with `seconds` of it done. */
+  const skimming = (seconds: number) => {
+    const { game } = newGame();
+    const { from, to, z } = west.run;
+    game.helicopter.place(from.x, from.y, z + 1, Math.atan2(to.y - from.y, to.x - from.x));
+    for (let f = 0; f < Math.round(seconds / DT); f++)
+      game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT + (z + 1 - game.helicopter.z) * 0.8 });
+    return game;
+  };
+
+  it('holds of a new game, of a tank half filled, and of one full', () => {
+    expect(checkTank(newGame().game)).toEqual([]);
+    const half = skimming(1.5);
+    expect(half.tank.filling).toBeGreaterThan(0.5);
+    expect(checkTank(half)).toEqual([]);
+    expect(checkInvariants(half)).toEqual([]);
+    const full = skimming(4);
+    expect(full.tank.full).toBe(true);
+    expect(checkTank(full)).toEqual([]);
+  });
+
+  it('reports a filling that is not a number, under nothing, or not short of a full scoop', () => {
+    for (const bad of [NaN, -0.1, SCOOP.time, SCOOP.time + 1]) {
+      const game = skimming(1);
+      game.tank.filling = bad;
+      expect(checkTank(game).join('\n'), String(bad)).toMatch(
+        /the tank's filling reads .*, and runs from 0 to short of 2/,
+      );
+    }
+  });
+
+  it('reports a tank filling that is full', () => {
+    const game = skimming(4);
+    game.tank.filling = 0.5;
+    expect(checkTank(game).join('\n')).toMatch(/the tank is full and filling/);
+  });
+
+  it('reports a tank filling off the water, too high, too slow, and landed', () => {
+    const { game: onLand } = newGame();
+    onLand.tank.filling = 0.5;
+    expect(checkTank(onLand).join('\n')).toMatch(
+      /the tank is filling, and the helicopter is not in the scoop's window/,
+    );
+    for (const mend of [
+      (g: Game) => g.helicopter.place(g.helicopter.x, g.helicopter.y, west.run.z + 2, g.helicopter.yaw),
+      (g: Game) => {
+        g.helicopter.vx = 3;
+        g.helicopter.vy = 0;
+      },
+      (g: Game) => g.helicopter.place(g.helicopter.x, g.helicopter.y, west.run.z, g.helicopter.yaw),
+    ]) {
+      const game = skimming(1);
+      expect(game.tank.filling).toBeGreaterThan(0);
+      mend(game);
+      expect(checkTank(game).join('\n')).toMatch(/not in the scoop's window/);
+    }
+  });
+});
+
+describe('what must hold of the fires', () => {
+  const [west] = FIRES;
+
+  it('holds of a new game, and of a fire begun, spread and put out', () => {
+    const { game } = newGame();
+    expect(checkFires(game)).toEqual([]);
+    game.begin(west.id);
+    expect(checkFires(game)).toEqual([]);
+    for (let f = 0; f < 60 * 14; f++) {
+      game.helicopter.placeAbove(0, 0, 60, 0);
+      game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+      expect(checkFires(game), `frame ${f}`).toEqual([]);
+    }
+    expect(game.fire(west.id).burning).toBeGreaterThan(west.lit);
+  });
+
+  it('reports a patch in no known state', () => {
+    const { game } = newGame();
+    game.fire(west.id).states[3] = 7;
+    expect(checkFires(game).join('\n')).toMatch(new RegExp(`${west.id} has patch 3 in no known state: 7`));
+  });
+
+  it('reports a count of burning that is not the patches burning, and one past the patches there are', () => {
+    const { game } = newGame();
+    game.fire(west.id).burning = west.lit + 1;
+    expect(checkFires(game).join('\n')).toMatch(
+      new RegExp(`${west.id} counts ${west.lit + 1} burning, and ${west.lit} are`),
+    );
+    const all = newGame().game;
+    const fire = all.fire(west.id);
+    fire.states.fill(PATCH.burning);
+    fire.burning = west.patches.length + 1;
+    expect(checkFires(all).join('\n')).toMatch(/burns \d+ of \d+ patches/);
+  });
+
+  it('reports a fire that is not going and has been left off its start longer than it waits to be lit again', () => {
+    const { game } = newGame();
+    const fire = game.fire(west.id);
+    fire.douse(west.patches[0].x, west.patches[0].y);
+    // just put out: it is not yet time
+    expect(checkFires(game)).toEqual([]);
+    fire.quiet = FIRE.relight - 0.01;
+    expect(checkFires(game)).toEqual([]);
+    fire.quiet = FIRE.relight + 1;
+    expect(checkFires(game).join('\n')).toMatch(new RegExp(`${west.id} is not going and has been off its start for`));
+    // and one that has caught more than it started with, left so
+    const more = newGame().game;
+    const spread = more.fire(west.id);
+    spread.states[west.lit] = PATCH.burning;
+    spread.burning++;
+    spread.quiet = FIRE.relight + 1;
+    expect(checkFires(more).join('\n')).toMatch(/is not going and has been off its start/);
+  });
+
+  it('reports a fire level going with none of its fire burning', () => {
+    const { game } = newGame();
+    game.begin(west.id);
+    const fire = game.fire(west.id);
+    fire.states.fill(PATCH.out);
+    fire.burning = 0;
+    expect(checkInvariants(game).join('\n')).toMatch(new RegExp(`${west.id} is going, and none of it burns`));
+  });
+
+  it('reports a fire level going, as the mission has it, before its douse step, which is no state a level is in', () => {
+    const { game } = newGame();
+    game.begin(west.id);
+    game.mission.next = 0;
+    expect(checkInvariants(game).join('\n')).toMatch(/no such step/);
   });
 });

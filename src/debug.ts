@@ -25,7 +25,14 @@
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
-import { TREE_KINDS, type Collectible, type PackagePlace, type RescueSpot, type TreeKind } from './arena';
+import {
+  TREE_KINDS,
+  type Collectible,
+  type FirePlace,
+  type PackagePlace,
+  type RescueSpot,
+  type TreeKind,
+} from './arena';
 import type { ChaseCamera, Point, View } from './chase';
 import type { Game, LastLevel } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
@@ -114,10 +121,29 @@ export interface GameState {
   winch: { spot: string | null; share: number };
   /** How many people the scene has standing waiting on the ground: not those aboard, nor the one on the rope. */
   people: number;
-  /** How many people's smoke is rising: one for each person waiting, and none for the one being winched. */
+  /** How many flares are lit: one for each person waiting, and none for the one being winched or whose level is going. */
   smoke: number;
   /** Whether the rope is drawn, with the person on it: while one is being winched. */
   rope: boolean;
+  /** The water in the helicopter's tank: whether it is full, and the seconds of the scoop so far (0 to short of 2). */
+  tank: { full: boolean; filling: number };
+  /**
+   * Each fire, by its id: how many of its patches burn, and each patch's state in the order of the fire's list as a
+   * number (0 unburnt, 1 burning, 2 out), copied.
+   */
+  fires: { id: string; burning: number; patches: number[] }[];
+  /**
+   * The particles: how many slots of the renderer's pool may hold a live one, how many bursts the renderer has refused
+   * since the page began (none, if the budget holds), and how many particles of each kind the page emitted at the last
+   * frame it drew: flames, smoke, the rescue's flares and the drop's spray and mist.
+   */
+  particles: { live: number; refused: number; flames: number; smoke: number; flares: number; spray: number };
+  /** How many patches of every fire the scene draws glowing, and how many burnt: what the pictures show of the fires' ground. */
+  ground: { burning: number; burnt: number };
+  /** The bucket as the scene draws it: whether it hangs, whether it holds water, and how long its line is. */
+  bucket: { hung: boolean; full: boolean; line: number };
+  /** The tank's badge as the HUD last drew it: nothing while the bucket is stowed, then an outline or filled. */
+  badge: 'none' | 'empty' | 'full';
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -184,8 +210,17 @@ export interface GameApi {
 
   pause(): void;
   resume(): void;
-  /** Play `frames` frames of 1/60 s exactly, and draw the last. */
+  /**
+   * Play `frames` frames of 1/60 s exactly, and draw the last. The particles move only as a frame is drawn, so this
+   * leaves them out: none is born in it, so what is drawn is the island as it stands, and the long flights of the
+   * play-through are quick.
+   */
   step(frames?: number): void;
+  /**
+   * Play `frames` frames of 1/60 s exactly and draw every one, with the particles born and moved in each: what every
+   * picture or check of them is taken after.
+   */
+  stepDrawn(frames?: number): void;
   /** Chance from a seed from now on. */
   seed(n: number): void;
 
@@ -210,6 +245,8 @@ export interface GameApi {
     packages: PackagePlace[];
     /** Where each person waits to be winched up, with `z` the ground under them; copies. */
     rescues: RescueSpot[];
+    /** The fires: where each burns, its patches (with `z` the ground under each), how many are lit and its run to skim; copies. */
+    fires: FirePlace[];
   };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
@@ -227,7 +264,8 @@ export interface GameApi {
   /**
    * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
    * `delivered 1`, `winched wood-rescue`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
-   * `abandoned first-delivery`, `collected gorge-bridge 1 7`, `found east-wood 1 10`.
+   * `abandoned first-delivery`, `collected gorge-bridge 1 7`, `found east-wood 1 10`, `scooped`,
+   * `dropped west-lake-fire 4` and `fire out west-lake-fire`.
    */
   events(): string[];
   /** Flying free from home again: landed on the home pad, anything going abandoned (told), nothing guided. */
@@ -250,7 +288,8 @@ export interface GameApi {
   save(): { best: Record<string, number>; collected: string[]; found: string[]; refused: string | null };
   /**
    * The autopilot flying in place of the player, or not: what the play-through flies the level by. Given a level `id`,
-   * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going; given a
+   * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going (a fire level's
+   * start is the water it must scoop and drop to begin it); given a
    * structure's `id`, it flies through that structure's opening, and given a package's `id`, it flies to it and lands by
    * it, while nothing else is asked of it. Level, structure and package ids never clash; one that is none throws.
    */
@@ -307,8 +346,16 @@ export interface DebugHost {
   crates(): number;
   /** How many people the scene has written standing waiting. */
   people(): number;
-  /** How many people's smoke the scene has written rising. */
+  /** How many flares are lit: the people waiting at the last frame drawn. */
   smoke(): number;
+  /** The particles as the page counts them: see `GameState.particles`. */
+  particles(): GameState['particles'];
+  /** The fires' ground as the scene last drew it. */
+  ground(): GameState['ground'];
+  /** The bucket as the scene last drew it. */
+  bucket(): GameState['bucket'];
+  /** The tank's badge as the HUD last drew it. */
+  badge(): GameState['badge'];
   /** Whether the scene has written the rope. */
   rope(): boolean;
   /** The radar's badge as the page last drew it. */
@@ -317,7 +364,8 @@ export interface DebugHost {
   setAutopilot(on: boolean, id?: string): void;
   /** Play one frame of `dt`, without drawing. */
   simulate(dt: number): void;
-  draw(dt: number): void;
+  /** Draw a frame of `dt` seconds, with the particles born in it if `emit`, and only moved if not. */
+  draw(dt: number, emit: boolean): void;
   frame(): number;
   measureFrame(warm?: number): Promise<number>;
 }
@@ -341,7 +389,13 @@ export function createApi(host: DebugHost): GameApi {
     resume: () => host.setPaused(false),
     step(frames = 1) {
       for (let f = 0; f < frames; f++) host.simulate(1 / 60);
-      host.draw(1 / 60);
+      host.draw(1 / 60, false);
+    },
+    stepDrawn(frames = 1) {
+      for (let f = 0; f < frames; f++) {
+        host.simulate(1 / 60);
+        host.draw(1 / 60, true);
+      }
     },
     seed(n) {
       game.random = seeded(n);
@@ -392,6 +446,12 @@ export function createApi(host: DebugHost): GameApi {
         people: host.people(),
         smoke: host.smoke(),
         rope: host.rope(),
+        tank: { full: game.tank.full, filling: game.tank.filling },
+        fires: game.fires.map((f) => ({ id: f.id, burning: f.burning, patches: [...f.states] })),
+        particles: host.particles(),
+        ground: host.ground(),
+        bucket: host.bucket(),
+        badge: host.badge(),
       };
     },
     content: () => ({
@@ -415,6 +475,11 @@ export function createApi(host: DebugHost): GameApi {
           ? [{ id, name, who: first.who, where: first.where, x: first.x, y: first.y, z: first.z }]
           : [],
       ),
+      fires: game.fires.map(({ place }) => ({
+        ...place,
+        patches: place.patches.map((p) => ({ ...p })),
+        run: { ...place.run, from: { ...place.run.from }, to: { ...place.run.to } },
+      })),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
     floorAt: (x, y) => helicopter.floorAt(x, y),

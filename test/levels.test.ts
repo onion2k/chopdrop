@@ -4,9 +4,10 @@
  * makes it the level it is: over the water, over the range, up the mountain.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { PILOT } from '../src/autopilot';
 import { HELICOPTER } from '../src/helicopter';
+import { DROP } from '../src/water';
 import { SEA, TREE_STRIDE } from '../src/island';
 import { treeSize } from '../src/meshes';
 import { RING, RINGS, crossed, type Gate, type Level, type Ring } from '../src/mission';
@@ -36,6 +37,9 @@ describe('the levels', () => {
       'wood-rescue',
       'beach-rescue',
       'ledge-rescue',
+      'west-lake-fire',
+      'south-lake-fire',
+      'north-wood-fire',
     ]);
     expect(LEVELS.map((level) => level.name)).toEqual([
       'First delivery',
@@ -48,6 +52,9 @@ describe('the levels', () => {
       'Wood rescue',
       'Beach rescue',
       'Ledge rescue',
+      'Fire by the west lake',
+      'Fire by the south lake',
+      'Fire in the northern wood',
     ]);
     for (const level of LEVELS) {
       expect(level.id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
@@ -60,6 +67,8 @@ describe('the levels', () => {
         expect(level.steps.length).toBeLessThanOrEqual(RINGS.capacity);
       } else if (level.kind === 'rescue') {
         expect(level.steps.map((step) => step.kind)).toEqual(['winch', 'land']);
+      } else if (level.kind === 'fire') {
+        expect(level.steps.map((step) => step.kind)).toEqual(['douse', 'fire']);
       } else {
         expect(level.kind).toBe('course');
         expect(level.steps.at(-1)?.kind).toBe('land');
@@ -841,7 +850,9 @@ describe('where a level begins', () => {
             ? 'ring'
             : level.kind === 'rescue'
               ? 'winch'
-              : 'gate',
+              : level.kind === 'fire'
+                ? 'douse'
+                : 'gate',
       );
   });
 
@@ -1089,7 +1100,7 @@ describe('the rescue levels', () => {
 
   it('are three, one for each spot, after the course, in the order wood, beach, ledge', () => {
     expect(rescues.map((l) => l.id)).toEqual(RESCUE_SPOTS.map((s) => s.id));
-    expect(LEVELS.slice(-3)).toEqual(rescues);
+    expect(LEVELS.slice(-6, -3)).toEqual(rescues);
     expect(LEVELS.indexOf(rescues[0])).toBe(LEVELS.findIndex((l) => l.kind === 'course') + 1);
   });
 
@@ -1102,5 +1113,298 @@ describe('the rescue levels', () => {
         { kind: 'land', pad: 0 },
       ]);
     });
+  });
+});
+
+/** The rules a fire keeps, each said once. */
+const FIRE = {
+  count: 3,
+  /** The two lake fires are within this of a lake's nearest square; the far fire is this far or more from all water. */
+  nearLake: 150,
+  farWater: 200,
+  /** The middle's wood: this many trees' feet within `woodReach`. */
+  wood: 25,
+  woodReach: 30,
+  /** The middle's least distance from every pad, every structure's blocks, every package and every rescue spot. */
+  pad: 100,
+  structure: 60,
+  package: 60,
+  rescue: 60,
+  /** The least between two fires' middles. */
+  apart: 150,
+  /** Patches: how many, how many burn at the start, how far apart, how far from the middle, and how much wood each has. */
+  patchesMin: 12,
+  patchesMax: 24,
+  lit: 10,
+  /** The grid a drop's place is tried on, to see that none reaches every lit patch. */
+  dropGrid: 0.5,
+  spacing: 8,
+  spacingSlack: 0.5,
+  patchReach: 40,
+  patchTrees: 3,
+  patchTreeReach: 10,
+  /** The run: its least length, the sampling step, how far the water's level may differ from the ground over it. */
+  runMin: 80,
+  step: 1,
+  levelSlack: 0.05,
+  /**
+   * The room to come on to a run and leave it: this far beyond each end, the ground no higher than `endRise` over the
+   * water. The low approach comes in at 6 over it and clears the ground by 3; a skim of 1 would leave no lake a shore.
+   */
+  end: 20,
+  endRise: 3,
+  /** The helicopter skims this far over the water, and its rotor keeps this much more than its reach from a crown. */
+  skim: 1,
+  crownMargin: 2,
+};
+
+describe('the fires', () => {
+  const apartBy = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const { terrain, sea } = theIsland();
+  const across = terrain.cols - 1;
+
+  /** The nearest open water to (x, y): the index of the lake, or -2 for the sea, and how far its nearest square is. */
+  function waterGap(x: number, y: number): { water: number; gap: number } {
+    let best = { water: -1, gap: Infinity };
+    const lakeOf = new Map<number, number>();
+    lakes.forEach((lake, n) => lake.squares.forEach((sq) => lakeOf.set(sq, n)));
+    for (let sq = 0; sq < sea.length; sq++) {
+      const water = lakeOf.get(sq) ?? (sea[sq] !== SEA.dry ? -2 : -1);
+      if (water === -1) continue;
+      const x0 = terrain.originX + (sq % across) * terrain.cell,
+        y0 = terrain.originY + Math.floor(sq / across) * terrain.cell;
+      const gap = Math.hypot(Math.max(x0 - x, 0, x - x0 - terrain.cell), Math.max(y0 - y, 0, y - y0 - terrain.cell));
+      if (gap < best.gap) best = { water, gap };
+    }
+    return best;
+  }
+  /** Which water a point is over, as `waterGap` says it, or -1 for none. */
+  function overWater(x: number, y: number): number {
+    const sq =
+      Math.floor((y - terrain.originY) / terrain.cell) * across + Math.floor((x - terrain.originX) / terrain.cell);
+    const lake = lakes.findIndex((l) => l.squares.includes(sq));
+    return lake >= 0 ? lake : sea[sq] !== SEA.dry ? -2 : -1;
+  }
+  const levelOf = (water: number) => (water === -2 ? theIsland().seaLevel : lakes[water].level);
+  /** Whether (x, y) is on a river's water, with a metre of bank, as the dry-land rule has it. */
+  const wetByRiver = (x: number, y: number) =>
+    theIsland().rivers.some((river) => {
+      for (let k = 0; k < river.points.length; k += 4)
+        if (Math.hypot(river.points[k] - x, river.points[k + 1] - y) < river.points[k + 3] + 1) return true;
+      return false;
+    });
+
+  it('are three, each known by a name that is kebab-case, unique, and no other thing its own', () => {
+    expect(FIRES).toHaveLength(FIRE.count);
+    const ids = FIRES.map((f) => f.id);
+    expect(new Set(ids).size).toBe(FIRE.count);
+    for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    for (const f of FIRES) expect(f.name.length, f.id).toBeGreaterThan(0);
+    // the fire's id is its level's own, as a rescue spot's is: it is taken by no other level, thing or place
+    const taken = new Set([
+      ...LEVELS.filter((l) => l.kind !== 'fire').map((l) => l.id),
+      ...COLLECTIBLES.map((c) => c.id),
+      ...PACKAGES.map((p) => p.id),
+      ...RESCUE_SPOTS.map((s) => s.id),
+    ]);
+    for (const id of ids) expect(taken.has(id), id).toBe(false);
+  });
+
+  it(`are two within ${FIRE.nearLake} of a lake, each by a different lake, and one ${FIRE.farWater} or more from all water`, () => {
+    const near = FIRES.filter((f) => waterGap(f.x, f.y).gap <= FIRE.nearLake);
+    expect(near).toHaveLength(2);
+    expect(new Set(near.map((f) => waterGap(f.x, f.y).water)).size).toBe(2);
+    for (const f of near) expect(waterGap(f.x, f.y).water, f.id).toBeGreaterThanOrEqual(0);
+    const far = FIRES.filter((f) => !near.includes(f));
+    expect(far).toHaveLength(1);
+    expect(waterGap(far[0].x, far[0].y).gap, far[0].id).toBeGreaterThanOrEqual(FIRE.farWater);
+  });
+
+  it(`have a middle in a wood of ${FIRE.wood} or more trees' feet within ${FIRE.woodReach}, on dry land`, () => {
+    for (const f of FIRES) {
+      expect(wet(f.x, f.y), f.id).toBe(false);
+      expect(TREES.filter((t) => apartBy(t, f) <= FIRE.woodReach).length, f.id).toBeGreaterThanOrEqual(FIRE.wood);
+    }
+  });
+
+  it(`keep the middle ${FIRE.pad} from every pad, ${FIRE.structure} from every structure block, ${FIRE.package} from every package and ${FIRE.rescue} from every rescue spot`, () => {
+    for (const f of FIRES) {
+      for (const pad of pads) expect(apartBy(f, pad), `${f.id} and a pad`).toBeGreaterThanOrEqual(FIRE.pad);
+      for (const b of STRUCTURES)
+        expect(fromBlock(b, f.x, f.y), `${f.id} and ${b.name}`).toBeGreaterThanOrEqual(FIRE.structure);
+      for (const p of PACKAGES) expect(apartBy(f, p), `${f.id} and ${p.id}`).toBeGreaterThanOrEqual(FIRE.package);
+      for (const s of RESCUE_SPOTS) expect(apartBy(f, s), `${f.id} and ${s.id}`).toBeGreaterThanOrEqual(FIRE.rescue);
+    }
+  });
+
+  it(`keep the middles ${FIRE.apart} from each other`, () => {
+    FIRES.forEach((a, i) =>
+      FIRES.slice(i + 1).forEach((b) =>
+        expect(apartBy(a, b), `${a.id} and ${b.id}`).toBeGreaterThanOrEqual(FIRE.apart),
+      ),
+    );
+  });
+
+  it("stand inside the bounds the helicopter's middle is kept to", () => {
+    const r = HELICOPTER.reach;
+    for (const f of FIRES) {
+      expect(f.x, f.id).toBeGreaterThan(bounds.minX + r);
+      expect(f.x, f.id).toBeLessThan(bounds.maxX - r);
+      expect(f.y, f.id).toBeGreaterThan(bounds.minY + r);
+      expect(f.y, f.id).toBeLessThan(bounds.maxY - r);
+    }
+  });
+
+  it(`have ${FIRE.patchesMin} to ${FIRE.patchesMax} patches, ${FIRE.lit} lit, the lit ones the nearest to the middle`, () => {
+    for (const f of FIRES) {
+      expect(f.patches.length, f.id).toBeGreaterThanOrEqual(FIRE.patchesMin);
+      expect(f.patches.length, f.id).toBeLessThanOrEqual(FIRE.patchesMax);
+      expect(f.lit, f.id).toBe(FIRE.lit);
+      const away = f.patches.map((p) => apartBy(p, f));
+      expect(away, f.id).toEqual([...away].sort((a, b) => a - b));
+    }
+  });
+
+  it(`cannot be put out by one drop: no point, on a grid of ${FIRE.dropGrid}, has every lit patch within the splash`, () => {
+    for (const f of FIRES) {
+      const lit = f.patches.slice(0, f.lit);
+      const xs = f.patches.map((p) => p.x),
+        ys = f.patches.map((p) => p.y);
+      let best = Infinity;
+      for (let x = Math.min(...xs) - DROP.splash; x <= Math.max(...xs) + DROP.splash; x += FIRE.dropGrid)
+        for (let y = Math.min(...ys) - DROP.splash; y <= Math.max(...ys) + DROP.splash; y += FIRE.dropGrid)
+          best = Math.min(best, Math.max(...lit.map((p) => Math.hypot(p.x - x, p.y - y))));
+      // the smallest circle that holds every lit patch is wider than the splash, whatever the drop is aimed at
+      expect(best, `${f.id}: the nearest a drop comes to reaching them all`).toBeGreaterThan(DROP.splash);
+    }
+  });
+
+  it(`have patches on dry land, in the wood (${FIRE.patchTrees} or more trees' feet within ${FIRE.patchTreeReach}), within ${FIRE.patchReach} of the middle, with z the ground there`, () => {
+    for (const f of FIRES)
+      f.patches.forEach((p, k) => {
+        const at = `${f.id} patch ${k}`;
+        expect(wet(p.x, p.y), at).toBe(false);
+        expect(apartBy(p, f), at).toBeLessThanOrEqual(FIRE.patchReach);
+        expect(TREES.filter((t) => apartBy(t, p) <= FIRE.patchTreeReach).length, at).toBeGreaterThanOrEqual(
+          FIRE.patchTrees,
+        );
+        expect(Math.abs(p.z - ground.heightAt(p.x, p.y)), at).toBeLessThanOrEqual(0.05);
+      });
+  });
+
+  it(`have patches ${FIRE.spacing} apart, near enough: none nearer than ${FIRE.spacing - FIRE.spacingSlack}, each with a neighbour within ${FIRE.spacing + FIRE.spacingSlack}`, () => {
+    for (const f of FIRES)
+      f.patches.forEach((p, k) => {
+        const gaps = f.patches.filter((_, j) => j !== k).map((q) => apartBy(p, q));
+        expect(Math.min(...gaps), `${f.id} patch ${k}`).toBeGreaterThanOrEqual(FIRE.spacing - FIRE.spacingSlack);
+        expect(Math.min(...gaps), `${f.id} patch ${k}`).toBeLessThanOrEqual(FIRE.spacing + FIRE.spacingSlack);
+      });
+  });
+
+  it('have patches that keep clear of every pad, structure block, package and rescue spot, by what the middle keeps less its reach', () => {
+    for (const f of FIRES)
+      for (const p of f.patches) {
+        for (const pad of pads)
+          expect(apartBy(p, pad), `${f.id} and a pad`).toBeGreaterThanOrEqual(FIRE.pad - FIRE.patchReach);
+        for (const b of STRUCTURES)
+          expect(fromBlock(b, p.x, p.y), `${f.id} and ${b.name}`).toBeGreaterThanOrEqual(
+            FIRE.structure - FIRE.patchReach,
+          );
+        for (const q of [...PACKAGES, ...RESCUE_SPOTS])
+          expect(apartBy(p, q), `${f.id} and ${q.id}`).toBeGreaterThanOrEqual(FIRE.package - FIRE.patchReach);
+      }
+  });
+
+  it(`have a run: straight, ${FIRE.runMin} or more long, over one open water at every ${FIRE.step}, never a river, at the water's level`, () => {
+    for (const f of FIRES) {
+      const { from, to, z } = f.run;
+      const length = apartBy(from, to);
+      expect(length, f.id).toBeGreaterThanOrEqual(FIRE.runMin);
+      const water = overWater(from.x, from.y);
+      expect(water, `${f.id} starts over water`).not.toBe(-1);
+      expect(Math.abs(z - levelOf(water)), f.id).toBeLessThanOrEqual(FIRE.levelSlack);
+      for (let s = 0; s <= length; s += FIRE.step) {
+        const x = from.x + ((to.x - from.x) * s) / length,
+          y = from.y + ((to.y - from.y) * s) / length;
+        expect(overWater(x, y), `${f.id} at ${s}`).toBe(water);
+        expect(wetByRiver(x, y), `${f.id} at ${s} is a river`).toBe(false);
+        expect(Math.abs(ground.heightAt(x, y) - z), `${f.id} at ${s}`).toBeLessThanOrEqual(FIRE.levelSlack);
+      }
+    }
+  });
+
+  it(`have a run with room at each end: the ${FIRE.end} beyond it no more than ${FIRE.endRise} over the water`, () => {
+    for (const f of FIRES) {
+      const { from, to, z } = f.run;
+      const length = apartBy(from, to);
+      const ux = (to.x - from.x) / length,
+        uy = (to.y - from.y) / length;
+      for (let s = 0; s <= FIRE.end; s += FIRE.step) {
+        expect(ground.heightAt(to.x + ux * s, to.y + uy * s) - z, `${f.id} past the end, ${s}`).toBeLessThanOrEqual(
+          FIRE.endRise,
+        );
+        expect(
+          ground.heightAt(from.x - ux * s, from.y - uy * s) - z,
+          `${f.id} before the start, ${s}`,
+        ).toBeLessThanOrEqual(FIRE.endRise);
+      }
+    }
+  });
+
+  it(`have a run clear of crowns and structures: none within the rotor's reach and ${FIRE.crownMargin} of the line, ${FIRE.skim} over the water`, () => {
+    const { middle, rotorRadius } = HELICOPTER.size;
+    const solids = new Solids({ middle, radius: rotorRadius }, STRUCTURES);
+    for (const f of FIRES) {
+      const { from, to, z } = f.run;
+      const length = apartBy(from, to);
+      for (let s = 0; s <= length; s += FIRE.step) {
+        const x = from.x + ((to.x - from.x) * s) / length,
+          y = from.y + ((to.y - from.y) * s) / length;
+        expect(solids.distanceAt(x, y, z + FIRE.skim + middle), `${f.id} at ${s}`).toBeGreaterThan(FIRE.crownMargin);
+      }
+      // a crown's edge to the line, for every tree that stands over the skim
+      for (const t of TREES) {
+        if (t.top <= z + FIRE.skim) continue;
+        const along = Math.max(
+          0,
+          Math.min(length, ((t.x - from.x) * (to.x - from.x) + (t.y - from.y) * (to.y - from.y)) / length),
+        );
+        const px = from.x + ((to.x - from.x) * along) / length,
+          py = from.y + ((to.y - from.y) * along) / length;
+        expect(Math.hypot(t.x - px, t.y - py) - t.spread, f.id).toBeGreaterThanOrEqual(rotorRadius + FIRE.crownMargin);
+      }
+    }
+  });
+});
+
+describe('the fire levels', () => {
+  const fires = LEVELS.filter((l) => l.kind === 'fire');
+
+  it('are three, one for each fire, after the rescues, in the order west lake, south lake, north wood', () => {
+    expect(fires.map((l) => l.id)).toEqual(['west-lake-fire', 'south-lake-fire', 'north-wood-fire']);
+    expect(fires.map((l) => l.id)).toEqual(FIRES.map((f) => f.id));
+    expect(LEVELS.slice(-3)).toEqual(fires);
+    expect(LEVELS.indexOf(fires[0])).toBe(LEVELS.findIndex((l) => l.kind === 'rescue' && l.id === 'ledge-rescue') + 1);
+    expect(LEVELS).toHaveLength(13);
+  });
+
+  it('are named for their fire, and each a douse of it and then the fire out', () => {
+    fires.forEach((level, k) => {
+      const f = FIRES[k];
+      expect(level.name).toBe(f.name);
+      expect(level.steps).toEqual([
+        { kind: 'douse', fire: f.id },
+        { kind: 'fire', fire: f.id },
+      ]);
+    });
+    expect(fires.map((l) => l.name)).toEqual([
+      'Fire by the west lake',
+      'Fire by the south lake',
+      'Fire in the northern wood',
+    ]);
+  });
+
+  it("have ids that are no other level, and are kept: each is in players' saves", () => {
+    expect(new Set(LEVELS.map((l) => l.id)).size).toBe(LEVELS.length);
   });
 });

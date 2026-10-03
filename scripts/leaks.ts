@@ -17,12 +17,15 @@
  * through is not. A new list, map or cache in the game gets a line in
  * `WATCH` and a reading in `sizes`.
  */
-import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES } from '../src/arena';
 import type { Game } from '../src/game';
 import { RINGS } from '../src/mission';
 import { SAVE } from '../src/progress';
 import { SWAY } from '../src/sway';
 import { flight } from './determinism';
+
+/** The name of the size that is how many of a fire's patches burn. */
+const burningKey = (id: string) => `patches burning, ${id}`;
 
 /**
  * What is watched, and how. Every size has a ceiling: what it could ever
@@ -40,6 +43,8 @@ export const WATCH: Partial<Record<string, { ceiling: number; steady?: boolean }
   'packages found': { ceiling: PACKAGES.length + SAVE.kept },
   // the rings that are solid are written over each time a level begins or ends, into room made once for this many
   'rings solid': { ceiling: RINGS.capacity },
+  // each fire's patches are held in an array sized once, and can burn no more than it has
+  ...Object.fromEntries(FIRES.map((f) => [burningKey(f.id), { ceiling: f.patches.length }])),
   // the catch-all for what is leaking and has no name here; noisy, so it is given a lot of room
   'heap MB': { ceiling: 300, steady: true },
 };
@@ -52,6 +57,7 @@ export function sizes(game: Game): Record<string, number> {
     'structures collected': game.progress.collected.length,
     'packages found': game.progress.found.length,
     'rings solid': game.solids.count,
+    ...Object.fromEntries(game.fires.map((f) => [burningKey(f.id), f.burning])),
     // the heap and the memory behind typed arrays, which Node keeps apart from it: a pool kept for ever is in the second
     'heap MB': Math.round((process.memoryUsage().heapUsed + process.memoryUsage().arrayBuffers) / 1e5) / 10,
   };

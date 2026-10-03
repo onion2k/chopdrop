@@ -3,7 +3,8 @@
  * begins when it is landed on its pickup pad for as long as the parcel takes to load, and a trial or a course when
  * the helicopter's middle flies through its first ring or opening the way it faces, by the same rule a mission passes
  * the rest of its rings by, and a rescue when it has hovered in the window over its person for as long as the winch
- * takes, by the same rule a mission winches by. A level that has just ended on a pad begins nothing from it until the helicopter has
+ * takes, by the same rule a mission winches by, and a fire when a drop has put a patch of it out (told by the game, which
+ * knows where the water fell). A level that has just ended on a pad begins nothing from it until the helicopter has
  * lifted off, or one delivery would begin the next from the pad it ended on. Without it the game would have to be
  * told a level, and a player could not find one by flying.
  */
@@ -39,6 +40,8 @@ export class Starts {
   private readonly openings: { level: Level; opening: Ring | Gate }[] = [];
   /** The levels that begin with a person winched up, each with the person: those whose first step is a winch. Built once. */
   private readonly winches: { level: Level; winch: Winch }[] = [];
+  /** The level that begins with a drop on each fire, by the fire's id: the first level, in order, whose first step is a douse of it. Built once. */
+  private readonly douses = new Map<string, Level>();
   /** Where the helicopter's middle was at the last step, which an opening is passed by moving from; none until it has been seen. */
   private readonly was: Point3 = { x: 0, y: 0, z: 0 };
   /** Where the helicopter's middle is now, written in place, so watching an opening makes nothing each step. */
@@ -55,6 +58,7 @@ export class Starts {
       const first = level.steps[0];
       if (first.kind === 'pickup') this.byPad[first.pad] ??= level;
       else if (first.kind === 'winch') this.winches.push({ level, winch: first });
+      else if (first.kind === 'douse' && !this.douses.has(first.fire)) this.douses.set(first.fire, level);
       else if (first.kind === 'ring' || first.kind === 'gate') this.openings.push({ level, opening: first });
     }
   }
@@ -106,6 +110,14 @@ export class Starts {
     if (this.loading < loadFor(this.byPad[pad]!.steps[0])) return null;
     this.loading = 0;
     return this.byPad[pad];
+  }
+
+  /**
+   * A drop that fell on the fire named `fire` and put out `out` patches: the level that begins with it, or null if it put
+   * none out, fell on no fire, or no level begins with a drop on it. The game asks only with nothing going. Makes nothing.
+   */
+  dropped(fire: string, out: number): Level | null {
+    return out > 0 ? (this.douses.get(fire) ?? null) : null;
   }
 
   /** Nothing loading, nothing blocked, and no last position, so the next move is never taken for a crossing. */

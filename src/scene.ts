@@ -9,12 +9,26 @@
  * groups are fixed once, and each frame only where everything is written into
  * them, and `changed` says which. It is handed what it draws from, and never
  * the renderer. Without it the page has nothing to hand the renderer, and
- * nothing is seen.
+ * nothing is seen. The fires' flames and smoke, the rescue's flare and the
+ * drop's spray are particles, which `effects.ts` emits; what is drawn here of
+ * a fire is the ground under it, and of the water the bucket.
  */
 import { MATERIAL_STRIDE, type GameGroup } from 'artshape-render/game/renderer';
 import type { Box } from 'artshape-render/game/shadows';
 import type { Mesh } from 'artshape-render/mesh/types';
-import { COLLECTIBLES, ISLAND, LEVELS, PACKAGES, TREE_KINDS, type Collectible, type PackagePlace } from './arena';
+import {
+  COLLECTIBLES,
+  FIRES,
+  ISLAND,
+  LEVELS,
+  PACKAGES,
+  TREE_KINDS,
+  type Collectible,
+  type FirePlace,
+  type PackagePlace,
+} from './arena';
+import { BUCKET, type BucketPose } from './bucket';
+import { PATCH } from './fire';
 import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
@@ -255,14 +269,11 @@ export function startFlags(level: Level): FlagSpot[] {
 }
 
 /**
- * The people waiting to be rescued, and how they are seen from afar, chosen from a mock: a figure in boxes about 1.8 tall
- * in an orange jacket over dark legs, one arm up waving, and at their feet a flare's orange smoke, nine boxes rising 27
- * metres, widening and paling to cream as it goes. A person is five boxes, each `[side, up, across, along, tall]` from
- * the person's feet (`side` being along the way they face across, so the arm stands out to one side), painted by the
- * colour in the same place of `PERSON_COLOURS`; they stand turned by `PERSON.yaw`. The smoke is a box a `rise` above the
- * one before, each shifted `step` further along both ways from a first `drift` out from the person's feet and turned
- * `twist` further, `grow` wider each, from a first of `size` across, painted by `SMOKE_COLOURS`. Each is a placement of
- * the one unit box, with its own paint.
+ * The people waiting to be rescued, a figure in boxes about 1.8 tall in an orange jacket over dark legs, one arm up
+ * waving. A person is five boxes, each `[side, up, across, along, tall]` from the person's feet (`side` being along the
+ * way they face across, so the arm stands out to one side), painted by the colour in the same place of
+ * `PERSON_COLOURS`; they stand turned by `PERSON.yaw`. Each is a placement of the one unit box, with its own paint. The
+ * orange smoke of their flare, which finds them from afar, is particles, which `effects.ts` emits.
  */
 const PERSON = { yaw: 0.6 };
 const PERSON_BOXES: readonly (readonly number[])[] = [
@@ -273,9 +284,7 @@ const PERSON_BOXES: readonly (readonly number[])[] = [
   [0.38, 1.35, 0.14, 0.14, 0.75],
 ];
 const PERSON_COLOURS = [0x2b3440, 0x2b3440, 0xff6a1a, 0xe0b08a, 0xff6a1a];
-const SMOKE = { size: 1.2, grow: 0.55, tall: 3, rise: 3, drift: [1.2, 0.6], step: [0.35, 0.2], twist: 0.4 };
-const SMOKE_COLOURS = [0xff7a2e, 0xff8a3e, 0xff9a52, 0xffab68, 0xffbb80, 0xffc996, 0xffd6ab, 0xffe2c0, 0xffecd4];
-/** What the rescues' boxes are painted: matte, since smoke and a jacket are not shiny. */
+/** What the rescues' boxes are painted: matte, since a jacket is not shiny. */
 const RESCUE_ROUGHNESS = 0.9;
 /**
  * The rope the person is winched up, a dark line `width` across: it hangs from `belly` over the helicopter's skids, the
@@ -288,6 +297,41 @@ const ROPE = { width: 0.07, belly: 0.2, grip: 1.7, height: 1.8, paint: 0x2b3440 
 export interface Winching {
   spot: string | null;
   share: number;
+}
+
+/**
+ * The ground of a fire, a box a patch turned by a fixed yaw of its own so the patches do not tile: where a patch burns,
+ * orange ground `burning.across` wide and `burning.thick` thick, its albedo raised by `burning.glow` so that it blooms
+ * as the gold does; where it is out, dark burnt ground `burnt.across` wide and a hair thick, `burnt.lift` over the
+ * ground so that it is seen; and where it has not caught, nothing. `turn` is how far each patch is turned from the one
+ * before it.
+ */
+const FIRE_GROUND = {
+  burning: { across: 7, thick: 0.25, glow: 1.5, paint: 0xd8461f },
+  burnt: { across: 7.5, thick: 0.06, lift: 0.03, paint: 0x2a241f },
+  turn: 0.9,
+};
+const FIRE_ROUGHNESS = 0.9;
+
+/** The bucket's paint: the dark line, the orange bucket and the blue water at its rim, which glows. */
+const BUCKET_PAINT = {
+  line: { albedo: seen(0x2b3440), roughness: 0.6 },
+  bucket: { albedo: seen(0xff6a1a), roughness: 0.6 },
+  water: { albedo: seen(0x3f8fe0).map((c) => c * BUCKET.water.glow) as Rgb, roughness: 0.2 },
+};
+
+/** What is drawn of the bucket, for the test API: whether it hangs, how long its line is, and whether it holds water. */
+export interface BucketDrawn {
+  hung: boolean;
+  full: boolean;
+  line: number;
+}
+
+/** What the scene draws besides what is going: the fires' patches, by state, and the bucket. */
+export interface Drawn {
+  /** Each fire's patches as the model keeps them, in the order of the fires' places. */
+  fires?: readonly { states: Uint8Array }[];
+  bucket?: Readonly<BucketPose>;
 }
 
 /** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
@@ -630,6 +674,16 @@ export class Scene {
   private rescuesFor: Level | null | undefined;
   private rescuesWinch = -2;
   private ropeOut = false;
+  /**
+   * Every patch of every fire, in order, which the fire ground has a placement each for; where the groups are among the
+   * pools; and each patch's state as last written (255 before any is), so the pools are written only when one changes.
+   */
+  private readonly fireSpots: { x: number; y: number; z: number }[] = [];
+  private fireAt = -1;
+  private readonly firesFor: Uint8Array;
+  /** Where the bucket's groups are among the pools, and whether it was drawn at the last write, so stowing it is written once. */
+  private bucketAtPool = -1;
+  private bucketOut = false;
   /** What the resting crates were last written for, so they are written only when what is going changes. */
   private cratesFor: Level | null | undefined;
   /** Where the ring groups are among the pools, and what they were last written for, so they are written only on a change. */
@@ -654,8 +708,11 @@ export class Scene {
     levels: readonly Level[] = LEVELS,
     collectibles: readonly Collectible[] = COLLECTIBLES,
     packages: readonly PackagePlace[] = PACKAGES,
+    fires: readonly FirePlace[] = FIRES,
   ) {
     this.places = packages;
+    for (const fire of fires) for (const p of fire.patches) this.fireSpots.push(p);
+    this.firesFor = new Uint8Array(this.fireSpots.length).fill(255);
     this.foundFor = new Uint8Array(packages.length);
     for (const { id, blocks } of collectibles) {
       this.collectable.push({ id, blocks, first: this.goldSlots });
@@ -848,6 +905,8 @@ export class Scene {
       add('packages', wood, PACKAGE_PAINT, new Float32Array(n * 16), n);
       add('package straps', straps, PACKAGE_STRAP_PAINT, new Float32Array(n * 16), n);
       this.rescueGroups(add, unit);
+      this.fireGroups(add, unit);
+      this.bucketGroups(add, unit);
     }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
@@ -855,7 +914,7 @@ export class Scene {
 
   /**
    * The rescues' groups, each a placement of one unit box with its own paint, sized once: the people waiting, five boxes
-   * each, their smoke, nine each, and the winch, a person and a rope, six. Nothing is added where there is no rescue.
+   * each, and the winch, a person and a rope, six. Nothing is added where there is no rescue.
    */
   private rescueGroups(add: Add, unit: Mesh): void {
     this.peopleAt = -1;
@@ -872,12 +931,42 @@ export class Scene {
       return m;
     };
     const people = n * PERSON_BOXES.length;
-    const smoke = n * SMOKE_COLOURS.length;
     const winch = PERSON_BOXES.length + 1;
     const base: Paint = { albedo: seen(PERSON_COLOURS[2]), roughness: RESCUE_ROUGHNESS };
     add('people', unit, base, new Float32Array(people * 16), people, paint(PERSON_COLOURS, n));
-    add('smoke', unit, base, new Float32Array(smoke * 16), smoke, paint(SMOKE_COLOURS, n));
     add('winch', unit, base, new Float32Array(winch * 16), winch, paint(PERSON_COLOURS, 1, [ROPE.paint]));
+  }
+
+  /**
+   * The fires' ground, two groups of a unit box with a placement for every patch of every fire: the glowing ground of
+   * those burning and the burnt ground of those out, each patch at no size in the one it is not in. Written when a
+   * patch changes.
+   */
+  private fireGroups(add: Add, unit: Mesh): void {
+    this.fireAt = -1;
+    this.firesFor.fill(255);
+    const n = this.fireSpots.length;
+    if (n === 0) return;
+    this.fireAt = this.pools.length;
+    const { burning, burnt } = FIRE_GROUND;
+    const glow = seen(burning.paint).map((c) => c * burning.glow) as Rgb;
+    const [glowing, charred] = [new Float32Array(n * 16), new Float32Array(n * 16)];
+    // every placement at no size where its patch is, rather than all noughts, which no placement is
+    this.fireSpots.forEach(({ x, y, z }, k) => {
+      place(glowing, k, x, y, z, 0, 0);
+      place(charred, k, x, y, z, 0, 0);
+    });
+    add('burning ground', unit, { albedo: glow, roughness: FIRE_ROUGHNESS }, glowing, n);
+    add('burnt ground', unit, { albedo: seen(burnt.paint), roughness: FIRE_ROUGHNESS }, charred, n);
+  }
+
+  /** The bucket's three groups, one placement each, at no size until it hangs. */
+  private bucketGroups(add: Add, unit: Mesh): void {
+    this.bucketAtPool = this.pools.length;
+    this.bucketOut = false;
+    add('bucket line', unit, BUCKET_PAINT.line);
+    add('bucket', unit, BUCKET_PAINT.bucket);
+    add('bucket water', unit, BUCKET_PAINT.water);
   }
 
   /** The trees: a trunk group and a crown group a kind, sharing a pool, the crowns each their own shade of green. */
@@ -920,7 +1009,8 @@ export class Scene {
    * going, which may be nothing, the crates, the beacon, the rings and the flags are written as it says; and given the
    * names of the structures collected, the gold on each, which is written only when they change; and given the names of
    * the packages found, a crate on every place of one not found, written only when they change; and given what is going
-   * and what is winched, the people waiting with their smoke, and the rope with the person on it.
+   * and what is winched, the people waiting, and the rope with the person on it; and given the fires' patches, the
+   * ground under each, written only when a patch changes, and the bucket, written every frame it hangs.
    */
   write(
     pose: HelicopterPose,
@@ -929,6 +1019,7 @@ export class Scene {
     collected?: readonly string[],
     found?: readonly string[],
     winching?: Winching,
+    drawn?: Drawn,
   ): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
@@ -949,6 +1040,8 @@ export class Scene {
     if (collected && this.goldAt >= 0) this.paintGold(collected);
     if (found && this.packagesAt >= 0) this.paintPackages(found);
     if (going && this.peopleAt >= 0) this.rescues(pose, going.level, winching);
+    if (drawn?.fires && this.fireAt >= 0) this.paintFires(drawn.fires);
+    if (drawn?.bucket && this.bucketAtPool >= 0) this.hang(pose, drawn.bucket);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -1128,9 +1221,8 @@ export class Scene {
   }
 
   /**
-   * The people waiting and their smoke, a person and their smoke at each spot except where their level is going (they are
-   * aboard) or they are being winched (the smoke is out, and they are on the rope), written only when the level going or the
-   * spot winched changes; and the rope, with the person rising up it by the share, written every frame it is out since it
+   * The people waiting, a person at each spot except where their level is going (they are aboard) or they are being
+   * winched (they are on the rope), written only when the level going or the spot winched changes; and the rope, with the person rising up it by the share, written every frame it is out since it
    * follows the helicopter, and once more to put it away.
    */
   private rescues(pose: HelicopterPose, going: Level | null, winching?: Winching): void {
@@ -1141,28 +1233,20 @@ export class Scene {
     if (going !== this.rescuesFor || winched !== this.rescuesWinch) {
       this.rescuesFor = going;
       this.rescuesWinch = winched;
-      const [people, smoke] = [this.pools[peopleAt], this.pools[peopleAt + 1]];
+      const people = this.pools[peopleAt];
       people.fill(0);
-      smoke.fill(0);
       for (let k = 0; k < rescuing.length; k++) {
         const { level, winch } = rescuing[k];
         if (level === going || k === winched) continue;
         placePerson(people, k * PERSON_BOXES.length, winch.x, winch.y, winch.z);
-        for (let b = 0; b < SMOKE_COLOURS.length; b++) {
-          const x = winch.x + SMOKE.drift[0] + b * SMOKE.step[0];
-          const y = winch.y + SMOKE.drift[1] + b * SMOKE.step[1];
-          const size = SMOKE.size + b * SMOKE.grow;
-          const z = winch.z + b * SMOKE.rise;
-          place(smoke, k * SMOKE_COLOURS.length + b, x, y, z, b * SMOKE.twist, size, size, SMOKE.tall);
-        }
       }
-      this.changed[peopleAt] = this.changed[peopleAt + 1] = 1;
+      this.changed[peopleAt] = 1;
     }
-    const rope = this.pools[peopleAt + 2];
+    const rope = this.pools[peopleAt + 1];
     if (winched < 0) {
       if (this.ropeOut) {
         rope.fill(0);
-        this.changed[peopleAt + 2] = 1;
+        this.changed[peopleAt + 1] = 1;
         this.ropeOut = false;
       }
       return;
@@ -1178,7 +1262,82 @@ export class Scene {
     const hand = base + ROPE.grip;
     place(rope, PERSON_BOXES.length, pose.x, pose.y, hand, 0, ROPE.width, ROPE.width, Math.max(0, belly - hand));
     this.ropeOut = true;
-    this.changed[peopleAt + 2] = 1;
+    this.changed[peopleAt + 1] = 1;
+  }
+
+  /**
+   * The ground under every fire: where a patch burns, glowing ground, where it is out, burnt ground, and where it has not
+   * caught, none, each patch turned by its own fixed yaw. Written only when a patch's state is not what it was last
+   * written for; the check reads and writes in place and makes nothing.
+   */
+  private paintFires(fires: readonly { states: Uint8Array }[]): void {
+    const was = this.firesFor;
+    let moved = false;
+    let n = 0;
+    for (const { states } of fires) {
+      for (let k = 0; k < states.length && n < was.length; k++, n++) {
+        if (states[k] === was[n]) continue;
+        was[n] = states[k];
+        moved = true;
+      }
+    }
+    if (!moved) return;
+    const [glowing, burnt] = [this.pools[this.fireAt], this.pools[this.fireAt + 1]];
+    const { burning, burnt: out, turn } = FIRE_GROUND;
+    for (let k = 0; k < this.fireSpots.length; k++) {
+      const { x, y, z } = this.fireSpots[k];
+      // the placement a patch is not in is at no size where it stands
+      if (was[k] === PATCH.burning) place(glowing, k, x, y, z, k * turn, burning.across, burning.across, burning.thick);
+      else place(glowing, k, x, y, z, 0, 0);
+      if (was[k] === PATCH.out) place(burnt, k, x, y, z + out.lift, k * turn, out.across, out.across, out.thick);
+      else place(burnt, k, x, y, z, 0, 0);
+    }
+    this.changed[this.fireAt] = this.changed[this.fireAt + 1] = 1;
+  }
+
+  /**
+   * The bucket as it is told: its line from the skids down to its top, the orange bucket under it and, with the tank
+   * full, the water's top at its rim; or all three at no size where it does not hang. Written every frame it hangs, since
+   * it follows the helicopter, and once more to put it away.
+   */
+  private hang(pose: HelicopterPose, bucket: Readonly<BucketPose>): void {
+    const at = this.bucketAtPool;
+    const [line, body, water] = [this.pools[at], this.pools[at + 1], this.pools[at + 2]];
+    if (!bucket.hung) {
+      if (!this.bucketOut) return;
+      this.bucketOut = false;
+      for (const m of [line, body, water]) place(m, 0, pose.x, pose.y, pose.z, 0, 0);
+    } else {
+      this.bucketOut = true;
+      const top = bucket.bottom + BUCKET.height;
+      place(line, 0, pose.x, pose.y, top, pose.yaw, BUCKET.rope, BUCKET.rope, bucket.line);
+      place(body, 0, pose.x, pose.y, bucket.bottom, pose.yaw, BUCKET.width, BUCKET.width, BUCKET.height);
+      const { across, thick } = BUCKET.water;
+      if (bucket.full) place(water, 0, pose.x, pose.y, top - thick, pose.yaw, across, across, thick);
+      else place(water, 0, pose.x, pose.y, pose.z, 0, 0);
+    }
+    this.changed.fill(1, at, at + 3);
+  }
+
+  /** How many patches are drawn glowing and how many burnt now: what the test API says, and nothing the frame uses. */
+  get groundDrawn(): { burning: number; burnt: number } {
+    const drawn = { burning: 0, burnt: 0 };
+    if (this.fireAt < 0) return drawn;
+    const [glowing, burnt] = [this.pools[this.fireAt], this.pools[this.fireAt + 1]];
+    for (let k = 0; k < this.fireSpots.length; k++) {
+      if (glowing[k * 16 + 10] !== 0) drawn.burning++;
+      if (burnt[k * 16 + 10] !== 0) drawn.burnt++;
+    }
+    return drawn;
+  }
+
+  /** What is drawn of the bucket now: what the test API says, and nothing the frame uses. */
+  get bucketDrawn(): BucketDrawn {
+    const none = { hung: false, full: false, line: 0 };
+    if (this.bucketAtPool < 0) return none;
+    const line = this.pools[this.bucketAtPool][10];
+    if (line === 0 && this.pools[this.bucketAtPool + 1][10] === 0) return none;
+    return { hung: true, full: this.pools[this.bucketAtPool + 2][10] !== 0, line };
   }
 
   /** How many people are standing waiting now, not aboard and not on the rope: what the test API says, and nothing the frame uses. */
@@ -1191,18 +1350,9 @@ export class Scene {
     return drawn;
   }
 
-  /** How many people's smoke is rising now: what the test API says, and nothing the frame uses. */
-  get smokeDrawn(): number {
-    if (this.peopleAt < 0) return 0;
-    const m = this.pools[this.peopleAt + 1];
-    let drawn = 0;
-    for (let k = 0; k < this.rescuing.length; k++) if (m[k * SMOKE_COLOURS.length * 16 + 10] !== 0) drawn++;
-    return drawn;
-  }
-
   /** Whether the rope, with the person on it, is drawn now: what the test API says, and nothing the frame uses. */
   get ropeDrawn(): boolean {
-    return this.peopleAt >= 0 && this.pools[this.peopleAt + 2][2 * 16 + 10] !== 0;
+    return this.peopleAt >= 0 && this.pools[this.peopleAt + 1][2 * 16 + 10] !== 0;
   }
 
   /** How many crates of packages are drawn now: what the test API says, and nothing the frame uses. */

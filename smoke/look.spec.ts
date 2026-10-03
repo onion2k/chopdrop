@@ -22,6 +22,7 @@ import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Gate, Ring } from '../src/mission';
 import { DELIVERIES, WOOD, fingers, leverTravel, standardView, start, watch } from './game';
+import { sceneChase, sceneDrop, sceneFar, sceneGoing, sceneNear, sceneScooping, settle } from './fire';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -705,9 +706,12 @@ test.describe('what it looks like', () => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await lookAtWalker(page, 170, 1.15, -2.2);
+    // the flare is particles, which move as frames are drawn: long enough for its smoke to reach its top
+    await settle(page, 420);
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
     expect([now.people, now.smoke]).toEqual([3, 3]);
+    expect(now.particles.live, 'the flare is in the air').toBeGreaterThan(100);
     await expect(page.locator('#view')).toHaveScreenshot('rescue-far.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
@@ -716,6 +720,7 @@ test.describe('what it looks like', () => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await overWalker(page, 10, 6, -8, 1.4);
+    await settle(page, 420);
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('rescue-waiting.png', TOLERANCE);
     expect(problems).toEqual([]);
@@ -729,6 +734,7 @@ test.describe('what it looks like', () => {
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
     expect([now.rope, now.smoke, now.people]).toEqual([true, 2, 2]);
+    expect(now.particles.flares, 'no flare is born at the walker').toBe(0);
     await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the walker');
     await expect(page.locator('#view')).toHaveScreenshot('rescue-winch.png', TOLERANCE);
     expect(problems).toEqual([]);
@@ -771,6 +777,85 @@ test.describe('what it looks like', () => {
     await hideStats(page);
     await expect(page.locator('#hud .toast h2')).toHaveText('Rescued!');
     await expect(page.locator('#view')).toHaveScreenshot('rescue-toast.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a fire seen from afar: the dark smoke towering over the west wood, the flare of a rescue beside it', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneFar(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.ground).toEqual({ burning: 30, burnt: 0 });
+    expect(now.particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('fire-far.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a fire from above: flames over glowing ground, with burnt patches where a drop fell on its edge', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneNear(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.ground, 'seven burn and three are burnt in the west fire, twenty burn in the others').toEqual({
+      burning: 27,
+      burnt: 3,
+    });
+    expect(now.particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('fire-near.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('hovering by the fire, the chase camera behind: the smoke bent away under the rotor', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneChase(page);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('fire-chase.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a drop part way: the spray falling from the bucket and the mist where it lands', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneDrop(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.particles.spray, 'the spray is pouring').toBeGreaterThan(0);
+    expect(now.bucket).toMatchObject({ hung: true, full: false });
+    await expect(page.locator('#view')).toHaveScreenshot('fire-drop.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('skimming the lake: the bucket dipped, the loader "Scooping" half full, the badge an outline', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneScooping(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect([now.badge, now.bucket.hung, now.tank.full]).toEqual(['empty', true, false]);
+    await expect(page.locator('#hud .loader .what')).toHaveText('Scooping');
+    await expect(page.locator('#view')).toHaveScreenshot('scooping.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the tank full and the fire level going: the bar, the arrow and the blue badge', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneGoing(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect([now.badge, now.bucket.full, now.mission.level]).toEqual(['full', true, 'west-lake-fire']);
+    await expect(page.locator('#hud .goal')).toHaveText('Put out the fire · 10 burning');
+    await expect(page.locator('#view')).toHaveScreenshot('fire-going.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -941,6 +1026,23 @@ test.describe('a rescue on a phone, upright', () => {
     await hideStats(page);
     await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the walker');
     await expect(page).toHaveScreenshot('rescue-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+});
+
+test.describe('a fire on a phone, upright', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('the tank full and the fire going: the bar, the two badges under one another, the touch controls', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneGoing(page);
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Put out the fire · 10 burning');
+    await expect(page.locator('#hud .tank')).toHaveAttribute('data-state', 'full');
+    await expect(page).toHaveScreenshot('fire-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 });

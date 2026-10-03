@@ -9,7 +9,9 @@
  * clock only runs forward. With nothing going the mission reads as nothing;
  * a level going is at one of its steps past the first, and nothing starts
  * while it is. A best time is a time, and never slower than the level was
- * just done in. The helicopter is never inside anything solid.
+ * just done in. The helicopter is never inside anything solid. The tank fills only in the scoop's window over open
+ * water, and each fire's patches are in a state it knows, counted right, and a fire that is not going is not left off
+ * its start for longer than it waits to be lit again.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
@@ -18,11 +20,13 @@ import { CHASE, type ChaseCamera } from './chase';
 import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
 import { RADAR } from './finds';
+import { FIRE, PATCH } from './fire';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
-import { inWindow, loadFor, onPad, type Step } from './mission';
+import { fireOf, inWindow, loadFor, onPad, type Step } from './mission';
 import type { Sway } from './sway';
+import { SCOOP, inScoop } from './water';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
 const TOLERANCE = 1e-9;
@@ -86,6 +90,64 @@ export function checkInvariants(game: Game): string[] {
   out.push(...checkSolids(game));
   out.push(...checkCollection(game));
   out.push(...checkFinds(game));
+  out.push(...checkTank(game));
+  out.push(...checkFires(game));
+  return out;
+}
+
+/**
+ * What must hold of the tank: its filling is a number from nothing to short of a full scoop, and above nothing only
+ * with the tank not full and the helicopter in the scoop's window over open water, which is worked out here from the
+ * helicopter and the island's water and not from anything the tank says of itself. The helicopter is read as it is now,
+ * which is where the tank last stepped it unless a test or a teleport has moved it since.
+ */
+export function checkTank(game: Game): string[] {
+  const { tank, helicopter: h } = game;
+  if (!Number.isFinite(tank.filling) || tank.filling < 0 || tank.filling >= SCOOP.time)
+    return [`the tank's filling reads ${tank.filling}, and runs from 0 to short of ${SCOOP.time}`];
+  if (!(tank.filling > 0)) return [];
+  if (tank.full) return [`the tank is full and filling: ${tank.filling.toFixed(3)} s of a scoop`];
+  if (!inScoop(h, game.water.levelAt(h.x, h.y), h.speed))
+    return [
+      `the tank is filling, and the helicopter is not in the scoop's window: ${tank.filling.toFixed(3)} s with it ${h.height.toFixed(2)} up at ${h.speed.toFixed(2)} m/s${h.landed ? ' landed' : ''}`,
+    ];
+  return [];
+}
+
+/**
+ * What must hold of the fires: each patch is in a state the game knows; the burning count is the patches burning and
+ * no more than the fire has; a fire that is not going is lit again at its start once it has waited long enough (so
+ * until then it may be off it, and after that it is not); and a fire level going has its fire burning, since it ends
+ * the step none does.
+ */
+export function checkFires(game: Game): string[] {
+  const out: string[] = [];
+  const level = game.mission.level;
+  let going: string | null = null;
+  if (level) for (const step of level.steps) going ??= fireOf(step);
+  for (const fire of game.fires) {
+    const { id, states } = fire;
+    let burning = 0;
+    let known = true;
+    for (let k = 0; k < states.length; k++) {
+      const s = states[k];
+      if (s === PATCH.burning) burning++;
+      else if (s !== PATCH.unburnt && s !== PATCH.out) {
+        out.push(`${id} has patch ${k} in no known state: ${s}`);
+        known = false;
+      }
+    }
+    if (!known) continue;
+    if (fire.burning !== burning) out.push(`${id} counts ${fire.burning} burning, and ${burning} are`);
+    if (fire.burning > states.length || fire.burning < 0)
+      out.push(`${id} burns ${fire.burning} of ${states.length} patches`);
+    if (id === going) {
+      if (burning === 0) out.push(`${id} is going, and none of it burns`);
+    } else if (!fire.atStart && !(fire.quiet < FIRE.relight + TOLERANCE))
+      out.push(
+        `${id} is not going and has been off its start for ${fire.quiet.toFixed(2)} s, and it is lit again after ${FIRE.relight}`,
+      );
+  }
   return out;
 }
 

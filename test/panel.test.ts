@@ -1,6 +1,6 @@
 /** The panel's one sum, headless: how its subtitle counts the levels done. The rest of it is DOM, worked in smoke/panel.spec.ts. */
 import { describe, expect, it } from 'vitest';
-import { kindLabel, packageRows, panelSubtitle, structureRows } from '../src/panel';
+import { kindIcon, kindLabel, packageRows, panelSubtitle, structureRows } from '../src/panel';
 
 describe('the subtitle', () => {
   it('counts the levels with a best time, and says how a level is found', () => {
@@ -80,5 +80,18 @@ describe("a level's kind label", () => {
     expect(kindLabel('delivery')).toBeNull();
     expect(kindLabel('rings')).toBeNull();
     expect(kindLabel('course')).toBeNull();
+  });
+
+  it('names a fire, "Fire", beside it', () => {
+    expect(kindLabel('fire')).toBe('Fire');
+  });
+});
+
+describe("a level's kind icon", () => {
+  it('is a figure for a rescue and a flame for a fire, drawn in the text’s own colour, and none for the rest', () => {
+    expect(kindIcon('rescue')).toContain('<svg');
+    expect(kindIcon('fire')).toContain('<svg');
+    expect(kindIcon('fire')).not.toBe(kindIcon('rescue'));
+    expect(kindIcon('delivery')).toBe('');
   });
 });

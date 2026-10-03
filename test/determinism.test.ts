@@ -4,10 +4,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT, flight, hashGame, playTwice, startingLevel } from '../scripts/determinism';
-import { LEVELS } from '../src/arena';
+import { FIRES, LEVELS } from '../src/arena';
+import { PATCH } from '../src/fire';
 import { Game } from '../src/game';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
+import { SLOW, sweep } from './slow';
 
 describe('the determinism check', () => {
   it('plays a seed through the level twice the same way', () => {
@@ -23,8 +25,8 @@ describe('the determinism check', () => {
     const done: string[] = [];
     let at = '';
     let last: unknown = null;
-    // long enough for all ten, a little over ten minutes of game with the flights between them, and the first begun again
-    for (const game of flight(1, 60 * 60 * 11)) {
+    // long enough for all thirteen, a little over twenty minutes of game with the flights between them, and the first begun again
+    for (const game of flight(1, 60 * 60 * 21)) {
       const id = game.mission.level?.id ?? '';
       if (id && id !== at) begun.push(id);
       at = id;
@@ -37,15 +39,19 @@ describe('the determinism check', () => {
     expect(done.slice(0, LEVELS.length)).toEqual(LEVELS.map((level) => level.id));
   });
 
-  it('begins every one of the ten levels over the default run, each seed from its own starting level', () => {
+  it('begins every one of the thirteen levels over the default run, each seed from its own starting level', () => {
     const begun = new Set<string>();
-    for (let seed = 1; seed <= DEFAULT.seeds; seed++)
+    const seeds = sweep(Array.from({ length: DEFAULT.seeds }, (_, k) => k + 1));
+    for (const seed of seeds)
       for (const game of flight(seed, DEFAULT.frames, startingLevel(seed, LEVELS.length))) {
         const id = game.mission.level?.id;
         if (id) begun.add(id);
       }
-    expect(DEFAULT.frames).toBe(3600);
-    expect([...begun].sort()).toEqual(LEVELS.map((level) => level.id).sort());
+    expect(DEFAULT.frames).toBe(5400);
+    expect(DEFAULT.seeds).toBe(LEVELS.length);
+    // the quick check flies one seed, which begins its own level; the slow run flies them all, which begin every one
+    if (SLOW) expect([...begun].sort()).toEqual(LEVELS.map((level) => level.id).sort());
+    else expect(begun.has(LEVELS[startingLevel(seeds[0], LEVELS.length)].id)).toBe(true);
   });
 
   it('gives each starting level to a seed of its own, within the list', () => {
@@ -133,6 +139,33 @@ describe('the determinism check', () => {
     const clocked = game();
     clocked.finds.until = 0.5;
     expect(hashGame(clocked), 'the clock').not.toBe(was);
+  });
+
+  it("sees the tank, full and how far it is filled, and the state of each fire's patches", () => {
+    const game = () => new Game({ random: seeded(1) });
+    const was = hashGame(game());
+    const full = game();
+    full.tank.full = true;
+    expect(hashGame(full), 'full').not.toBe(was);
+    const filling = game();
+    filling.tank.filling = 1e-6;
+    expect(hashGame(filling), 'filling').not.toBe(was);
+    for (const place of FIRES) {
+      const out = game();
+      const fire = out.fire(place.id);
+      fire.states[0] = PATCH.out;
+      fire.burning--;
+      expect(hashGame(out), `${place.id} out`).not.toBe(was);
+      const lit = game();
+      lit.fire(place.id).states[place.lit] = PATCH.burning;
+      expect(hashGame(lit), `${place.id} caught`).not.toBe(was);
+    }
+    // which patch, and not only how many
+    const a = game();
+    a.fire(FIRES[0].id).states[0] = PATCH.out;
+    const b = game();
+    b.fire(FIRES[0].id).states[1] = PATCH.out;
+    expect(hashGame(a), 'which').not.toBe(hashGame(b));
   });
 
   it('sees the helicopter moved a thousandth, turned a millionth, a tree leaned, and the ring a hair fuller', () => {

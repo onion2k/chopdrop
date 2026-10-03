@@ -8,7 +8,8 @@
  * pad the parcel is wanted at and waiting there, down onto a level's start or
  * through it, being shown the way to one, giving up the level going, flying
  * at a ring from any side and through one in its turn, hovering over a person waiting to be winched up, in the
- * window and high, low or aside of it — with the
+ * window and high, low or aside of it, skimming over a lake or the sea at the edges of the scoop and flying over a fire at
+ * the edges of the drop — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
@@ -30,9 +31,11 @@ import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
-import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, TREE_KINDS } from '../src/arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, TREE_KINDS } from '../src/arena';
 import { treeSize } from '../src/meshes';
 import { Progress, memoryStore } from '../src/progress';
+import { PATCH } from '../src/fire';
+import { SCOOP } from '../src/water';
 import { seeded } from '../src/random';
 
 const DT = 1 / 60;
@@ -115,6 +118,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
         winched: () => count(happened, 'winched'),
+        scooped: () => count(happened, 'scooped'),
+        dropped: () => count(happened, 'dropped'),
+        fireOut: () => count(happened, 'fire out'),
         passed: () => count(happened, 'passed a ring'),
         through: () => count(happened, 'through a gate'),
         landed: () => count(happened, 'landed where wanted'),
@@ -257,6 +263,61 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       );
       controls = { forward: 0, turn: 0, lift: HOVER_LIFT };
       hold.busy = 240;
+    };
+    /**
+     * Skimming over open water: a lake, or the sea, chosen from the island's water, `up` over it, at `speed`, along a
+     * straight line from the square chosen, held for three seconds. The line is tried a few times for one that stays over
+     * the water, which a player skimming a lake would fly, and left to chance if none does.
+     */
+    const skimOver = (up: number, speed: number, run = 3): void => {
+      const { lakes, sea, terrain } = game.island;
+      const across = terrain.cols - 1;
+      let x = 0,
+        y = 0,
+        yaw = 0;
+      for (let tries = 0; tries < 12; tries++) {
+        // a lake or the sea, each as likely as the other
+        const pick = Math.floor(random() * (lakes.length + 1));
+        let sq: number;
+        if (pick < lakes.length) sq = lakes[pick].squares[Math.floor(random() * lakes[pick].squares.length)];
+        else {
+          sq = Math.floor(random() * sea.length);
+          for (let k = 0; k < 40 && sea[sq] === 0; k++) sq = Math.floor(random() * sea.length);
+        }
+        x = terrain.originX + ((sq % across) + random()) * terrain.cell;
+        y = terrain.originY + (Math.floor(sq / across) + random()) * terrain.cell;
+        yaw = between(-Math.PI, Math.PI);
+        const level = (d: number) => game.water.levelAt(x + Math.cos(yaw) * d, y + Math.sin(yaw) * d);
+        if (
+          Number.isFinite(level(0)) &&
+          Number.isFinite(level(speed * run)) &&
+          Number.isFinite(level(speed * run * 0.5))
+        )
+          break;
+      }
+      const level = game.water.levelAt(x, y);
+      heli.place(x, y, (Number.isFinite(level) ? level : ground.heightAt(x, y)) + up, yaw);
+      heli.vx = Math.cos(yaw) * speed;
+      heli.vy = Math.sin(yaw) * speed;
+      controls = { forward: speed / HELICOPTER.maxSpeed, turn: 0, lift: HOVER_LIFT };
+      hold.busy = Math.round(run * 60);
+    };
+    /**
+     * Over patch `k` of `fire`, `up` over the ground there, drifting slowly, for two seconds: with a full tank the water
+     * falls from a window's height, and from one too high it does not.
+     */
+    const overFire = (fire: (typeof FIRES)[number], k: number, up: number): void => {
+      const p = fire.patches[k];
+      heli.placeAbove(p.x, p.y, up, between(-Math.PI, Math.PI));
+      controls = { forward: between(0, 0.1), turn: 0, lift: HOVER_LIFT };
+      hold.busy = 120;
+    };
+    /** The fire a player at a fire level is fighting, or any: the one the level going is about, else chance. */
+    const aFire = (): (typeof FIRES)[number] => {
+      const going = game.mission.level?.steps.find((step) => step.kind === 'fire');
+      return (
+        FIRES.find((f) => going?.kind === 'fire' && f.id === going.fire) ?? FIRES[Math.floor(random() * FIRES.length)]
+      );
     };
     /** Lined up on the ring or the opening wanted. */
     const lineUp = (): boolean => lineUpOn(game.mission.current);
@@ -564,10 +625,45 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
             // well inside the window, and held for longer than the hold
             const spot = RESCUE_SPOTS.find((r) => r.x === start.x && r.y === start.y)!;
             overRescue(spot, between(WINCH.low + 1, WINCH.high - 1), between(0, WINCH.reach - 2));
+          } else if (start.kind === 'douse') {
+            // the water first, along the fire's run at the scoop's own pace, and then a drop from the middle of the window
+            // on the first of its patches, which is what begins it
+            const fire = FIRES.find((f) => f.id === start.fire)!;
+            if (!game.tank.full) {
+              const { from, to, z } = fire.run;
+              heli.place(from.x, from.y, z + SCOOP.low / 2, Math.atan2(to.y - from.y, to.x - from.x));
+              controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
+              hold.busy = Math.round((SCOOP.time + 1.5) * 60);
+            } else overFire(fire, 0, between(12, 22));
           } else {
             lineUpOn(start);
             hold.run = random() < 0.5;
           }
+        },
+      },
+      {
+        name: 'skim',
+        places: true,
+        weight: 3,
+        go() {
+          // low over a lake or the sea at any height up to 3 m and any speed from 4 to 14 m/s, along a line held for three
+          // seconds: some of them fill the tank, and some are too high, too slow, or landed on the water
+          skimOver(between(0, 3), between(4, 14));
+        },
+      },
+      {
+        name: 'over a fire',
+        places: true,
+        weight: 3,
+        go() {
+          // over a patch of a fire, 12 to 35 m up, drifting: with a full tank some drop, and some are too high
+          const fire = aFire();
+          const states = game.fire(fire.id).states;
+          // a player flies at the flames: a patch that burns, if a few tries find one, and any if not
+          let k = Math.floor(random() * fire.patches.length);
+          for (let tries = 0; tries < 6 && states[k] !== PATCH.burning; tries++)
+            k = Math.floor(random() * fire.patches.length);
+          overFire(fire, k, between(12, 35));
         },
       },
       {

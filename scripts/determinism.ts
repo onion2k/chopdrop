@@ -2,7 +2,7 @@
  * The same seed, played twice, giving the same game, checked a hash at a time, so a run that parts from itself says
  * at which frame.
  *
- *   npm run determinism                    seeds 1-10, 3600 frames each
+ *   npm run determinism                    seeds 1-13, 5400 frames each
  *   npm run determinism -- --seeds 1-12 --frames 7200
  *
  * Everything that holds the game to a figure rests on this: the pace gate, the fuzzer replaying a failure by seed,
@@ -44,7 +44,8 @@ export interface TwiceResult {
  * how it is turned and tilted, its rotor; which level is going (−1 for none) and where it has got to; what the starts
  * are loading and which pad they have blocked; the level guided to (−1 for none); every tree moving and how it leans;
  * the best times kept; the structures collected, how many and which, in order; the packages found, the same, with
- * what the radar hears and its clock; and the clock. Two games with the same hash are the same game, down to the last
+ * what the radar hears and its clock; the tank, full and how far it is filled, and the state of each fire's patches in
+ * order; and the clock. Two games with the same hash are the same game, down to the last
  * bit of every float.
  */
 export function hashGame(game: Game): string {
@@ -86,15 +87,20 @@ export function hashGame(game: Game): string {
   for (const id of game.finds.ids) for (let k = 0; k < id.length; k++) eat(id.charCodeAt(k));
   eat(game.finds.nearest);
   eat(game.finds.until);
+  eat(game.tank.full ? 1 : 0);
+  eat(game.tank.filling);
+  for (const fire of game.fires) for (let k = 0; k < fire.states.length; k++) eat(fire.states[k]);
   eat(game.t);
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 /**
- * The default run: seeds 1 to `seeds`, `frames` each. A flight of a minute gets from home to the start of one level and
- * not much further, so ten seeds, each beginning at its own level, are what it takes for the run to begin all ten.
+ * The default run: seeds 1 to `seeds`, `frames` each. A flight gets from home to the start of one level and not much
+ * further, so thirteen seeds, each beginning at its own level, are what it takes for the run to begin all thirteen. The
+ * far fire is the slowest to begin, since its water is 500 m from home and it takes the first drop to do it: 88 s
+ * of game, so a run is 90 s and not the minute the ten before it took.
  */
-export const DEFAULT = { seeds: 10, frames: 3600 };
+export const DEFAULT = { seeds: 13, frames: 5400 };
 
 /**
  * Which level a seed's flight begins at, of `count`: each seed its own in turn, so that the default run begins every

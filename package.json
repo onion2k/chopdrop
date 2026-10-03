@@ -22,7 +22,7 @@
     "fuzz": "esbuild scripts/fuzz.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/fuzz.mjs --log-level=warning && node node_modules/.cache/scripts/fuzz.mjs",
     "determinism": "esbuild scripts/determinism-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/determinism.mjs --log-level=warning && node node_modules/.cache/scripts/determinism.mjs",
     "leaks": "esbuild scripts/leak-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/leaks.mjs --log-level=warning && node node_modules/.cache/scripts/leaks.mjs",
-    "leaks:check": "esbuild scripts/leak-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/leaks.mjs --log-level=warning && node node_modules/.cache/scripts/leaks.mjs --minutes 10",
+    "leaks:check": "esbuild scripts/leak-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/leaks.mjs --log-level=warning && node node_modules/.cache/scripts/leaks.mjs --minutes 15",
     "pace": "esbuild scripts/pace-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/pace.mjs --log-level=warning && node node_modules/.cache/scripts/pace.mjs",
     "pace:check": "esbuild scripts/pace-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/scripts/pace.mjs --log-level=warning && node node_modules/.cache/scripts/pace.mjs --check",
     "check": "npm run --silent check:quick && npm run --silent test:slow && npm run --silent fuzz && npm run --silent determinism && npm run --silent leaks:check && npm run --silent pace:check && npm run --silent smoke",

@@ -11,16 +11,19 @@ The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
 from a recipe, its trees bowing in the rotor's downwash, seven structures
 (two bridges and five pairs of towers) that stand solid in every level and
-are collected by flying through them, and ten levels: four deliveries, two
-ring trials, a course and three rescues. The game opens flying free from
-home, nothing locked: a level begins where its first step is done, on a pad
-with a crate waiting, through a start ring or the towers, or by holding a
-hover over a person waiting to be winched up, one at a time, and the best time on
-each is kept in a save, with the structures collected and the ten hidden
-packages found, a radar in the corner pinging faster as one is neared.
-Water bombing is still to come (the plan is
-`~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
-physics. The template's stub, a sled
+are collected by flying through them, and thirteen levels: four
+deliveries, two ring trials, a course, three rescues and three fires. The
+game opens flying free from home, nothing locked: a level begins where its
+first step is done, on a pad with a crate waiting, through a start ring or
+the towers, by holding a hover over a person waiting to be winched up, or
+by the first drop of water that hits a fire, one at a time, and the best
+time on each is kept in a save, with the structures collected and the ten
+hidden packages found, a radar in the corner pinging faster as one is
+neared. The water is scooped by skimming a lake or the sea, into a bucket
+hung only while it is in use; the fires burn in flames and smoke drawn by
+the renderer's particles. Every part of the plan
+(`~/.claude/plans/glimmering-shimmying-wigderson.md`) has landed, and there
+is no physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
 stub and every gate that held it: it is the model to copy from, and
 `git show eda26d8:<path>` reads any of it.
@@ -71,8 +74,8 @@ The game itself is held too, played by the autopilot:
 | Property                                              | Held to                                            | Held by       |
 | ----------------------------------------------------- | -------------------------------------------------- | ------------- |
 | Each level flown to its end, game minutes, median 1-4 | `scripts/pace-baseline.json`, each ± 2%, both ways | `pace:check`  |
-| The same seed played twice is the same game           | seeds 1-10, 3600 frames, hashed every 300          | `determinism` |
-| What is kept stays bounded over ten game minutes      | ceilings in `scripts/leaks.ts`                     | `leaks:check` |
+| The same seed played twice is the same game           | seeds 1-13, 5400 frames, hashed every 300          | `determinism` |
+| What is kept stays bounded over fifteen game minutes  | ceilings in `scripts/leaks.ts`                     | `leaks:check` |
 
 The autopilot flies the same way every run and, with nothing in the game
 drawing on chance yet, on every seed, so the pace does not wobble and is
@@ -94,7 +97,8 @@ back with the first body.
     npm run smoke          the game in headless Chromium on the real GPU (Playwright, smoke/)
     npm run look           the scenes held to the pictures in smoke/screens, to the pixel
     npm run determinism    seeds flown twice by the autopilot, the same each time
-    npm run leaks          an hour flown, watching what is kept (leaks:check, in the check, is ten minutes)
+    npm run leaks          an hour flown, watching what is kept (leaks:check, in the check, is fifteen minutes,
+                           the least that reaches the last fire)
     npm run pace           game minutes to fly each level to its end (pace:check holds them; -- --update writes them)
 
 A unit test is allowed thirty seconds, and `vitest.config.ts` says why: the
@@ -114,8 +118,17 @@ says why. Look at every picture.
   done. It knows nothing of the renderer or the page; what happens in it is
   told through the `GameEvents` handed in. With nothing going,
   `src/starts.ts` says when the helicopter has done a level's first step:
-  a full load on a crate's pad, or a start ring or opening flown through;
-  a pad a level ended on starts nothing until the helicopter lifts off.
+  a full load on a crate's pad, a start ring or opening flown through, a
+  hover held over a person, or a drop that puts out some of a fire; a pad a
+  level ended on starts nothing until the helicopter lifts off.
+  `src/water.ts` is the tank, the helicopter's and no level's: filled by a
+  skim over open water (`SCOOP`, the island's lakes and sea mapped once an
+  island by `openWaterOf`, never a river) and emptied by a drop on a fire
+  (`DROP`). `src/fire.ts` is a fire's patches, unburnt, burning or out:
+  spread on a fixed beat while its level is going (`SPREAD`), put out by a
+  drop's splash, and lit again at its start `FIRE.relight` after its level
+  stops or its last change; the places are `FIRES` in `arena.ts`, each lit
+  with `FIRE_LIT` patches, which no single drop can reach all of.
   `src/mission.ts` is the level going, or none: `begin` starts it with its
   first step done, and its steps are done in order (a parcel picked up, a
   parcel dropped, a ring or an opening flown through, a landing), the
@@ -142,7 +155,14 @@ says why. Look at every picture.
   game while it is up. `src/scene.ts` draws a crate on the pad of every
   delivery not going, a chequered flag at every start, a gold collar on
   each collected tower and gold rails on each collected bridge, and a blue
-  crate on every package not found. The HUD's corner badge is the radar.
+  crate on every package not found, the fires' ground glowing or burnt, and
+  the bucket on its line while it is in use (`src/bucket.ts`). The HUD's
+  corner badges are the radar and the tank. `src/effects.ts` is what the
+  page emits into the renderer's particles each frame it draws, by rates in
+  game seconds: the flames, the smoke, the rescues' flares and a drop's
+  spray, held inside the pool's ring by a test, and the rotor's air handed
+  to the renderer as a wash. Particles move only when a frame is drawn, so
+  they are emitted in `draw`, and `step(n)`, which draws once, emits none.
   There is no game logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
@@ -296,6 +316,23 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   fuzzer's "to a rescue"; flown by key and touch in `smoke/rescue.spec.ts`
   and by the play-through; pictured (`rescue-far.png`, `rescue-waiting.png`,
   `rescue-winch.png`, `rescue-going.png`, `rescue-toast.png`).
+- **The fire**, for a level begun by what it is done with, and for
+  anything drawn in particles: `douse` and `fire` steps in `mission.ts`,
+  the patches in `fire.ts` and the tank in `water.ts`, stepped by
+  `game.ts` and begun by `starts.ts`; the places in `FIRES` (`arena.ts`),
+  found by script and pinned in `test/levels.test.ts` (dry, in a wood, a
+  run of open water to skim, no drop reaching every lit patch); flown by
+  the autopilot, skimming the fire's run and diving on the patch a drop
+  puts out the most of; ruled by `checkTank` and `checkFires`; skimmed and
+  flown over by the fuzzer's "skim" and "over a fire"; the ground and the
+  bucket drawn by `scene.ts`, the flames and smoke by `effects.ts`, the
+  words, the loader and the tank badge by `hud.ts`; read through
+  `debug.ts` (`state().tank`, `fires`, `particles`, `bucket`, `badge`,
+  `ground`, and `content().fires`); flown by key and touch in
+  `smoke/fire.spec.ts` and put out by the play-through; its frame told by
+  the perf gate over the west fire; pictured with `stepDrawn`
+  (`fire-far.png`, `fire-near.png`, `fire-chase.png`, `fire-drop.png`,
+  `scooping.png`, `fire-going.png`, `fire-phone.png`).
 - **The course**, for a level of more than one kind of step: `gate` and
   `land` steps in `mission.ts`, a gate passed by the ring's rule with a
   rectangle for its opening; put into words by `hud.ts`; flown by the
@@ -422,7 +459,9 @@ For anything new in the arena, check what it does:
 
 Use headless Playwright (`start()` in `smoke/game.ts`) for anything seen or
 measured; the in-app browser pane pauses when hidden. Control time through
-the API: `pause()`, `seed(n)`, then `step(frames)`, never a timeout; fly
+the API: `pause()`, `seed(n)`, then `step(frames)`, never a timeout, or
+`stepDrawn(frames)` where particles are to be seen, which draws every
+frame so that they move with the game; fly
 with `fly()` or real keys, and take a fixed view with `look()`. Never
 write over the player's save: a test's goes in through
 `start(page, { save })`, which boots flying free at home with nothing

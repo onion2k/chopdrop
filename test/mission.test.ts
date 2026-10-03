@@ -14,6 +14,7 @@ import {
   inWindow,
   Mission,
   onPad,
+  type FireWatch,
   RING as RING_RULES,
   WINCH,
   type Winch,
@@ -28,23 +29,29 @@ const { pads } = theIsland();
 const MIDDLE = HELICOPTER.size.middle;
 
 /** A mission whose events are written down as they are told, and what it read of the level at the moment of the end. */
-function missioned() {
+function missioned(fires?: FireWatch) {
   const told: string[] = [];
   const during: { level: Level | null }[] = [];
-  const mission: Mission = new Mission(pads, {
-    started: (id) => told.push(`started ${id}`),
-    abandoned: (id) => told.push(`abandoned ${id}`),
-    loaded: (pad) => told.push(`loaded ${pad}`),
-    delivered: (pad) => told.push(`delivered ${pad}`),
-    passed: (ring, of) => told.push(`passed ${ring} ${of}`),
-    through: (label) => told.push(`through ${label}`),
-    landed: (pad) => told.push(`landed ${pad}`),
-    winched: (id) => told.push(`winched ${id}`),
-    finished: (seconds) => {
-      told.push(`finished ${seconds.toFixed(3)}`);
-      during.push({ level: mission.level });
+  const mission: Mission = new Mission(
+    pads,
+    {
+      started: (id) => told.push(`started ${id}`),
+      abandoned: (id) => told.push(`abandoned ${id}`),
+      loaded: (pad) => told.push(`loaded ${pad}`),
+      delivered: (pad) => told.push(`delivered ${pad}`),
+      passed: (ring, of) => told.push(`passed ${ring} ${of}`),
+      through: (label) => told.push(`through ${label}`),
+      landed: (pad) => told.push(`landed ${pad}`),
+      winched: (id) => told.push(`winched ${id}`),
+      finished: (seconds) => {
+        told.push(`finished ${seconds.toFixed(3)}`);
+        during.push({ level: mission.level });
+      },
+      fireOut: (id) => told.push(`fire out ${id}`),
     },
-  });
+    undefined,
+    fires,
+  );
   /** Steps `seconds` of game with the helicopter landed on pad `pad`, as set down there. */
   const sit = (pad: number, seconds: number) => {
     const p = pads[pad];
@@ -454,18 +461,24 @@ describe('a course: openings to fly through, and a pad to land on', () => {
 describe('the levels of the arena, begun', () => {
   it.each(LEVELS.map((level) => level.id))('begins %s with its first step done and tells it', (id) => {
     const level = LEVELS.find((l) => l.id === id)!;
-    const { mission, told } = missioned();
+    // with every fire burning, so a fire's level has its fire to put out
+    const { mission, told } = missioned({ burning: () => 6, nearest: () => false });
     mission.begin(level);
     const first = level.steps[0];
     expect(told).toEqual([
       `started ${id}`,
-      first.kind === 'pickup'
-        ? `loaded ${first.pad}`
-        : first.kind === 'ring'
-          ? `passed 1 ${level.steps.filter((s) => s.kind === 'ring').length}`
-          : first.kind === 'winch'
-            ? `winched ${id}`
-            : `through ${first.kind === 'gate' ? first.label : ''}`,
+      // a douse is no event of the mission's: the drop that did it is the game's to tell
+      ...(first.kind === 'douse'
+        ? []
+        : [
+            first.kind === 'pickup'
+              ? `loaded ${first.pad}`
+              : first.kind === 'ring'
+                ? `passed 1 ${level.steps.filter((s) => s.kind === 'ring').length}`
+                : first.kind === 'winch'
+                  ? `winched ${id}`
+                  : `through ${first.kind === 'gate' ? first.label : ''}`,
+          ]),
     ]);
     expect(mission.next).toBe(1);
   });
@@ -656,5 +669,135 @@ describe('a winch step', () => {
     sit(0, 0.1);
     expect(told.at(-2)).toBe('landed 0');
     expect(mission.level).toBeNull();
+  });
+});
+
+describe('a fire step', () => {
+  const flat = () => 0;
+  /** A fire that burns as many patches as `burning.n` says, whose nearest is the one at `at`. */
+  const watched = () => {
+    const burning = { n: 3 };
+    const at = { x: 40, y: 60 };
+    const asked: string[] = [];
+    return {
+      burning,
+      at,
+      asked,
+      watch: {
+        burning: (id: string) => (id === 'test-fire' ? burning.n : 0),
+        nearest: (id: string, x: number, y: number, out: { x: number; y: number; z: number }) => {
+          asked.push(`${id} ${x} ${y}`);
+          if (id !== 'test-fire' || burning.n === 0) return false;
+          out.x = at.x;
+          out.y = at.y;
+          out.z = 70;
+          return true;
+        },
+      },
+    };
+  };
+  const FIRE_LEVEL: Level = {
+    id: 'test-fire',
+    name: 'Test fire',
+    kind: 'fire',
+    steps: [
+      { kind: 'douse', fire: 'test-fire' },
+      { kind: 'fire', fire: 'test-fire' },
+    ],
+  };
+  const aloft: Lander = { x: 10, y: 20, z: 30, landed: false };
+  const events = () => {
+    const told: string[] = [];
+    return {
+      told,
+      events: {
+        started: (id: string) => told.push(`started ${id}`),
+        fireOut: (id: string) => told.push(`fireOut ${id}`),
+        finished: (seconds: number) => told.push(`finished ${seconds.toFixed(3)}`),
+      },
+    };
+  };
+
+  it('is begun with its douse done, told started and nothing more, and wants the fire put out', () => {
+    const { told, events: e } = events();
+    const { watch } = watched();
+    const mission = new Mission(pads, e, flat, watch);
+    mission.begin(FIRE_LEVEL);
+    expect(told).toEqual(['started test-fire']);
+    expect(mission.next).toBe(1);
+    expect(mission.current?.kind).toBe('fire');
+  });
+
+  it('wants no pad, on either step', () => {
+    const { watch } = watched();
+    const mission = new Mission(pads, {}, flat, watch);
+    mission.begin(FIRE_LEVEL);
+    expect(mission.target).toBe(-1);
+    mission.abandon();
+    mission.begin({ ...FIRE_LEVEL, steps: [FIRE_LEVEL.steps[1], FIRE_LEVEL.steps[0], FIRE_LEVEL.steps[1]] });
+    expect(mission.current?.kind).toBe('douse');
+    expect(mission.target).toBe(-1);
+  });
+
+  it('wants the nearest burning patch, as the helicopter was last seen from it, and nowhere with none burning', () => {
+    const { watch, burning, asked } = watched();
+    const mission = new Mission(pads, {}, flat, watch);
+    mission.begin(FIRE_LEVEL);
+    mission.step(DT, aloft);
+    expect(mission.goal).toEqual({ x: 40, y: 60, z: 70 });
+    expect(asked.at(-1)).toBe('test-fire 10 20');
+    burning.n = 0;
+    expect(mission.goal).toBeNull();
+  });
+
+  it('is not done while a patch burns, however long, and is done when none does: told the fire out, then finished', () => {
+    const { told, events: e } = events();
+    const { watch, burning } = watched();
+    const mission = new Mission(pads, e, flat, watch);
+    mission.begin(FIRE_LEVEL);
+    for (let f = 0; f < 600; f++) mission.step(DT, aloft);
+    expect(mission.level).toBe(FIRE_LEVEL);
+    expect(mission.time).toBeCloseTo(10, 6);
+    burning.n = 1;
+    mission.step(DT, aloft);
+    expect(mission.level).toBe(FIRE_LEVEL);
+    burning.n = 0;
+    mission.step(DT, aloft);
+    expect(mission.level).toBeNull();
+    expect(told).toEqual(['started test-fire', 'fireOut test-fire', `finished ${(602 * DT).toFixed(3)}`]);
+  });
+
+  it('is done as it begins if no patch burns, with no time to keep', () => {
+    const { told, events: e } = events();
+    const { watch, burning } = watched();
+    burning.n = 0;
+    const mission = new Mission(pads, e, flat, watch);
+    mission.begin(FIRE_LEVEL);
+    expect(told).toEqual(['started test-fire', 'fireOut test-fire', 'finished 0.000']);
+    expect(mission.level).toBeNull();
+  });
+
+  it('knows no fire when it is handed none: a fire step of a level with no fires to watch is done at once', () => {
+    const mission = new Mission(pads, {});
+    mission.begin(FIRE_LEVEL);
+    expect(mission.level).toBeNull();
+  });
+
+  it('does a douse step that is not the first when a drop that puts a patch of its fire out is told, and no other', () => {
+    const { told, events: e } = events();
+    const { watch } = watched();
+    const mission = new Mission(pads, e, flat, watch);
+    mission.begin({ ...FIRE_LEVEL, steps: [FIRE_LEVEL.steps[1], FIRE_LEVEL.steps[0], FIRE_LEVEL.steps[1]] });
+    mission.dropped('test-fire', 0);
+    mission.dropped('another-fire', 4);
+    expect(mission.next).toBe(1);
+    mission.dropped('test-fire', 2);
+    expect(mission.next).toBe(2);
+    // and a drop is nothing to a level whose step is not a douse, or to nothing going
+    mission.dropped('test-fire', 2);
+    expect(mission.next).toBe(2);
+    mission.abandon();
+    mission.dropped('test-fire', 2);
+    expect(told.filter((t) => t.startsWith('finished'))).toEqual([]);
   });
 });

@@ -90,9 +90,14 @@ export function thickestWood(): { x: number; y: number; trees: number } {
   return (densest = best);
 }
 
-/** Each kind's height, spread and the most it leans in play, in the order of `TREE_KINDS`, as the game hands the canopy them. */
+/**
+ * Each kind's height, spread and the most it leans in play, in the order of `TREE_KINDS`, as the game hands the canopy
+ * them: read off a game built once, since the camera's tests ask for them every frame they step, and a game built for
+ * each was most of what those tests cost.
+ */
+let kinds: readonly CanopyKind[] | undefined;
 export function canopyKinds(): readonly CanopyKind[] {
-  return islandCanopy().kinds;
+  return (kinds ??= islandCanopy().kinds);
 }
 
 /** What the camera keeps over on the island, as the game builds it. */

@@ -187,6 +187,54 @@ test('the end on the home pad: the toast "Rescued!" with the time, and the best 
   expect(problems).toEqual([]);
 });
 
+test('the flare is particles: they rise while the person waits and stop when the winch begins, and come back if it is broken off', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  /** The flare's particles emitted over `frames` frames drawn, and how many flares were lit at the end. */
+  const flares = (frames: number) =>
+    page.evaluate((n) => {
+      const g = window.game!;
+      let born = 0;
+      for (let f = 0; f < n; f++) {
+        g.stepDrawn(1);
+        born += g.state().particles.flares;
+      }
+      return { born, lit: g.state().smoke };
+    }, frames);
+  // the camera by the walker, so the flare is in range: waiting, the person's flare rises, and no other is near enough
+  const w = await walker(page);
+  await page.evaluate(([x, y]) => window.game!.look(x, y, { azimuth: -2.2, polar: 1.15, radius: 120 }), [
+    w.x,
+    w.y,
+  ] as const);
+  const waiting = await flares(120);
+  expect(waiting.lit).toBe(3);
+  expect(waiting.born, 'the flare rises while they wait').toBeGreaterThan(30);
+  // winched: held in the window, the loader part way; the flare is out
+  await over(page);
+  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
+  await page.evaluate(() => window.game!.stepDrawn(60));
+  const rope = await state(page);
+  expect([rope.winch.spot, rope.smoke]).toEqual([WOOD, 2]);
+  // from the first frame of the winch on, none is born; the particles already in the air fade on their own
+  const winching = await flares(60);
+  expect(winching.born, 'none is born while the person is on the rope').toBe(0);
+  expect(winching.lit).toBe(2);
+  // broken off by climbing out of the window: the flare is lit again
+  await page.evaluate(() =>
+    window.game!.teleport(window.game!.state().helicopter.x, window.game!.state().helicopter.y, 40),
+  );
+  const back = await flares(120);
+  expect(back.lit).toBe(3);
+  expect(back.born).toBeGreaterThan(30);
+  await page.evaluate(() => window.game!.release());
+  expect((await state(page)).particles.refused).toBe(0);
+  expect(problems).toEqual([]);
+});
+
 test('holding the window over a person while another level goes does nothing', async ({ page }) => {
   const problems = watch(page);
   await start(page, { seed: 11, paused: true });
