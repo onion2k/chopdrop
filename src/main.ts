@@ -135,6 +135,9 @@ async function main() {
   renderer.look = { ...renderer.look, ...LOOK };
   renderer.post = { ...renderer.post, ...POST };
   renderer.fog = { ...noFog(MM_PER_UNIT), ...HAZE };
+  // the smoke and the spray hazed by their own distance, and not by what lies behind them: over open sky that is the
+  // far end of the haze, which all but erased a fire's column against the sky, where a player looks for it from afar
+  renderer.particleFog = 'own';
   const env = bakeEnvironment(ctx, 'daylight', { size: 128, mips: 6 });
   renderer.setEnvironment(env.specular, env.brdf, env.mips);
   renderer.camera.fov = 40;

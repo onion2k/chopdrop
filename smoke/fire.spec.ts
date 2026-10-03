@@ -336,6 +336,33 @@ test('450 m from the west fire the column of smoke is plainly in the picture, ov
   expect(problems).toEqual([]);
 });
 
+/**
+ * The west fire's column where it stands against open sky from 450 m: the patch of sky over the fire, above the
+ * horizon. The renderer's haze took a particle or a sprite by what lay behind it, the far end of the haze over open
+ * sky, and left the column there all but lost (`BEHIND` smoke pixels, measured on a1189c2); hazed by its own distance
+ * it stands plain, which is what a player looks for from across the island.
+ */
+const WEST_SKY = { x0: 520, x1: 760, y0: 0, y1: 170 };
+const BEHIND = { pixels: 2 };
+
+test('450 m from the west fire its column stands plain against the sky, hazed by its own distance', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true, save: { best: {} } });
+  await sceneAfar(page, 450);
+  for (const id of ['#stats', '#hud'])
+    await page.locator(id).evaluate((el: HTMLElement) => (el.style.display = 'none'));
+  const smoke = await smokePixels(page, await page.screenshot(), WEST_SKY);
+  console.log(
+    `smoke pixels in the sky over the west fire from 450 m: ${smoke} (hazed by what is behind: ${BEHIND.pixels})`,
+  );
+  // 13,861 when this was written, against the 2 there were: held at under half of it, and a thousand times the before
+  expect(smoke, 'the west column against the sky').toBeGreaterThan(Math.max(6000, 1000 * BEHIND.pixels));
+  expect(problems).toEqual([]);
+});
+
 test('the column of smoke is drawn for every fire that burns, from 900 m as from 100', async ({ page }) => {
   test.setTimeout(120_000);
   const problems = watch(page);

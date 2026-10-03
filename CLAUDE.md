@@ -167,6 +167,9 @@ says why. Look at every picture.
   the tall column of smoke over each burning fire, the renderer's sprites
   placed from the game's time, which costs the ring nothing and is drawn
   however far off the camera is, so the fires are seen across the island.
+  The particles and sprites are hazed by their own distance
+  (`particleFog: 'own'`): hazed by what lay behind them, a column against
+  open sky was lost to the far end of the haze.
   There is no game logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
