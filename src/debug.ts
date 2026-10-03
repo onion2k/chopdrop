@@ -25,7 +25,7 @@
  * The types are shared with the smoke tests, so a test that calls something
  * that is not here does not compile.
  */
-import { TREE_KINDS, type Collectible, type PackagePlace, type TreeKind } from './arena';
+import { TREE_KINDS, type Collectible, type PackagePlace, type RescueSpot, type TreeKind } from './arena';
 import type { ChaseCamera, Point, View } from './chase';
 import type { Game, LastLevel } from './game';
 import { HELICOPTER, type Bounds, type Controls } from './helicopter';
@@ -110,6 +110,14 @@ export interface GameState {
   gold: number;
   /** How many crates of hidden packages the scene is drawing: one on each place of a package not found. */
   crates: number;
+  /** Who is being winched up (the rescue level whose person it is, null for nobody) and how far up they are, 0 to 1: the loader's share. */
+  winch: { spot: string | null; share: number };
+  /** How many people the scene has standing waiting on the ground: not those aboard, nor the one on the rope. */
+  people: number;
+  /** How many people's smoke is rising: one for each person waiting, and none for the one being winched. */
+  smoke: number;
+  /** Whether the rope is drawn, with the person on it: while one is being winched. */
+  rope: boolean;
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -200,6 +208,8 @@ export interface GameApi {
     collectibles: Collectible[];
     /** The hidden packages, each where it lies, with `z` the ground under it. */
     packages: PackagePlace[];
+    /** Where each person waits to be winched up, with `z` the ground under them; copies. */
+    rescues: RescueSpot[];
   };
   /** The height of the ground at a point: the land, the water over it or a pad's top. A helicopter there rests at `floor`, which on a slope is a little higher. */
   groundAt(x: number, y: number): number;
@@ -216,7 +226,7 @@ export interface GameApi {
 
   /**
    * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
-   * `delivered 1`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
+   * `delivered 1`, `winched wood-rescue`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
    * `abandoned first-delivery`, `collected gorge-bridge 1 7`, `found east-wood 1 10`.
    */
   events(): string[];
@@ -295,6 +305,12 @@ export interface DebugHost {
   gold(): number;
   /** How many crates of packages the scene has written at a size. */
   crates(): number;
+  /** How many people the scene has written standing waiting. */
+  people(): number;
+  /** How many people's smoke the scene has written rising. */
+  smoke(): number;
+  /** Whether the scene has written the rope. */
+  rope(): boolean;
   /** The radar's badge as the page last drew it. */
   radar(): { badge: 'quiet' | 'heard'; step: number };
   /** The autopilot flying in place of the keys and touch, or not, told the level or the structure to do while nothing is going. */
@@ -372,6 +388,10 @@ export function createApi(host: DebugHost): GameApi {
         radar: { nearest: game.finds.nearest, pinged: game.finds.pinged, ...host.radar() },
         gold: host.gold(),
         crates: host.crates(),
+        winch: { spot: game.winch.spot, share: game.winch.share },
+        people: host.people(),
+        smoke: host.smoke(),
+        rope: host.rope(),
       };
     },
     content: () => ({
@@ -389,6 +409,12 @@ export function createApi(host: DebugHost): GameApi {
         blocks: blocks.map((block) => ({ ...block })),
       })),
       packages: game.finds.places.map(({ id, x, y, z }) => ({ id, x, y, z })),
+      // read from the levels that begin with a winch, whose names are the spots' own
+      rescues: game.levels.flatMap(({ id, name, steps: [first] }) =>
+        first.kind === 'winch'
+          ? [{ id, name, who: first.who, where: first.where, x: first.x, y: first.y, z: first.z }]
+          : [],
+      ),
     }),
     groundAt: (x, y) => game.island.ground.heightAt(x, y),
     floorAt: (x, y) => helicopter.floorAt(x, y),

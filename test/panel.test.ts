@@ -1,6 +1,6 @@
 /** The panel's one sum, headless: how its subtitle counts the levels done. The rest of it is DOM, worked in smoke/panel.spec.ts. */
 import { describe, expect, it } from 'vitest';
-import { packageRows, panelSubtitle, structureRows } from '../src/panel';
+import { kindLabel, packageRows, panelSubtitle, structureRows } from '../src/panel';
 
 describe('the subtitle', () => {
   it('counts the levels with a best time, and says how a level is found', () => {
@@ -71,5 +71,14 @@ describe("the packages' line", () => {
   it('leaves out of the count a name the game does not have, and a name found twice', () => {
     expect(packageRows(all, ['from-a-later-game', 'p3']).count).toBe('1 of 10');
     expect(packageRows(all, ['p3', 'p3']).count).toBe('1 of 10');
+  });
+});
+
+describe("a level's kind label", () => {
+  it('names a rescue, "Rescue", and no other kind, which the panel leaves as its name says', () => {
+    expect(kindLabel('rescue')).toBe('Rescue');
+    expect(kindLabel('delivery')).toBeNull();
+    expect(kindLabel('rings')).toBeNull();
+    expect(kindLabel('course')).toBeNull();
   });
 });

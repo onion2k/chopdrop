@@ -173,6 +173,7 @@ async function main() {
       abandoned: (id) => tell(`abandoned ${id}`),
       loaded: (pad) => tell(`loaded ${pad}`),
       delivered: (pad) => tell(`delivered ${pad}`),
+      winched: (id) => tell(`winched ${id}`),
       passed: (ring, of) => tell(`passed ${ring} ${of}`),
       through: (label) => tell(`through ${label}`),
       landed: (pad) => tell(`landed ${pad}`),
@@ -277,7 +278,7 @@ async function main() {
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
   function upload() {
-    scene.write(game.helicopter, game.sway, game.mission, game.collection.ids, game.finds.ids);
+    scene.write(game.helicopter, game.sway, game.mission, game.collection.ids, game.finds.ids, game.winch);
     scene.pools.forEach((pool, k) => {
       if (scene.changed[k]) renderer.move(k, pool);
     });
@@ -381,6 +382,9 @@ async function main() {
     toast: () => hud.toast,
     gold: () => scene.gold,
     crates: () => scene.packagesDrawn,
+    people: () => scene.peopleDrawn,
+    smoke: () => scene.smokeDrawn,
+    rope: () => scene.ropeDrawn,
     radar: () => hud.radarShown,
     setAutopilot: (on, id) => {
       pilot = on ? new Autopilot(game) : null;

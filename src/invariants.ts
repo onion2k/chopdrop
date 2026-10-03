@@ -21,7 +21,7 @@ import { RADAR } from './finds';
 import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
-import { DELIVERY, onPad } from './mission';
+import { inWindow, loadFor, onPad, type Step } from './mission';
 import type { Sway } from './sway';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
@@ -182,22 +182,26 @@ export function checkProgress(game: Game): string[] {
  * no pad or place wanted, no clock and no loading. With a level going, it is past its first step, which began it, and
  * short of its last, which ends it; the pad it wants is one of the island's; its loading is a number from nothing to
  * short of a full load, and runs only while the helicopter is landed on the pad it is wanted on; and its clock is a
- * number. The starts' loader is a number from nothing to short of a full load, and runs only with nothing going and
- * the helicopter landed on a pickup pad that is not blocked, since nothing starts while a level is going, nor from the
- * pad a level has just ended on.
+ * number. A winch step's loading likewise runs only while the helicopter is in the window over the person, and short of
+ * the hold. The starts' loader is a number from nothing to short of a full load (a winch's hold, in a rescue's window,
+ * and a parcel's load otherwise), and runs only with nothing going and the helicopter landed on a pickup pad that is
+ * not blocked or in the window of some rescue, since nothing starts while a level is going, nor from the pad a level
+ * has just ended on.
  */
 export function checkMission(game: Game): string[] {
   const out: string[] = [];
   const d = game.mission;
   const { starts } = game;
   const level = d.level;
-  if (!Number.isFinite(starts.loading) || starts.loading < 0 || starts.loading >= DELIVERY.load)
-    out.push(`the starts' loading reads ${starts.loading}, and runs from 0 to short of ${DELIVERY.load}`);
+  const winching = inSomeWindow(game);
+  const startLimit = loadFor(winching ?? { kind: 'land', pad: 0 });
+  if (!Number.isFinite(starts.loading) || starts.loading < 0 || starts.loading >= startLimit)
+    out.push(`the starts' loading reads ${starts.loading}, and runs from 0 to short of ${startLimit}`);
   else if (starts.loading > 0) {
     if (level) out.push(`the starts are loading while a level is going: ${starts.loading.toFixed(3)}`);
-    else if (!onPickupPad(game))
+    else if (!winching && !onPickupPad(game))
       out.push(
-        `the starts' loading runs off a pickup pad: ${starts.loading.toFixed(3)} with the helicopter not landed on one that is not blocked`,
+        `the starts' loading runs off a pickup pad or out of a rescue's window: ${starts.loading.toFixed(3)} with the helicopter not landed on a pickup pad that is not blocked, nor in a window`,
       );
   }
   if (!level) {
@@ -213,12 +217,32 @@ export function checkMission(game: Game): string[] {
     return [...out, `no such step: the level is at step ${d.next} of ${steps}`];
   if (d.target < -1 || d.target >= game.island.pads.length || !Number.isInteger(d.target))
     return [...out, `no such pad: the level wants pad ${d.target} of ${game.island.pads.length}`];
-  if (!Number.isFinite(d.loading) || d.loading < 0 || d.loading >= DELIVERY.load)
-    out.push(`the loading reads ${d.loading}, and runs from 0 to short of ${DELIVERY.load}`);
-  else if (d.loading > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
+  const step = d.current!;
+  const limit = loadFor(step);
+  if (!Number.isFinite(d.loading) || d.loading < 0 || d.loading >= limit)
+    out.push(`the loading reads ${d.loading}, and runs from 0 to short of ${limit}`);
+  else if (d.loading > 0 && step.kind === 'winch') {
+    if (!inWindow(game.helicopter, step, groundAt(game)))
+      out.push(`the loading runs out of the winch's window: ${d.loading.toFixed(3)} with the helicopter not in it`);
+  } else if (d.loading > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
     out.push(`the loading runs off the pad: ${d.loading.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
   if (!Number.isFinite(d.time) || d.time < 0) out.push(`the level's clock reads ${d.time}`);
   return out;
+}
+
+/** The height of the ground at a point, as the game's island has it, which a winch's window is measured over. */
+function groundAt(game: Game): (x: number, y: number) => number {
+  return (x, y) => game.island.ground.heightAt(x, y);
+}
+
+/** The winch the helicopter is in the window of, of some level that begins with one; null for none. Not run each frame. */
+function inSomeWindow(game: Game): Step | null {
+  const at = groundAt(game);
+  for (const level of game.levels) {
+    const first = level.steps[0];
+    if (first.kind === 'winch' && inWindow(game.helicopter, first, at)) return first;
+  }
+  return null;
 }
 
 /** Whether the helicopter is landed on a pad some level begins from, which is not the one blocked. */

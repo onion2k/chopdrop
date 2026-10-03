@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { COLLECTIBLES, LEVELS, PACKAGES, theIsland, type Collectible } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, theIsland, type Collectible } from '../src/arena';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
-import { DELIVERY, RING, RINGS, type Gate, type Level, type Ring } from '../src/mission';
+import { DELIVERY, RING, RINGS, WINCH, type Gate, type Level, type Ring } from '../src/mission';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 import { DT, newGame } from './helpers';
@@ -706,5 +706,123 @@ describe('the packages found, in the game', () => {
     expect(told).toHaveLength(1);
     expect(game.mission.level?.id).toBe('ring-trial');
     expect(checkInvariants(game)).toEqual([]);
+  });
+});
+
+describe('a rescue, in the game', () => {
+  const [spot] = RESCUE_SPOTS;
+  const played = () => {
+    const told: string[] = [];
+    const game = new Game({
+      random: seeded(1),
+      events: {
+        started: (id) => told.push(`started ${id}`),
+        abandoned: (id) => told.push(`abandoned ${id}`),
+        loaded: (pad) => told.push(`loaded ${pad}`),
+        winched: (id) => told.push(`winched ${id}`),
+        landed: (pad) => told.push(`landed ${pad}`),
+        finished: (id, seconds, best) => told.push(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`),
+      },
+    });
+    return { game, told };
+  };
+  /** The helicopter hovering `up` over the ground at the spot, `across` from it, then stepped `seconds` held there. */
+  const hoverOver = (game: Game, seconds: number, up = 10, across = 0) => {
+    game.helicopter.placeAbove(spot.x + across, spot.y, up, 0);
+    for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+  };
+
+  it('begins by holding the window for 3 s, told started then winched, and wants the home pad', () => {
+    const { game, told } = played();
+    hoverOver(game, WINCH.hold - 0.3);
+    expect(game.mission.level).toBeNull();
+    expect(told).toEqual([]);
+    hoverOver(game, 0.6);
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(told).toEqual(['started wood-rescue', 'winched wood-rescue']);
+    expect([game.mission.target, game.mission.next, game.starts.loading]).toEqual([0, 1, 0]);
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it('is flown through to the home pad, with its time kept as the best', () => {
+    const { game, told } = played();
+    hoverOver(game, WINCH.hold + 0.5);
+    const home = game.island.pads[0];
+    game.helicopter.placeAbove(home.x, home.y, 20, 0);
+    for (let f = 0; f < 600 && game.mission.level; f++) game.step(DT, { forward: 0, turn: 0, lift: -1 });
+    expect(game.mission.level).toBeNull();
+    expect(game.last?.id).toBe('wood-rescue');
+    expect(game.last!.seconds).toBeGreaterThan(0);
+    expect(game.progress.best.get('wood-rescue')).toBe(game.last!.seconds);
+    expect(told.slice(0, 2)).toEqual(['started wood-rescue', 'winched wood-rescue']);
+    expect(told.at(-1)).toMatch(/^finished wood-rescue [\d.]+ best$/);
+    expect(told.at(-2)).toBe('landed 0');
+  });
+
+  it('begins nothing while another level is going, however long the window is held', () => {
+    const { game, told } = played();
+    game.begin('first-delivery');
+    expect(told).toEqual(['started first-delivery', 'loaded 4']);
+    hoverOver(game, WINCH.hold + 2);
+    expect(game.mission.level?.id).toBe('first-delivery');
+    expect(told).toEqual(['started first-delivery', 'loaded 4']);
+    expect(game.starts.loading).toBe(0);
+  });
+
+  it('puts the helicopter at the start, hovering 10 m over the person, where holding it begins the level', () => {
+    const { game, told } = played();
+    game.moveToStart('wood-rescue');
+    expect([game.helicopter.x, game.helicopter.y]).toEqual([spot.x, spot.y]);
+    expect(game.helicopter.landed).toBe(false);
+    expect(game.mission.level).toBeNull();
+    for (let f = 0; f < Math.round((WINCH.hold + 0.5) / DT); f++)
+      game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(told[0]).toBe('started wood-rescue');
+  });
+
+  it('says which person is being winched and how far up they are, by the loader, and nobody otherwise', () => {
+    const { game } = played();
+    expect(game.winch).toEqual({ spot: null, who: '', share: 0 });
+    hoverOver(game, 1.5);
+    expect(game.winch.spot).toBe('wood-rescue');
+    expect(game.winch.who).toBe('the walker');
+    expect(game.winch.share).toBeCloseTo(0.5, 1);
+    expect(game.winch.share).toBeCloseTo(game.starts.loading / WINCH.hold, 6);
+    // out of the window, the rope has run back
+    hoverOver(game, 0.1, 20);
+    expect(game.winch).toEqual({ spot: null, who: '', share: 0 });
+    // the other spot, and a read that makes nothing
+    game.helicopter.placeAbove(RESCUE_SPOTS[2].x, RESCUE_SPOTS[2].y, 10, 0);
+    for (let f = 0; f < 30; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect([game.winch.spot, game.winch.who]).toEqual(['ledge-rescue', 'the climber']);
+    expect(game.winch).toBe(game.winch);
+    const first = game.winch;
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.winch).toBe(first);
+  });
+
+  it('winches nobody while a level is going, or when it is a pad that is loading, or once the person is aboard', () => {
+    const { game } = played();
+    game.begin('first-delivery');
+    hoverOver(game, 1);
+    expect(game.winch.spot).toBeNull();
+    const pad = game.island.pads[4];
+    game.abandon();
+    game.helicopter.place(pad.x, pad.y, 0, pad.yaw);
+    for (let f = 0; f < 30; f++) game.step(DT);
+    expect(game.starts.loading).toBeGreaterThan(0);
+    expect(game.winch.spot).toBeNull();
+    const again = played().game;
+    hoverOver(again, WINCH.hold + 0.5);
+    expect(again.mission.level?.id).toBe('wood-rescue');
+    expect(again.winch).toEqual({ spot: null, who: '', share: 0 });
+  });
+
+  it('begun at once, wherever the helicopter is, is past its winch', () => {
+    const { game, told } = played();
+    game.begin('ledge-rescue');
+    expect(told).toEqual(['started ledge-rescue', 'winched ledge-rescue']);
+    expect(game.mission.target).toBe(0);
   });
 });

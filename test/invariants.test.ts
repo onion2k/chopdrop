@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
-import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
-import { DELIVERY, RING, type Ring } from '../src/mission';
+import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS } from '../src/arena';
+import { DELIVERY, RING, WINCH, type Level, type Ring } from '../src/mission';
 import { checkCamera, checkCollection, checkFinds, checkInvariants } from '../src/invariants';
 import { RADAR } from '../src/finds';
 import { TREE_STRIDE } from '../src/island';
@@ -441,5 +441,77 @@ describe('what must hold of the packages found', () => {
     expect(checkFinds(game)).toEqual([]);
     game.finds.nearest = -1;
     expect(checkFinds(game).join('\n')).toMatch(/hears nothing/);
+  });
+});
+
+describe('what must hold of a winch', () => {
+  const [spot] = RESCUE_SPOTS;
+  /** The helicopter hovering `up` over the ground at `across` from the first spot. */
+  const over = (game: Game, up: number, across = 0) => game.helicopter.placeAbove(spot.x + across, spot.y, up, 0);
+
+  it('holds of a rescue begun by the window held, every step of the way', () => {
+    const { game } = newGame();
+    over(game, 10);
+    for (let f = 0; f < Math.round((WINCH.hold + 1) / DT); f++) {
+      game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+      expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+    }
+    expect(game.mission.level?.id).toBe('wood-rescue');
+  });
+
+  it('reports the starts loading in a rescue window as right, and under the limit for it', () => {
+    const { game } = newGame();
+    over(game, 10);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.starts.loading).toBeGreaterThan(0);
+    expect(checkInvariants(game)).toEqual([]);
+    // over the limit for a winch, which is longer than a pad's
+    game.starts.loading = WINCH.hold;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading reads 3/);
+    // over a pad's limit but under a winch's is right in the window
+    game.starts.loading = DELIVERY.load + 0.5;
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it('reports the starts loading out of every window, which is the rule broken', () => {
+    const { game } = newGame();
+    over(game, 16);
+    game.starts.loading = 1;
+    expect(checkInvariants(game).join('\n')).toMatch(
+      /the starts' loading runs off a pickup pad or out of a rescue's window/,
+    );
+    over(game, 10, 6);
+    expect(checkInvariants(game).join('\n')).toMatch(/runs off a pickup pad or out of a rescue's window/);
+    over(game, 4);
+    expect(checkInvariants(game).join('\n')).toMatch(/runs off a pickup pad or out of a rescue's window/);
+  });
+
+  it('holds a pad to the pad limit: over 1.5 on a pad is reported', () => {
+    const { game } = newGame();
+    const { pads } = game.island;
+    game.helicopter.placeAbove(pads[4].x, pads[4].y, 0, 0);
+    game.starts.loading = DELIVERY.load + 0.1;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading reads 1.6/);
+  });
+
+  it('reports the mission loading on a winch step outside its window, and at or over the hold', () => {
+    const { game } = newGame();
+    // a level whose second step is a winch, since a rescue's own is its first and is done as it begins
+    const [wood, beach] = ['wood-rescue', 'beach-rescue'].map((id) => LEVELS.find((l) => l.id === id)!.steps[0]);
+    const level: Level = { id: 'two', name: 'Two', kind: 'rescue', steps: [wood, beach, { kind: 'land', pad: 0 }] };
+    game.mission.begin(level);
+    expect(game.mission.current?.kind).toBe('winch');
+    expect(checkInvariants(game)).toEqual([]);
+    const spot2 = RESCUE_SPOTS[1];
+    game.helicopter.placeAbove(spot2.x, spot2.y, 10, 0);
+    game.mission.loading = 1;
+    expect(checkInvariants(game)).toEqual([]);
+    game.mission.loading = WINCH.hold;
+    expect(checkInvariants(game).join('\n')).toMatch(/the loading reads 3, and runs from 0 to short of 3/);
+    game.mission.loading = 1;
+    game.helicopter.placeAbove(spot2.x, spot2.y, 16, 0);
+    expect(checkInvariants(game).join('\n')).toMatch(/the loading runs out of the winch's window/);
+    game.helicopter.placeAbove(spot2.x + 6, spot2.y, 10, 0);
+    expect(checkInvariants(game).join('\n')).toMatch(/the loading runs out of the winch's window/);
   });
 });

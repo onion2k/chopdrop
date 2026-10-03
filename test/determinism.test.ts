@@ -3,7 +3,7 @@
  * says the frame two runs parted at, so a run that does not repeat itself is found and not just suspected.
  */
 import { describe, expect, it } from 'vitest';
-import { flight, hashGame, playTwice } from '../scripts/determinism';
+import { DEFAULT, flight, hashGame, playTwice, startingLevel } from '../scripts/determinism';
 import { LEVELS } from '../src/arena';
 import { Game } from '../src/game';
 import { seeded } from '../src/random';
@@ -23,8 +23,8 @@ describe('the determinism check', () => {
     const done: string[] = [];
     let at = '';
     let last: unknown = null;
-    // long enough for all seven, about eight minutes of game with the flights between them, and the first begun again
-    for (const game of flight(1, 60 * 60 * 10)) {
+    // long enough for all ten, a little over ten minutes of game with the flights between them, and the first begun again
+    for (const game of flight(1, 60 * 60 * 11)) {
       const id = game.mission.level?.id ?? '';
       if (id && id !== at) begun.push(id);
       at = id;
@@ -35,6 +35,22 @@ describe('the determinism check', () => {
     }
     expect(begun.slice(0, LEVELS.length + 1)).toEqual([...LEVELS.map((level) => level.id), LEVELS[0].id]);
     expect(done.slice(0, LEVELS.length)).toEqual(LEVELS.map((level) => level.id));
+  });
+
+  it('begins every one of the ten levels over the default run, each seed from its own starting level', () => {
+    const begun = new Set<string>();
+    for (let seed = 1; seed <= DEFAULT.seeds; seed++)
+      for (const game of flight(seed, DEFAULT.frames, startingLevel(seed, LEVELS.length))) {
+        const id = game.mission.level?.id;
+        if (id) begun.add(id);
+      }
+    expect(DEFAULT.frames).toBe(3600);
+    expect([...begun].sort()).toEqual(LEVELS.map((level) => level.id).sort());
+  });
+
+  it('gives each starting level to a seed of its own, within the list', () => {
+    const at = Array.from({ length: LEVELS.length }, (_, k) => startingLevel(k + 1, LEVELS.length));
+    expect(new Set(at).size).toBe(LEVELS.length);
   });
 
   it('sees which level is going, or none, the best times kept, what the starts are loading and have blocked, and the level guided to', () => {

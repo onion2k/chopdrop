@@ -14,6 +14,10 @@
  * With nothing going and no level told to it, it can be told a structure by name, and flies through its opening, from
  * whichever side is nearer, and then stands still: the play-through collects the structures by it.
  *
+ * A level that begins with a person to winch up is flown to as a pad is, over the treetops, and the helicopter is
+ * brought down over the person to the middle of the winch's window and held still there, never landed, until the
+ * winch has run; then it is flown home as any level is.
+ *
  * With nothing going, and no structure to collect, it can be told a package by name, and flies to it as it flies to a
  * pad, over the treetops, and comes straight down onto the clearing's middle: the play-through finds the packages by it.
  *
@@ -24,7 +28,7 @@
 import type { Collectible, PackagePlace } from './arena';
 import type { Game } from './game';
 import { HELICOPTER, HOVER_LIFT, type Controls } from './helicopter';
-import { RING, onPad, type Gate, type Level, type Ring } from './mission';
+import { RING, WINCH_MIDDLE, onPad, type Gate, type Level, type Ring } from './mission';
 
 /** How it flies. Distances are world units, speeds a second. */
 export const PILOT = {
@@ -158,6 +162,9 @@ export class Autopilot {
       return c;
     }
     if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
+    // a person: flown to over the treetops, and held in the middle of the window over them while the winch runs; never
+    // landed, which is too low for it
+    if (step.kind === 'winch') return this.flyTo(step, true, WINCH_MIDDLE);
     const pad = island.pads[step.pad];
     // on the pad that is wanted: still, while the parcel loads; unless a level has just ended on it, which loads
     // nothing until the helicopter has lifted off, so up it goes, and comes down on it again
@@ -172,9 +179,10 @@ export class Autopilot {
   /**
    * To a place and down onto it: up to its cruise, turned toward it, across at speed, braked to arrive slowly over it, and
    * straight down once it is over it and all but stopped. A pad is flown to over the highest ground on the way; a package,
-   * which lies in a wood, over the treetops too, since a crown is no ground it can fly through.
+   * which lies in a wood, over the treetops too, since a crown is no ground it can fly through. With `holdAt`, a height
+   * over the ground, it comes down to that and holds there, still, in place of landing: a person is winched up from it.
    */
-  private flyTo(to: { x: number; y: number; z: number }, overTrees: boolean): Controls {
+  private flyTo(to: { x: number; y: number; z: number }, overTrees: boolean, holdAt?: number): Controls {
     const c = this.controls;
     const { helicopter: h } = this.game;
     let dx = to.x - h.x,
@@ -189,8 +197,14 @@ export class Autopilot {
       cruise = this.via.z;
     }
     if (far < PILOT.over && h.speed < PILOT.slow) {
-      // over it and all but stopped: straight down onto it
-      c.lift = -1;
+      if (holdAt === undefined) {
+        // over it and all but stopped: straight down onto it
+        c.lift = -1;
+        return c;
+      }
+      // over it and all but stopped: down to the height asked and held there, over the ground under the helicopter
+      const want = this.game.island.ground.heightAt(h.x, h.y) + holdAt;
+      c.lift = clamp(HOVER_LIFT + (want - h.z) * PILOT.hold, -1, 1);
       return c;
     }
 

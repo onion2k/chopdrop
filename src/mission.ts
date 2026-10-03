@@ -5,7 +5,8 @@
  * done here. A parcel is picked up by landing on its pad and staying while it
  * is loaded, and set down on another the same way; a ring or an opening is
  * passed by flying the helicopter's middle through it the way it faces, in
- * its turn; and a landing is done as the skids touch the pad. With nothing
+ * its turn; a person is winched up by hovering in a window low over them for a while; and a landing is done as
+ * the skids touch the pad. With nothing
  * going there is nothing to do, and the mission reads as nothing. What
  * happens is told through the events it is handed; how it is drawn and put
  * into words is the page's. Without it there is nothing on the island to do.
@@ -22,6 +23,16 @@ export const DELIVERY = {
   /** How far its skids may be from the pad's top and still be on it, and not on the ground beside. */
   onTop: 0.25,
 };
+
+/**
+ * How a person is winched up: the helicopter's middle within `reach` across of them, and its skids between `low` and
+ * `high` over the ground, held for `hold` seconds. Too low and the rotor is in the trees, too high and the rope will not
+ * reach, so the window is where the helicopter must be, and the hold is how long.
+ */
+export const WINCH = { reach: 5, low: 5, high: 15, hold: 3 };
+
+/** How high over the ground the middle of the window is: where a pilot who means to winch someone holds the helicopter. */
+export const WINCH_MIDDLE = (WINCH.low + WINCH.high) / 2;
 
 /** How a ring is made and passed. */
 export const RING = {
@@ -67,17 +78,39 @@ export interface Gate {
 }
 
 /**
- * What a level asks for, a step at a time: a parcel picked up from a pad, or set down on one, by its place in the
- * island's list; a ring or an opening flown through; or a pad landed on, which is done the moment the skids touch it.
+ * A person to be winched up at (x, y), `z` being the ground there; `who` is what the words call them ("the walker")
+ * and `where` the place ("in the western wood"). It is done by holding the helicopter in the window over them.
  */
-export type Step =
-  { kind: 'pickup'; pad: number } | { kind: 'drop'; pad: number } | { kind: 'land'; pad: number } | Ring | Gate;
+export interface Winch {
+  kind: 'winch';
+  x: number;
+  y: number;
+  z: number;
+  who: string;
+  where: string;
+}
 
 /**
- * What sort of level it is, as the list of levels names it: parcels to deliver, rings to fly through, or a course of
- * openings and rings flown round to a landing.
+ * What a level asks for, a step at a time: a parcel picked up from a pad, or set down on one, by its place in the
+ * island's list; a ring or an opening flown through; a person winched up; or a pad landed on, which is done the moment
+ * the skids touch it.
  */
-export type LevelKind = 'delivery' | 'rings' | 'course';
+export type Step =
+  { kind: 'pickup'; pad: number } | { kind: 'drop'; pad: number } | { kind: 'land'; pad: number } | Ring | Gate | Winch;
+
+/**
+ * How long a step's loader takes to fill, in seconds: a parcel's load, or a winch's hold. It is said once, so that the
+ * mission, the starts and the rules they are held to all read the same limit.
+ */
+export function loadFor(step: Step): number {
+  return step.kind === 'winch' ? WINCH.hold : DELIVERY.load;
+}
+
+/**
+ * What sort of level it is, as the list of levels names it: parcels to deliver, rings to fly through, a course of
+ * openings and rings flown round to a landing, or a person to winch up and fly home.
+ */
+export type LevelKind = 'delivery' | 'rings' | 'course' | 'rescue';
 
 export interface Level {
   /** What it is known by in the save: a name, never its place in the list, so a level slotted in before it changes nothing. */
@@ -97,7 +130,7 @@ export interface Point3 {
 
 /**
  * What a mission tells as it happens: a level begun or abandoned, by its name; a parcel loaded on a pad, one
- * delivered to a pad, a ring passed (which of how many, counting from one), an opening flown through (by where it is),
+ * delivered to a pad, a person winched up (by the level's name), a ring passed (which of how many, counting from one), an opening flown through (by where it is),
  * a pad landed on, and the level done, with its time.
  */
 export interface MissionEvents {
@@ -105,6 +138,7 @@ export interface MissionEvents {
   abandoned?(id: string): void;
   loaded?(pad: number): void;
   delivered?(pad: number): void;
+  winched?(id: string): void;
   passed?(ring: number, of: number): void;
   through?(label: string): void;
   landed?(pad: number): void;
@@ -126,6 +160,24 @@ export function onPad(h: Readonly<Lander>, pad: Readonly<Pad>): boolean {
     Math.hypot(h.x - pad.x, h.y - pad.y) <= pad.radius * DELIVERY.onSlab &&
     Math.abs(h.z - pad.z) <= DELIVERY.onTop
   );
+}
+
+/** The height of the ground at a point, which the winch's window is measured over. */
+export type GroundAt = (x: number, y: number) => number;
+
+/** Ground that is level at the sea, for a mission or a start handed none: a test with no island to stand on. */
+const FLAT: GroundAt = () => 0;
+
+/**
+ * Whether `h` is in the window of `winch`: its middle within `WINCH.reach` across of the person, and its skids between
+ * `WINCH.low` and `WINCH.high` over the ground under the helicopter, not under the person. On the slopes the spots
+ * stand on the two are within 2 m of each other, and it is what the rope hangs over, so it is said once, here, for the
+ * mission, the starts and the rules to share.
+ */
+export function inWindow(h: Readonly<Lander>, winch: Readonly<Pick<Winch, 'x' | 'y'>>, groundAt: GroundAt): boolean {
+  if (Math.hypot(h.x - winch.x, h.y - winch.y) > WINCH.reach) return false;
+  const up = h.z - groundAt(h.x, h.y);
+  return up >= WINCH.low && up <= WINCH.high;
 }
 
 /**
@@ -154,7 +206,7 @@ export function crossed(opening: Ring | Gate, from: Readonly<Point3>, to: Readon
 export class Mission {
   /** The step being done, by its place in the level's list; 0 with nothing going, and never 0 with a level going. */
   next = 0;
-  /** How long the parcel has been loading or unloading: the seconds the helicopter has been landed on the pad it is wanted on, which start again if it lifts. */
+  /** How long the parcel has been loading or unloading, or the person winching: the seconds the helicopter has been landed on the pad it is wanted on, or in the window over the person, which start again if it leaves. */
   loading = 0;
   /** The seconds since the level began, while it is going; 0 with nothing going. */
   time = 0;
@@ -171,6 +223,7 @@ export class Mission {
   constructor(
     readonly pads: readonly Pad[],
     private readonly events: MissionEvents = {},
+    private readonly groundAt: GroundAt = FLAT,
   ) {}
 
   /** The level going, or null when nothing is. */
@@ -183,20 +236,20 @@ export class Mission {
     return this.flying?.steps[this.next];
   }
 
-  /** The pad the helicopter is wanted on now, or −1 for a ring or an opening, and with nothing going. */
+  /** The pad the helicopter is wanted on now, or −1 for a ring, an opening or a person, and with nothing going. */
   get target(): number {
     const s = this.current;
-    return s && s.kind !== 'ring' && s.kind !== 'gate' ? s.pad : -1;
+    return s && 'pad' in s ? s.pad : -1;
   }
 
   /**
    * Where the step being done wants the helicopter, for the arrow and the pilot: the top of its pad, or the middle of
-   * its ring or its opening; null with nothing going.
+   * its ring or its opening, or the person's place; null with nothing going.
    */
   get goal(): Readonly<Point3> | null {
     const s = this.current;
     if (!s) return null;
-    const at = s.kind === 'ring' || s.kind === 'gate' ? s : this.pads[s.pad];
+    const at = 'pad' in s ? this.pads[s.pad] : s;
     this.wanted.x = at.x;
     this.wanted.y = at.y;
     this.wanted.z = at.z;
@@ -280,12 +333,13 @@ export class Mission {
       if (onPad(h, this.pads[s.pad])) this.stepDone(s);
       return;
     }
-    if (!onPad(h, this.pads[s.pad])) {
+    const here = s.kind === 'winch' ? inWindow(h, s, this.groundAt) : onPad(h, this.pads[s.pad]);
+    if (!here) {
       this.loading = 0;
       return;
     }
     this.loading += dt;
-    if (this.loading < DELIVERY.load) return;
+    if (this.loading < loadFor(s)) return;
     this.loading = 0;
     this.stepDone(s);
   }
@@ -302,6 +356,7 @@ export class Mission {
     if (s.kind === 'pickup') this.events.loaded?.(s.pad);
     else if (s.kind === 'drop') this.events.delivered?.(s.pad);
     else if (s.kind === 'land') this.events.landed?.(s.pad);
+    else if (s.kind === 'winch') this.events.winched?.(this.flying!.id);
     else if (s.kind === 'gate') this.events.through?.(s.label);
     else this.events.passed?.(this.ringsTo(this.next - 1), this.ringCount);
   }

@@ -452,8 +452,8 @@ describe('the trees', () => {
 
   it('move, after the helicopter, and are not among what stands still', () => {
     expect(scene.movers.slice(0, 6)).toEqual(['body', 'trim', 'glass', 'dark', 'main rotor', 'tail rotor']);
-    expect(scene.movers.slice(6, -10)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
-    expect(scene.movers.slice(-10)).toEqual([
+    expect(scene.movers.slice(6, -13)).toEqual(TREE_KINDS.flatMap((kind) => [`${kind} trunks`, `${kind} crowns`]));
+    expect(scene.movers.slice(-13)).toEqual([
       'crate',
       'crate straps',
       'beacon',
@@ -464,6 +464,9 @@ describe('the trees', () => {
       'collected',
       'packages',
       'package straps',
+      'people',
+      'smoke',
+      'winch',
     ]);
     expect(scene.names.filter((name) => / (trunks|crowns)$/.test(name))).toEqual([]);
     expect(scene.pools).toHaveLength(movers.length);
@@ -1337,5 +1340,202 @@ describe('the hidden packages', () => {
     expect(packScene.packagesDrawn).toBe(PACKAGES.length - 1);
     show(...PACKAGES.map((p) => p.id));
     expect(packScene.packagesDrawn).toBe(0);
+  });
+});
+
+describe('the rescues', () => {
+  const rescueScene = new Scene();
+  const rescueGroups = rescueScene.dynamic(island);
+  const rescues = LEVELS.filter((l) => l.steps[0].kind === 'winch');
+  const spots = rescues.map((l) => l.steps[0] as { x: number; y: number; z: number });
+  const at = (name: string) => rescueScene.movers.indexOf(name);
+  const poolOf = (name: string) => rescueScene.pools[at(name)];
+  const hover = pose({ x: spots[0].x + 2, y: spots[0].y - 1, z: spots[0].z + 10 });
+  const going = (level: Level | null) => ({ level, next: level ? 1 : 0, carrying: false, waiting: -1, target: -1 });
+  const show = (level: Level | null = null, winching = { spot: null as string | null, share: 0 }) =>
+    rescueScene.write(hover, undefined, going(level), [], [], winching);
+  const linear = (hex: number) => [hex >> 16, (hex >> 8) & 255, hex & 255].map((c) => +((c / 255) ** 2.2).toFixed(5));
+  const colourOf = (name: string, k: number) =>
+    Array.from(rescueGroups[at(name)].materials!.subarray(k * 4, k * 4 + 3)).map((v) => +v.toFixed(5));
+  /** The boxes drawn in a pool: where each stands, how big it is across and up. */
+  const boxOf = (pool: Float32Array, k: number) => {
+    const m = pool.subarray(16 * k, 16 * k + 16);
+    return { x: m[12], y: m[13], z: m[14], w: Math.hypot(m[0], m[1]), d: Math.hypot(m[4], m[5]), h: m[10] };
+  };
+
+  it('are three spots, a person of five boxes and smoke of nine at each, in pools sized once', () => {
+    expect(rescues).toHaveLength(3);
+    expect(rescueGroups[at('people')].count).toBe(15);
+    expect(rescueGroups[at('smoke')].count).toBe(27);
+    expect(rescueGroups[at('winch')].count).toBe(6);
+    expect(poolOf('people')).toHaveLength(15 * 16);
+    expect(poolOf('smoke')).toHaveLength(27 * 16);
+    expect(poolOf('winch')).toHaveLength(6 * 16);
+    const again = new Scene();
+    again.dynamic(island);
+    again.dynamic(island);
+    expect(again.movers.filter((m) => m === 'people')).toHaveLength(1);
+    const before = [poolOf('people'), poolOf('smoke'), poolOf('winch')];
+    show();
+    show(rescues[0], { spot: rescues[0].id, share: 0.5 });
+    show();
+    expect([poolOf('people'), poolOf('smoke'), poolOf('winch')]).toEqual(before);
+    before.forEach((p, k) => expect(rescueScene.pools[at(['people', 'smoke', 'winch'][k])]).toBe(p));
+  });
+
+  it('stands a person at each spot, about 1.8 tall, in dark legs and an orange jacket, one arm up', () => {
+    show();
+    spots.forEach((s, k) => {
+      const [left, right, torso, head, arm] = [0, 1, 2, 3, 4].map((b) => boxOf(poolOf('people'), 5 * k + b));
+      expect(left.z).toBeCloseTo(s.z, 4);
+      expect(right.z).toBeCloseTo(s.z, 4);
+      expect(torso.x).toBeCloseTo(s.x, 4);
+      expect(torso.y).toBeCloseTo(s.y, 4);
+      expect(torso.z).toBeCloseTo(s.z + 0.85, 4);
+      expect(head.z + head.h - s.z).toBeCloseTo(1.78, 2);
+      // the arm is the tallest part of the jacket's side and stands above the shoulder
+      expect(arm.z + arm.h).toBeGreaterThan(head.z + head.h);
+      expect(colourOf('people', 5 * k)).toEqual(linear(0x2b3440));
+      expect(colourOf('people', 5 * k + 1)).toEqual(linear(0x2b3440));
+      expect(colourOf('people', 5 * k + 2)).toEqual(linear(0xff6a1a));
+      expect(colourOf('people', 5 * k + 3)).toEqual(linear(0xe0b08a));
+      expect(colourOf('people', 5 * k + 4)).toEqual(linear(0xff6a1a));
+    });
+    expect(rescueScene.peopleDrawn).toBe(3);
+  });
+
+  it('sends up smoke from each spot: nine boxes rising 27 m, widening and paling from orange to cream', () => {
+    show();
+    spots.forEach((s, k) => {
+      const boxes = Array.from({ length: 9 }, (_, b) => boxOf(poolOf('smoke'), 9 * k + b));
+      expect(boxes[0].z).toBeCloseTo(s.z, 4);
+      expect(boxes[8].z + boxes[8].h - s.z).toBeCloseTo(27, 3);
+      for (let b = 1; b < 9; b++) {
+        expect(boxes[b].w).toBeGreaterThan(boxes[b - 1].w);
+        expect(boxes[b].z).toBeGreaterThan(boxes[b - 1].z);
+      }
+      expect(colourOf('smoke', 9 * k)).toEqual(linear(0xff7a2e));
+      expect(colourOf('smoke', 9 * k + 8)).toEqual(linear(0xffecd4));
+      // paler as it rises: the blue only grows
+      for (let b = 1; b < 9; b++)
+        expect(colourOf('smoke', 9 * k + b)[2]).toBeGreaterThan(colourOf('smoke', 9 * k + b - 1)[2]);
+    });
+  });
+
+  it('draws neither the person nor the smoke of the level going, and still those of the others', () => {
+    show(rescues[1]);
+    for (let b = 0; b < 5; b++) {
+      expect(noSize(poolOf('people'), 5 + b), `person box ${b}`).toBe(true);
+      expect(noSize(poolOf('people'), b)).toBe(false);
+      expect(noSize(poolOf('people'), 10 + b)).toBe(false);
+    }
+    for (let b = 0; b < 9; b++) {
+      expect(noSize(poolOf('smoke'), 9 + b), `smoke box ${b}`).toBe(true);
+      expect(noSize(poolOf('smoke'), b)).toBe(false);
+      expect(noSize(poolOf('smoke'), 18 + b)).toBe(false);
+    }
+    expect(rescueScene.peopleDrawn).toBe(2);
+    // a level that is not a rescue takes none away
+    show(LEVELS[0]);
+    expect(rescueScene.peopleDrawn).toBe(3);
+  });
+
+  it('puts the smoke out, and the person off the ground, of the spot being winched, and no other', () => {
+    show(null, { spot: rescues[0].id, share: 0.4 });
+    for (let b = 0; b < 5; b++) expect(noSize(poolOf('people'), b)).toBe(true);
+    for (let b = 0; b < 9; b++) expect(noSize(poolOf('smoke'), b)).toBe(true);
+    for (let b = 0; b < 9; b++) expect(noSize(poolOf('smoke'), 9 + b)).toBe(false);
+    expect(rescueScene.peopleDrawn).toBe(2);
+    // broken off, the smoke and the person are back
+    show(null, { spot: null, share: 0 });
+    expect(noSize(poolOf('smoke'), 0)).toBe(false);
+    expect(rescueScene.peopleDrawn).toBe(3);
+  });
+
+  it('hangs a dark rope from the helicopter’s belly to the person, who rises up it by the loader’s share', () => {
+    const s = spots[0];
+    const belly = hover.z + 0.2;
+    for (const share of [0.1, 0.5, 0.9]) {
+      show(null, { spot: rescues[0].id, share });
+      const rope = boxOf(poolOf('winch'), 5);
+      const torso = boxOf(poolOf('winch'), 2);
+      const foot = boxOf(poolOf('winch'), 0);
+      // the rope's top is at the belly, and it hangs under the helicopter
+      expect(rope.z + rope.h).toBeCloseTo(belly, 3);
+      expect([rope.x, rope.y]).toEqual([expect.closeTo(hover.x, 4), expect.closeTo(hover.y, 4)]);
+      // the person is higher the greater the share, from the ground at none to the belly at all
+      const base = s.z + share * (belly - 1.8 - s.z);
+      expect(foot.z).toBeCloseTo(base, 3);
+      expect(torso.z).toBeCloseTo(base + 0.85, 3);
+      // the rope ends at the raised hand: its length is what is left between the person and the belly
+      expect(rope.h).toBeCloseTo(belly - (base + 1.7), 3);
+    }
+    show(null, { spot: rescues[0].id, share: 0.2 });
+    const short = boxOf(poolOf('winch'), 5).h;
+    show(null, { spot: rescues[0].id, share: 0.8 });
+    expect(boxOf(poolOf('winch'), 5).h).toBeLessThan(short);
+    expect(Array.from(rescueGroups[at('winch')].materials!.subarray(20, 23)).map((v) => +v.toFixed(5))).toEqual(
+      linear(0x2b3440),
+    );
+  });
+
+  it('draws the rope at no size when nothing is winched, and the person on it in their own colours', () => {
+    show();
+    for (let k = 0; k < 6; k++) expect(noSize(poolOf('winch'), k), `winch box ${k}`).toBe(true);
+    show(null, { spot: rescues[0].id, share: 0.5 });
+    for (let k = 0; k < 6; k++) expect(noSize(poolOf('winch'), k), `winch box ${k}`).toBe(false);
+    expect(colourOf('winch', 2)).toEqual(linear(0xff6a1a));
+    show(rescues[0]);
+    for (let k = 0; k < 6; k++) expect(noSize(poolOf('winch'), k), `winch box ${k}`).toBe(true);
+  });
+
+  it('writes the waiting people and the smoke only when what is going or what is winched changes, and the rope every frame it is out', () => {
+    const [people, smoke, winch] = [at('people'), at('smoke'), at('winch')];
+    const changed = () => [rescueScene.changed[people], rescueScene.changed[smoke], rescueScene.changed[winch]];
+    show();
+    show();
+    expect(changed()).toEqual([0, 0, 0]);
+    show(rescues[0]);
+    expect(changed().slice(0, 2)).toEqual([1, 1]);
+    show(rescues[0]);
+    expect(changed()).toEqual([0, 0, 0]);
+    show(null, { spot: rescues[0].id, share: 0.1 });
+    expect(changed()).toEqual([1, 1, 1]);
+    // the share moves, and so does the helicopter: the rope is written, the rest is not
+    show(null, { spot: rescues[0].id, share: 0.2 });
+    expect(changed()).toEqual([0, 0, 1]);
+    rescueScene.write({ ...hover, x: hover.x + 1 }, undefined, going(null), [], [], {
+      spot: rescues[0].id,
+      share: 0.2,
+    });
+    expect(changed()).toEqual([0, 0, 1]);
+    // broken off: written once to put it away, and then not again
+    show();
+    expect(changed()).toEqual([1, 1, 1]);
+    show();
+    expect(changed()).toEqual([0, 0, 0]);
+    // and a read with nothing handed leaves them be
+    rescueScene.write(hover);
+    expect(changed()).toEqual([0, 0, 0]);
+  });
+
+  it('counts what is drawn, for the test API: the people, the smoke and the rope', () => {
+    show();
+    expect([rescueScene.peopleDrawn, rescueScene.smokeDrawn, rescueScene.ropeDrawn]).toEqual([3, 3, false]);
+    show(null, { spot: rescues[0].id, share: 0.5 });
+    expect([rescueScene.peopleDrawn, rescueScene.smokeDrawn, rescueScene.ropeDrawn]).toEqual([2, 2, true]);
+    show(rescues[2]);
+    expect([rescueScene.peopleDrawn, rescueScene.smokeDrawn, rescueScene.ropeDrawn]).toEqual([2, 2, false]);
+    expect([new Scene().peopleDrawn, new Scene().smokeDrawn, new Scene().ropeDrawn]).toEqual([0, 0, false]);
+  });
+
+  it('draws none where there are no rescues', () => {
+    const bare = new Scene(LEVELS.filter((l) => l.kind !== 'rescue'));
+    bare.dynamic(island);
+    expect(bare.movers).not.toContain('people');
+    expect(bare.movers).not.toContain('smoke');
+    expect(bare.movers).not.toContain('winch');
+    bare.write(hover, undefined, nothing, [], [], { spot: null, share: 0 });
+    expect(bare.peopleDrawn).toBe(0);
   });
 });

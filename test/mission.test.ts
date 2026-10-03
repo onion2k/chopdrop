@@ -11,9 +11,12 @@ import { HELICOPTER } from '../src/helicopter';
 import {
   crossed,
   DELIVERY,
+  inWindow,
   Mission,
   onPad,
   RING as RING_RULES,
+  WINCH,
+  type Winch,
   type Gate,
   type Lander,
   type Level,
@@ -36,6 +39,7 @@ function missioned() {
     passed: (ring, of) => told.push(`passed ${ring} ${of}`),
     through: (label) => told.push(`through ${label}`),
     landed: (pad) => told.push(`landed ${pad}`),
+    winched: (id) => told.push(`winched ${id}`),
     finished: (seconds) => {
       told.push(`finished ${seconds.toFixed(3)}`);
       during.push({ level: mission.level });
@@ -459,7 +463,9 @@ describe('the levels of the arena, begun', () => {
         ? `loaded ${first.pad}`
         : first.kind === 'ring'
           ? `passed 1 ${level.steps.filter((s) => s.kind === 'ring').length}`
-          : `through ${first.kind === 'gate' ? first.label : ''}`,
+          : first.kind === 'winch'
+            ? `winched ${id}`
+            : `through ${first.kind === 'gate' ? first.label : ''}`,
     ]);
     expect(mission.next).toBe(1);
   });
@@ -525,5 +531,130 @@ describe('crossing an opening', () => {
   it('counts nothing for a move that starts on the face, and counts one that ends on it', () => {
     expect(crossed(ring, at(0), at(1))).toBe(false);
     expect(crossed(ring, at(-1), at(0))).toBe(true);
+  });
+});
+
+/** A person waiting 100 along x, on ground 20 up, and the level that winches them up and lands on home. */
+const PERSON: Winch = { kind: 'winch', x: 100, y: 50, z: 20, who: 'the walker', where: 'in the western wood' };
+const RESCUE: Level = { id: 'rescue', name: 'Rescue', kind: 'rescue', steps: [PERSON, { kind: 'land', pad: 0 }] };
+const TWO_PEOPLE: Level = {
+  id: 'two-people',
+  name: 'Two people',
+  kind: 'rescue',
+  steps: [PERSON, { ...PERSON, x: -100, who: 'the climber' }, { kind: 'land', pad: 0 }],
+};
+/** The ground a helicopter over a person is measured against: flat at the person's height, as the slopes there nearly are. */
+const ground = () => PERSON.z;
+
+describe('the winch window', () => {
+  /** A helicopter whose skids are `up` over the ground, `across` from the person. */
+  const at = (across: number, up: number): Lander => ({
+    x: PERSON.x + across,
+    y: PERSON.y,
+    z: PERSON.z + up,
+    landed: false,
+  });
+
+  it('is said once: 5 across, 5 to 15 up, held for 3 seconds', () => {
+    expect(WINCH).toEqual({ reach: 5, low: 5, high: 15, hold: 3 });
+  });
+
+  it('holds from 5 across and not past it', () => {
+    expect(inWindow(at(4.9, 10), PERSON, ground)).toBe(true);
+    expect(inWindow(at(5.1, 10), PERSON, ground)).toBe(false);
+    expect(inWindow(at(0, 10), PERSON, ground)).toBe(true);
+  });
+
+  it('holds from 5 up and not below it', () => {
+    expect(inWindow(at(0, 4.9), PERSON, ground)).toBe(false);
+    expect(inWindow(at(0, 5.1), PERSON, ground)).toBe(true);
+  });
+
+  it('holds to 15 up and not above it', () => {
+    expect(inWindow(at(0, 14.9), PERSON, ground)).toBe(true);
+    expect(inWindow(at(0, 15.1), PERSON, ground)).toBe(false);
+  });
+
+  it('measures the height over the ground under the helicopter, not the person: across the slope it moves', () => {
+    const slope = (x: number) => PERSON.z + (x - PERSON.x) * 0.3;
+    // 4 across and uphill the ground is 1.2 higher, so 15.1 over the person is under 14 over the ground
+    expect(inWindow(at(4, 15.1), PERSON, slope)).toBe(true);
+    expect(inWindow(at(-4, 15.1), PERSON, slope)).toBe(false);
+  });
+
+  it('is nothing for a helicopter landed, which is under the low edge', () => {
+    expect(inWindow({ ...at(0, 0), landed: true }, PERSON, ground)).toBe(false);
+  });
+});
+
+describe('a winch step', () => {
+  /** Steps `seconds` of game with the helicopter hovering `up` over the person, `across` from them. */
+  const hoverFor = (mission: Mission, seconds: number, up = 10, across = 0) => {
+    const h: Lander = { x: PERSON.x + across, y: PERSON.y, z: PERSON.z + up, landed: false };
+    for (let f = 0, n = Math.round(seconds / DT); f < n; f++) mission.step(DT, h);
+  };
+  const flat = () => PERSON.z;
+
+  it('is begun as the first step done, which tells winched, and wants the next', () => {
+    const told: string[] = [];
+    const mission = new Mission(
+      pads,
+      { started: (id) => told.push(`started ${id}`), winched: (id) => told.push(`winched ${id}`) },
+      flat,
+    );
+    mission.begin(RESCUE);
+    expect(told).toEqual(['started rescue', 'winched rescue']);
+    expect(mission.current).toEqual({ kind: 'land', pad: 0 });
+    expect([mission.target, mission.carrying]).toEqual([0, false]);
+  });
+
+  it('wants no pad while it is the step, and the person is where it goes', () => {
+    const mission = new Mission(pads, {}, flat);
+    mission.begin({ ...TWO_PEOPLE, steps: [{ kind: 'land', pad: 0 }, PERSON, { kind: 'land', pad: 0 }] });
+    // a land on home is done as it is begun, so the winch is the step now
+    expect(mission.current).toBe(PERSON);
+    expect(mission.target).toBe(-1);
+    expect(mission.goal).toEqual({ x: PERSON.x, y: PERSON.y, z: PERSON.z });
+  });
+
+  it('fills as the helicopter hovers in the window, and is done and told when it is full', () => {
+    const told: string[] = [];
+    const mission = new Mission(pads, { winched: (id) => told.push(id) }, flat);
+    mission.begin(TWO_PEOPLE);
+    expect(told).toEqual(['two-people']);
+    // the second person is at x -100: hover over them
+    const h: Lander = { x: -100, y: PERSON.y, z: PERSON.z + 8, landed: false };
+    for (let f = 0; f < Math.round((WINCH.hold - 0.5) / DT); f++) mission.step(DT, h);
+    expect(mission.loading).toBeCloseTo(WINCH.hold - 0.5, 1);
+    expect(mission.next).toBe(1);
+    expect(told).toEqual(['two-people']);
+    for (let f = 0; f < Math.round(1 / DT); f++) mission.step(DT, h);
+    expect(told).toEqual(['two-people', 'two-people']);
+    expect(mission.next).toBe(2);
+    expect(mission.loading).toBe(0);
+  });
+
+  it.each([
+    ['too high', 16, 0],
+    ['too low', 4, 0],
+    ['aside', 10, 6],
+  ])('goes back to nothing when the helicopter is %s, and starts again', (_, up, across) => {
+    const mission = new Mission(pads, {}, flat);
+    mission.begin({ ...TWO_PEOPLE, steps: [{ kind: 'land', pad: 0 }, PERSON, { kind: 'land', pad: 0 }] });
+    hoverFor(mission, 2);
+    expect(mission.loading).toBeGreaterThan(1.9);
+    hoverFor(mission, DT, up, across);
+    expect(mission.loading).toBe(0);
+    hoverFor(mission, WINCH.hold - 0.5);
+    expect(mission.next).toBe(1);
+  });
+
+  it('ends the level with a landing on the home pad after it', () => {
+    const { mission, told, sit } = missioned();
+    mission.begin(RESCUE);
+    expect(told).toEqual(['started rescue', 'winched rescue']);
+    sit(0, 0.1);
+    expect(told.at(-2)).toBe('landed 0');
+    expect(mission.level).toBeNull();
   });
 });

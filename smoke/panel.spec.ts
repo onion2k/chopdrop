@@ -31,6 +31,9 @@ const NAMES = [
   'Up the valley',
   'Mountain drop',
   'Under and between',
+  'Wood rescue',
+  'Beach rescue',
+  'Ledge rescue',
 ];
 const WHERE = [
   'Land on the meadow pad',
@@ -40,6 +43,9 @@ const WHERE = [
   'Fly through the first ring, by the meadow pad',
   'Land on the lakeside pad',
   'Fly between the towers',
+  'Winch up the walker in the western wood',
+  'Winch up the stranded swimmer on the east beach',
+  'Winch up the climber on the southern ledge',
 ];
 
 test('opens flying free, with no panel up, and Esc brings it over the island and holds the game behind it', async ({
@@ -97,7 +103,7 @@ test('is opened by the corner button and closed by its cross, and holds a flight
   expect(problems).toEqual([]);
 });
 
-test('lists all seven levels with their best times from a save, where each starts, and how many are done', async ({
+test('lists all ten levels with their best times from a save, where each starts, and how many are done', async ({
   page,
 }) => {
   const problems = watch(page);
@@ -106,10 +112,10 @@ test('lists all seven levels with their best times from a save, where each start
   const seen = await rows(page);
   expect(seen.map((r) => r.name)).toEqual(NAMES);
   expect(seen.map((r) => r.where)).toEqual(WHERE);
-  expect(seen.map((r) => r.best)).toEqual(['0:40', '0:33', '', '', '', '', '']);
+  expect(seen.map((r) => r.best)).toEqual(['0:40', '0:33', '', '', '', '', '', '', '', '']);
   expect(seen.map((r) => r.button)).toEqual(NAMES.map(() => 'Show the way'));
   expect(seen.some((r) => r.going)).toBe(false);
-  await expect(page.locator('#panel .sub')).toHaveText('2 of 7 done · land on a crate or fly a start, anywhere');
+  await expect(page.locator('#panel .sub')).toHaveText('2 of 10 done · land on a crate or fly a start, anywhere');
   expect(await page.evaluate(() => window.game!.levels().map((l) => l.best !== null))).toEqual([
     true,
     true,
@@ -118,7 +124,14 @@ test('lists all seven levels with their best times from a save, where each start
     false,
     false,
     false,
+    false,
+    false,
+    false,
   ]);
+  // the three rescues wear their kind's label, with its small figure, and no other level wears one
+  await expect(page.locator('#panel .row .kind')).toHaveCount(3);
+  await expect(page.locator('#panel .row.rescue .kind')).toHaveText(['Rescue', 'Rescue', 'Rescue']);
+  await expect(page.locator('#panel .row.rescue .kind svg')).toHaveCount(3);
   expect(problems).toEqual([]);
 });
 
@@ -220,8 +233,19 @@ test('keeps a level done: the row shows its time, which only a faster run lowers
   await page.reload();
   await expect.poll(() => page.evaluate(() => window.game?.ready ?? false)).toBe(true);
   await page.keyboard.press('Escape');
-  expect((await rows(page)).map((r) => r.best !== '')).toEqual([true, false, false, false, false, false, false]);
-  await expect(page.locator('#panel .sub')).toHaveText('1 of 7 done · land on a crate or fly a start, anywhere');
+  expect((await rows(page)).map((r) => r.best !== '')).toEqual([
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ]);
+  await expect(page.locator('#panel .sub')).toHaveText('1 of 10 done · land on a crate or fly a start, anywhere');
   expect(problems).toEqual([]);
 });
 
@@ -292,6 +316,17 @@ test.describe('on a phone', () => {
       expect(b.button, 'a thumb-sized button').toBeGreaterThanOrEqual(40);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    // ten rows are taller than the screen, so the sheet scrolls, and the last, a rescue's, comes into view whole
+    expect(boxes).toHaveLength(10);
+    const sheet = page.locator('#panel .sheet');
+    expect(await sheet.evaluate((el) => el.scrollHeight > el.clientHeight), 'the sheet scrolls').toBe(true);
+    await page.locator('#panel .row').nth(9).scrollIntoViewIfNeeded();
+    const last = (await page.locator('#panel .row').nth(9).boundingBox())!;
+    const held = (await sheet.boundingBox())!;
+    expect(last.y + last.height).toBeLessThanOrEqual(held.y + held.height + 1);
+    const kind = (await page.locator('#panel .row').nth(9).locator('.kind').boundingBox())!;
+    expect(kind.x + kind.width, 'the label fits the row').toBeLessThanOrEqual(390);
+    await sheet.evaluate((el) => (el.scrollTop = 0));
     // closed again, the thumb still on the glass but let go of, so the stick asks for nothing
     await page.keyboard.press('Escape');
     await step(page, 1);

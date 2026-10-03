@@ -37,6 +37,7 @@ const TITLE: Record<string, string> = {
   delivery: 'Delivered!',
   rings: 'Trial complete!',
   course: 'Course complete!',
+  rescue: 'Rescued!',
 };
 
 test('every level, shown the way from the panel and flown to the end in turn, with the toasts and then every time', async ({
@@ -88,14 +89,51 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
     // the autopilot, told the level, flies from wherever it is to the start, which begins it
     await page.evaluate((id) => window.game!.autopilot(true, id), level.id);
     told = [];
-    expect(await until(async () => (await state()).mission.level === level.id, 7200), `${level.id} begun`).toBe(true);
+    // a rescue is begun by hovering over its person, which the page shows as the loader filling and the rope out, the
+    // smoke gone and the person off the ground, seen on the way
+    let winched: { words: string; rope: boolean; smoke: number; people: number } | null = null;
+    expect(
+      await until(async () => {
+        const now = await state();
+        if (level.kind === 'rescue' && now.winch.spot === level.id && now.winch.share > 0.2 && !winched) {
+          winched = {
+            words: (await page.locator('#hud .loader .what').textContent()) ?? '',
+            rope: now.rope,
+            smoke: now.smoke,
+            people: now.people,
+          };
+        }
+        return now.mission.level === level.id;
+      }, 7200),
+      `${level.id} begun`,
+    ).toBe(true);
     await hear();
     expect(told[0], `${level.id}: told begun first`).toBe(`started ${level.id}`);
     expect((await state()).guided, 'the guide is gone once it has begun').toBeNull();
     await expect(page.locator('#hud .clock')).toBeVisible();
     await expect(page.locator('#hud .hint')).toBeHidden();
 
-    if (level.kind === 'rings') {
+    if (level.kind === 'rescue') {
+      // the person was seen going up the rope, with the smoke out, the loader naming who
+      const who = (await state()).mission.steps[0] as { who: string };
+      expect(winched, `${level.id}: seen winched`).toEqual({
+        words: `Winching up ${who.who}`,
+        rope: true,
+        smoke: 2,
+        people: 2,
+      });
+      // the person aboard, and the home pad wanted, in the words of a rescue and not of a parcel
+      await expect(page.locator('#hud .goal')).toHaveText(`Fly ${who.who} to the home pad`);
+      expect((await state()).mission.next, `${level.id}: past its winch`).toBe(1);
+      expect([(await state()).rope, (await state()).smoke, (await state()).people]).toEqual([false, 2, 2]);
+      expect(await until(async () => (await state()).mission.level === null, 7200), `${level.id}: flown home`).toBe(
+        true,
+      );
+      await hear();
+      expect(told.slice(0, 3)).toEqual([`started ${level.id}`, `winched ${level.id}`, 'landed 0']);
+      expect(told[3]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
+      expect(told).toHaveLength(4);
+    } else if (level.kind === 'rings') {
       // each ring in turn, the words following it, and the last ends it
       const of = (await state()).mission.steps.length;
       for (let n = 2; n <= of; n++) {

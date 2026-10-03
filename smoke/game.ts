@@ -16,6 +16,7 @@
 import { expect, type Page } from '@playwright/test';
 import type { GameApi } from '../src/debug';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import { WINCH_MIDDLE } from '../src/mission';
 
 declare global {
   interface Window {
@@ -170,7 +171,7 @@ export function leverTravel(page: Page): Promise<number> {
  */
 export async function finish(page: Page) {
   await page.evaluate(
-    ([middle, hover]) => {
+    ([middle, hover, winch]) => {
       const g = window.game!;
       const pads = g.content().pads;
       const { steps, next } = g.state().mission;
@@ -182,12 +183,18 @@ export async function finish(page: Page) {
           g.fly(1, 0, hover);
           g.step(90);
           g.release();
+        } else if (step.kind === 'winch') {
+          // held in the middle of the window over the person for longer than the hold
+          g.teleport(step.x, step.y, winch);
+          g.fly(0, 0, hover);
+          g.step(240);
+          g.release();
         } else {
           g.teleport(pads[step.pad].x, pads[step.pad].y, 0);
           g.step(100);
         }
       }
     },
-    [HELICOPTER.size.middle, HOVER_LIFT],
+    [HELICOPTER.size.middle, HOVER_LIFT, WINCH_MIDDLE],
   );
 }

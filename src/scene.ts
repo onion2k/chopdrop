@@ -19,7 +19,7 @@ import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
-import { RING, RINGS, type Level, type Ring } from './mission';
+import { RING, RINGS, type Level, type Ring, type Winch } from './mission';
 import type { Block } from './solids';
 import {
   beacon,
@@ -252,6 +252,42 @@ export function startFlags(level: Level): FlagSpot[] {
     return [{ x: first.x, y: first.y, z: first.z + first.opening + 2 * RING.tube, yaw: first.yaw }];
   if (first.kind === 'gate') return (first.flags ?? []).map(({ x, y, z }) => ({ x, y, z, yaw: first.yaw }));
   return [];
+}
+
+/**
+ * The people waiting to be rescued, and how they are seen from afar, chosen from a mock: a figure in boxes about 1.8 tall
+ * in an orange jacket over dark legs, one arm up waving, and at their feet a flare's orange smoke, nine boxes rising 27
+ * metres, widening and paling to cream as it goes. A person is five boxes, each `[side, up, across, along, tall]` from
+ * the person's feet (`side` being along the way they face across, so the arm stands out to one side), painted by the
+ * colour in the same place of `PERSON_COLOURS`; they stand turned by `PERSON.yaw`. The smoke is a box a `rise` above the
+ * one before, each shifted `step` further along both ways from a first `drift` out from the person's feet and turned
+ * `twist` further, `grow` wider each, from a first of `size` across, painted by `SMOKE_COLOURS`. Each is a placement of
+ * the one unit box, with its own paint.
+ */
+const PERSON = { yaw: 0.6 };
+const PERSON_BOXES: readonly (readonly number[])[] = [
+  [-0.13, 0, 0.2, 0.2, 0.85],
+  [0.13, 0, 0.2, 0.2, 0.85],
+  [0, 0.85, 0.32, 0.55, 0.65],
+  [0, 1.5, 0.26, 0.26, 0.28],
+  [0.38, 1.35, 0.14, 0.14, 0.75],
+];
+const PERSON_COLOURS = [0x2b3440, 0x2b3440, 0xff6a1a, 0xe0b08a, 0xff6a1a];
+const SMOKE = { size: 1.2, grow: 0.55, tall: 3, rise: 3, drift: [1.2, 0.6], step: [0.35, 0.2], twist: 0.4 };
+const SMOKE_COLOURS = [0xff7a2e, 0xff8a3e, 0xff9a52, 0xffab68, 0xffbb80, 0xffc996, 0xffd6ab, 0xffe2c0, 0xffecd4];
+/** What the rescues' boxes are painted: matte, since smoke and a jacket are not shiny. */
+const RESCUE_ROUGHNESS = 0.9;
+/**
+ * The rope the person is winched up, a dark line `width` across: it hangs from `belly` over the helicopter's skids, the
+ * helicopter's underside, down to the raised hand `grip` over the person's feet, and a person who is `height` tall is
+ * lifted until their head is at the belly. A person is five boxes and the rope a sixth, in one group.
+ */
+const ROPE = { width: 0.07, belly: 0.2, grip: 1.7, height: 1.8, paint: 0x2b3440 };
+
+/** What is being winched, as the scene draws it: the level whose person it is (null for none) and how far up they are, 0 to 1. A `WinchState` is one. */
+export interface Winching {
+  spot: string | null;
+  share: number;
 }
 
 /** How many of `dynamic`'s groups are the helicopter's: they come first, and move every frame. */
@@ -584,6 +620,16 @@ export class Scene {
   private packagesAt = -1;
   private readonly foundFor: Uint8Array;
   private packagesWritten = false;
+  /**
+   * The people waiting to be rescued, each with the level that is theirs; where the groups of the people, their smoke and
+   * the winch (the rope and the person on it) are among the pools; and what the people and smoke were last written for,
+   * the level going and the spot winched (−1 for none), and whether the rope is out. Built once, and sized once.
+   */
+  private readonly rescuing: { level: Level; winch: Winch }[] = [];
+  private peopleAt = -1;
+  private rescuesFor: Level | null | undefined;
+  private rescuesWinch = -2;
+  private ropeOut = false;
   /** What the resting crates were last written for, so they are written only when what is going changes. */
   private cratesFor: Level | null | undefined;
   /** Where the ring groups are among the pools, and what they were last written for, so they are written only on a change. */
@@ -620,6 +666,7 @@ export class Scene {
       const first = level.steps[0];
       if (first.kind === 'pickup') this.crates.push({ level, pad: first.pad });
       else if (first.kind === 'ring') this.startRings.push({ level, ring: first });
+      else if (first.kind === 'winch') this.rescuing.push({ level, winch: first });
       const spots = startFlags(level);
       if (spots.length > 0) this.flags.push({ level, spots });
     }
@@ -800,9 +847,37 @@ export class Scene {
       const n = this.places.length;
       add('packages', wood, PACKAGE_PAINT, new Float32Array(n * 16), n);
       add('package straps', straps, PACKAGE_STRAP_PAINT, new Float32Array(n * 16), n);
+      this.rescueGroups(add, unit);
     }
     this.changed = new Uint8Array(this.pools.length);
     return groups;
+  }
+
+  /**
+   * The rescues' groups, each a placement of one unit box with its own paint, sized once: the people waiting, five boxes
+   * each, their smoke, nine each, and the winch, a person and a rope, six. Nothing is added where there is no rescue.
+   */
+  private rescueGroups(add: Add, unit: Mesh): void {
+    this.peopleAt = -1;
+    this.rescuesFor = undefined;
+    this.rescuesWinch = -2;
+    this.ropeOut = false;
+    const n = this.rescuing.length;
+    if (n === 0) return;
+    this.peopleAt = this.pools.length;
+    const paint = (colours: readonly number[], times: number, extra: readonly number[] = []) => {
+      const all = [...Array.from({ length: times }, () => colours).flat(), ...extra];
+      const m = new Float32Array(all.length * MATERIAL_STRIDE);
+      all.forEach((hex, k) => m.set([...seen(hex), RESCUE_ROUGHNESS], k * MATERIAL_STRIDE));
+      return m;
+    };
+    const people = n * PERSON_BOXES.length;
+    const smoke = n * SMOKE_COLOURS.length;
+    const winch = PERSON_BOXES.length + 1;
+    const base: Paint = { albedo: seen(PERSON_COLOURS[2]), roughness: RESCUE_ROUGHNESS };
+    add('people', unit, base, new Float32Array(people * 16), people, paint(PERSON_COLOURS, n));
+    add('smoke', unit, base, new Float32Array(smoke * 16), smoke, paint(SMOKE_COLOURS, n));
+    add('winch', unit, base, new Float32Array(winch * 16), winch, paint(PERSON_COLOURS, 1, [ROPE.paint]));
   }
 
   /** The trees: a trunk group and a crown group a kind, sharing a pool, the crowns each their own shade of green. */
@@ -844,7 +919,8 @@ export class Scene {
    * Given the sway, each moving tree is leaned as it says, and each it has let go stood up again. Given what is
    * going, which may be nothing, the crates, the beacon, the rings and the flags are written as it says; and given the
    * names of the structures collected, the gold on each, which is written only when they change; and given the names of
-   * the packages found, a crate on every place of one not found, written only when they change.
+   * the packages found, a crate on every place of one not found, written only when they change; and given what is going
+   * and what is winched, the people waiting with their smoke, and the rope with the person on it.
    */
   write(
     pose: HelicopterPose,
@@ -852,6 +928,7 @@ export class Scene {
     going?: Going,
     collected?: readonly string[],
     found?: readonly string[],
+    winching?: Winching,
   ): void {
     const [body, trim, glass, dark, main, tail] = this.pools;
     this.changed.fill(1, 0, HELICOPTER_GROUPS);
@@ -871,6 +948,7 @@ export class Scene {
     }
     if (collected && this.goldAt >= 0) this.paintGold(collected);
     if (found && this.packagesAt >= 0) this.paintPackages(found);
+    if (going && this.peopleAt >= 0) this.rescues(pose, going.level, winching);
     const { min, max } = this.shadowBox;
     const cx = Math.round(pose.x / SHADOW_SNAP) * SHADOW_SNAP;
     const cy = Math.round(pose.y / SHADOW_SNAP) * SHADOW_SNAP;
@@ -1049,6 +1127,84 @@ export class Scene {
     this.changed[at] = this.changed[at + 1] = 1;
   }
 
+  /**
+   * The people waiting and their smoke, a person and their smoke at each spot except where their level is going (they are
+   * aboard) or they are being winched (the smoke is out, and they are on the rope), written only when the level going or the
+   * spot winched changes; and the rope, with the person rising up it by the share, written every frame it is out since it
+   * follows the helicopter, and once more to put it away.
+   */
+  private rescues(pose: HelicopterPose, going: Level | null, winching?: Winching): void {
+    const { rescuing, peopleAt } = this;
+    let winched = -1;
+    if (winching && winching.spot !== null)
+      for (let k = 0; k < rescuing.length; k++) if (rescuing[k].level.id === winching.spot) winched = k;
+    if (going !== this.rescuesFor || winched !== this.rescuesWinch) {
+      this.rescuesFor = going;
+      this.rescuesWinch = winched;
+      const [people, smoke] = [this.pools[peopleAt], this.pools[peopleAt + 1]];
+      people.fill(0);
+      smoke.fill(0);
+      for (let k = 0; k < rescuing.length; k++) {
+        const { level, winch } = rescuing[k];
+        if (level === going || k === winched) continue;
+        placePerson(people, k * PERSON_BOXES.length, winch.x, winch.y, winch.z);
+        for (let b = 0; b < SMOKE_COLOURS.length; b++) {
+          const x = winch.x + SMOKE.drift[0] + b * SMOKE.step[0];
+          const y = winch.y + SMOKE.drift[1] + b * SMOKE.step[1];
+          const size = SMOKE.size + b * SMOKE.grow;
+          const z = winch.z + b * SMOKE.rise;
+          place(smoke, k * SMOKE_COLOURS.length + b, x, y, z, b * SMOKE.twist, size, size, SMOKE.tall);
+        }
+      }
+      this.changed[peopleAt] = this.changed[peopleAt + 1] = 1;
+    }
+    const rope = this.pools[peopleAt + 2];
+    if (winched < 0) {
+      if (this.ropeOut) {
+        rope.fill(0);
+        this.changed[peopleAt + 2] = 1;
+        this.ropeOut = false;
+      }
+      return;
+    }
+    // the person on the rope rises from the ground at their spot to the helicopter's belly, drawn toward its middle as they go
+    const share = Math.max(0, Math.min(1, winching!.share));
+    const { winch } = rescuing[winched];
+    const belly = pose.z + ROPE.belly;
+    const x = winch.x + (pose.x - winch.x) * share;
+    const y = winch.y + (pose.y - winch.y) * share;
+    const base = winch.z + share * (belly - ROPE.height - winch.z);
+    placePerson(rope, 0, x, y, base);
+    const hand = base + ROPE.grip;
+    place(rope, PERSON_BOXES.length, pose.x, pose.y, hand, 0, ROPE.width, ROPE.width, Math.max(0, belly - hand));
+    this.ropeOut = true;
+    this.changed[peopleAt + 2] = 1;
+  }
+
+  /** How many people are standing waiting now, not aboard and not on the rope: what the test API says, and nothing the frame uses. */
+  get peopleDrawn(): number {
+    if (this.peopleAt < 0) return 0;
+    const m = this.pools[this.peopleAt];
+    let drawn = 0;
+    // the torso is the box a person is counted by
+    for (let k = 0; k < this.rescuing.length; k++) if (m[(k * PERSON_BOXES.length + 2) * 16 + 10] !== 0) drawn++;
+    return drawn;
+  }
+
+  /** How many people's smoke is rising now: what the test API says, and nothing the frame uses. */
+  get smokeDrawn(): number {
+    if (this.peopleAt < 0) return 0;
+    const m = this.pools[this.peopleAt + 1];
+    let drawn = 0;
+    for (let k = 0; k < this.rescuing.length; k++) if (m[k * SMOKE_COLOURS.length * 16 + 10] !== 0) drawn++;
+    return drawn;
+  }
+
+  /** Whether the rope, with the person on it, is drawn now: what the test API says, and nothing the frame uses. */
+  get ropeDrawn(): boolean {
+    return this.peopleAt >= 0 && this.pools[this.peopleAt + 2][2 * 16 + 10] !== 0;
+  }
+
   /** How many crates of packages are drawn now: what the test API says, and nothing the frame uses. */
   get packagesDrawn(): number {
     if (this.packagesAt < 0) return 0;
@@ -1088,6 +1244,14 @@ export class Scene {
       leaning[this.leaned++] = t;
     }
   }
+}
+
+/** A person standing with their feet at (x, y, z), written as five boxes from slot `first` of `out`, turned by `PERSON.yaw`. */
+function placePerson(out: Float32Array, first: number, x: number, y: number, z: number): void {
+  const [c, s] = [Math.cos(PERSON.yaw), Math.sin(PERSON.yaw)];
+  PERSON_BOXES.forEach(([side, up, across, along, tall], b) =>
+    place(out, first + b, x - s * side, y + c * side, z + up, PERSON.yaw, across, along, tall),
+  );
 }
 
 /** A crate set down on a pad, out from its middle past the ends of the H, turned a little off the pad's square. */

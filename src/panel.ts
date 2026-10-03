@@ -10,7 +10,7 @@
  */
 import type { LevelRow } from './debug';
 import { clock, startWords, type PadWords } from './hud';
-import type { Step } from './mission';
+import type { LevelKind, Step } from './mission';
 
 /** What the panel's buttons do, which is the page's to say: show the way to a level, by its name; abandon; or close the panel and carry on. */
 export interface PanelActions {
@@ -24,6 +24,18 @@ export function panelSubtitle(rows: readonly { best: number | null }[]): string 
   const done = rows.filter((row) => row.best !== null).length;
   return `${done} of ${rows.length} done · land on a crate or fly a start, anywhere`;
 }
+
+/**
+ * The label a kind of level wears on its row, or null for one that wears none: only a rescue does, "Rescue", since its
+ * name ("Wood rescue") says where and not what, and its start is a person and not a pad.
+ */
+export function kindLabel(kind: LevelKind): string | null {
+  return kind === 'rescue' ? 'Rescue' : null;
+}
+
+/** The rescue label's icon, a figure with one arm up, drawn as the HUD's button is: strokes and fills in the text's own colour. */
+const RESCUE_ICON =
+  '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="5" r="2.2" /><path d="M9 8.2v5.3M9 13.5l-2.6 4.5M9 13.5l2.6 4.5M9 10.2L5.8 12.6M9 10.2l3.4-5.4" /></svg>';
 
 /** The structures section as words: its heading, how many are collected, and each by name without "the" with whether it is. */
 export interface StructureRows {
@@ -79,7 +91,7 @@ export class Panel {
   private going: string | null = null;
 
   constructor(
-    levels: readonly { id: string; name: string; steps: readonly Step[] }[],
+    levels: readonly { id: string; name: string; kind: LevelKind; steps: readonly Step[] }[],
     pads: readonly PadWords[],
     private readonly structures: readonly { id: string; name: string }[],
     private readonly packages: readonly { id: string }[],
@@ -103,7 +115,9 @@ export class Panel {
     levels.forEach((level, k) => {
       const row = document.createElement('div');
       row.className = 'row';
-      row.innerHTML = `<div class="name"><span class="label"></span><span class="best" hidden></span><span class="now" hidden>· going</span></div><div class="where"></div><button type="button"></button>`;
+      const kind = kindLabel(level.kind);
+      if (kind) row.classList.add(level.kind);
+      row.innerHTML = `<div class="name"><span class="label"></span>${kind ? `<span class="kind">${RESCUE_ICON}${kind}</span>` : ''}<span class="best" hidden></span><span class="now" hidden>· going</span></div><div class="where"></div><button type="button"></button>`;
       row.querySelector('.label')!.textContent = level.name;
       row.querySelector('.where')!.textContent = startWords(level, pads);
       row.querySelector('button')!.addEventListener('click', () => this.press(k));

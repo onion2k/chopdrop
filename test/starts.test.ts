@@ -6,9 +6,9 @@
  * first in the list wins.
  */
 import { describe, expect, it } from 'vitest';
-import { LEVELS, theIsland } from '../src/arena';
+import { LEVELS, RESCUE_SPOTS, theIsland } from '../src/arena';
 import { HELICOPTER } from '../src/helicopter';
-import { DELIVERY, type Gate, type Lander, type Level, type Ring } from '../src/mission';
+import { DELIVERY, WINCH, type Gate, type Lander, type Level, type Ring } from '../src/mission';
 import { Starts } from '../src/starts';
 import { DT } from './helpers';
 
@@ -212,5 +212,87 @@ describe('starting a ring trial or a course', () => {
     s.step(DT, at(ring, -2));
     s.step(DT, at(ring, 2));
     expect(s.loading).toBe(0);
+  });
+});
+
+describe('starting a rescue', () => {
+  const spot = RESCUE_SPOTS[0];
+  const ground = theIsland().ground;
+  const groundAt = (x: number, y: number) => ground.heightAt(x, y);
+  /** A set of starts over the arena's levels, with the helicopter hovering `up` over the ground at `across` from the first spot. */
+  function rescues() {
+    const s = new Starts(pads, LEVELS, groundAt);
+    const hover = (seconds: number, up = 10, across = 0): Level | null => {
+      const x = spot.x + across;
+      const h: Lander = { x, y: spot.y, z: groundAt(x, spot.y) + up, landed: false };
+      for (let f = 0, n = Math.round(seconds / DT); f < n; f++) {
+        const began = s.step(DT, h);
+        if (began) return began;
+      }
+      return null;
+    };
+    return { s, hover };
+  }
+
+  it('begins after a full hold in the window, over the person', () => {
+    const { s, hover } = rescues();
+    expect(hover(WINCH.hold - 0.2)).toBeNull();
+    expect(s.loading).toBeCloseTo(WINCH.hold - 0.2, 1);
+    expect(hover(0.4)).toBe(level('wood-rescue'));
+    expect(s.loading).toBe(0);
+  });
+
+  it('begins each rescue from its own spot', () => {
+    for (const r of RESCUE_SPOTS) {
+      const s = new Starts(pads, LEVELS, groundAt);
+      const h: Lander = { x: r.x, y: r.y, z: groundAt(r.x, r.y) + 10, landed: false };
+      let began: Level | null = null;
+      for (let f = 0; f < Math.round((WINCH.hold + 0.2) / DT) && !began; f++) began = s.step(DT, h);
+      expect(began, r.id).toBe(level(r.id));
+    }
+  });
+
+  it('begins nothing 15.5 or 16.5 m up, or 6 m aside, or 4 m up', () => {
+    for (const [up, across] of [
+      [15.5, 0],
+      [16.5, 0],
+      [10, 6],
+      [4, 0],
+    ]) {
+      const { s, hover } = rescues();
+      expect(hover(WINCH.hold + 2, up, across), `${up} up, ${across} aside`).toBeNull();
+      expect(s.loading).toBe(0);
+    }
+  });
+
+  it('starts the hold again when the helicopter leaves the window', () => {
+    const { s, hover } = rescues();
+    expect(hover(2)).toBeNull();
+    expect(s.loading).toBeGreaterThan(1.9);
+    expect(hover(DT, 16.5)).toBeNull();
+    expect(s.loading).toBe(0);
+    expect(hover(WINCH.hold - 0.5)).toBeNull();
+    expect(hover(0.7)).toBe(level('wood-rescue'));
+  });
+
+  it('is not held by a pad that is blocked: a level ended on home does not stop a rescue', () => {
+    const { s, hover } = rescues();
+    s.blocked = 0;
+    expect(hover(WINCH.hold + 0.2)).toBe(level('wood-rescue'));
+  });
+
+  it('is reset with the rest, and begins nothing from a level that has no winch first', () => {
+    const { s, hover } = rescues();
+    hover(1);
+    s.reset();
+    expect(s.loading).toBe(0);
+    const none = new Starts(
+      pads,
+      LEVELS.filter((l) => l.steps[0].kind !== 'winch'),
+      groundAt,
+    );
+    const h: Lander = { x: spot.x, y: spot.y, z: groundAt(spot.x, spot.y) + 10, landed: false };
+    for (let f = 0; f < 400; f++) expect(none.step(DT, h)).toBeNull();
+    expect(none.loading).toBe(0);
   });
 });

@@ -11,13 +11,14 @@ The helicopter is built, and the island it flies over: flown from the
 keyboard or by touch, with a chase camera, over land and sea made at boot
 from a recipe, its trees bowing in the rotor's downwash, seven structures
 (two bridges and five pairs of towers) that stand solid in every level and
-are collected by flying through them, and seven levels, four deliveries, two ring trials
-and a course. The game opens flying free from home, nothing locked: a level
-begins where its first step is done, on a pad with a crate waiting or
-through a start ring or the towers, one at a time, and the best time on
+are collected by flying through them, and ten levels: four deliveries, two
+ring trials, a course and three rescues. The game opens flying free from
+home, nothing locked: a level begins where its first step is done, on a pad
+with a crate waiting, through a start ring or the towers, or by holding a
+hover over a person waiting to be winched up, one at a time, and the best time on
 each is kept in a save, with the structures collected and the ten hidden
-packages found, a radar in the corner pinging faster as one is neared. A
-rescue level is still to come (the plan is
+packages found, a radar in the corner pinging faster as one is neared.
+Water bombing is still to come (the plan is
 `~/.claude/plans/glimmering-shimmying-wigderson.md`), and there is no
 physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
@@ -70,7 +71,7 @@ The game itself is held too, played by the autopilot:
 | Property                                              | Held to                                            | Held by       |
 | ----------------------------------------------------- | -------------------------------------------------- | ------------- |
 | Each level flown to its end, game minutes, median 1-4 | `scripts/pace-baseline.json`, each ± 2%, both ways | `pace:check`  |
-| The same seed played twice is the same game           | seeds 1-6, 3600 frames, hashed every 300           | `determinism` |
+| The same seed played twice is the same game           | seeds 1-10, 3600 frames, hashed every 300          | `determinism` |
 | What is kept stays bounded over ten game minutes      | ceilings in `scripts/leaks.ts`                     | `leaks:check` |
 
 The autopilot flies the same way every run and, with nothing in the game
@@ -83,7 +84,8 @@ back with the first body.
 
     npm run dev            the game at http://localhost:5202
     npm run check:quick    formatting, types, lint, unit tests (the pre-commit hook)
-    npm run check          all of it: check:quick, fuzz, determinism, leaks, pace, then smoke with perf and look (~70 s)
+    npm run check          all of it: check:quick, test:slow, fuzz, determinism, leaks, pace, then smoke with perf and look
+    npm run test:slow      the autopilot's long sweeps, which check:quick runs one case of each, to stay under half a minute
     npm test               unit tests (Vitest, test/)
     npm run fuzz           the game played at random, rules checked; -- --seed N plays one failure again,
                            -- --level ID begins one level at once on every seed
@@ -284,6 +286,16 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   key and touch in `smoke/find.spec.ts`, all ten by the play-through;
   pictured (`package-near.png`, `package-chase.png`, `radar-quiet.png`,
   `radar-heard.png`, `found-toast.png`, `panel-packages.png`).
+- **The rescue**, for a level begun by holding a hover: a `winch` step in
+  `mission.ts`, its window (`WINCH`, `inWindow`) said once, filled by the
+  mission's loading or, to begin one, by `starts.ts`; the spots in
+  `RESCUE_SPOTS` (`arena.ts`), found by script and pinned in
+  `test/levels.test.ts`, each level ending on the home pad; the person, the
+  smoke and the rope drawn by `scene.ts`, the words by `hud.ts`; held still
+  in the window by the autopilot; hovered high, low and aside by the
+  fuzzer's "to a rescue"; flown by key and touch in `smoke/rescue.spec.ts`
+  and by the play-through; pictured (`rescue-far.png`, `rescue-waiting.png`,
+  `rescue-winch.png`, `rescue-going.png`, `rescue-toast.png`).
 - **The course**, for a level of more than one kind of step: `gate` and
   `land` steps in `mission.ts`, a gate passed by the ring's rule with a
   rectangle for its opening; put into words by `hud.ts`; flown by the

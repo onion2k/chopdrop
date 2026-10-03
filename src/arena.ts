@@ -334,6 +334,62 @@ export const PACKAGES: readonly PackagePlace[] = [
   { id: 'north-east-shore-wood', x: 485.9, y: 423.9, z: 8.7 },
 ];
 
+/** Where a person waits to be winched up: `z` is the ground under them. Its `id` is the rescue level's, in players' saves and never changed. */
+export interface RescueSpot {
+  id: string;
+  /** What the panel calls the rescue level: "Wood rescue". */
+  name: string;
+  /** What the HUD calls them. */
+  who: string;
+  /** The words for the place, after "winch up the walker": "in the western wood". */
+  where: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * The three places a person waits to be rescued, one of each kind, found by a script on a grid of 2 and kept here as
+ * the numbers it found: a walker in a clearing of a wood (eight or more trees' feet within 30), someone cut off on a
+ * beach (under 5 above the sea) and a climber on a mountainside ledge (60 or more up). Each is on dry land by the
+ * island's own maps, on a patch the ground keeps within 2 over 10 square, with no tree's foot within 8 so that the
+ * rotor has room overhead while they are winched, 120 or more from every pad, 60 or more from every structure's
+ * blocks and 150 or more from each other, inside the bounds the helicopter is kept to. The walker and the swimmer are
+ * 100 or more from every package; the climber is not: no ledge 60 up keeps 100, the highest that does is 56, so the
+ * ledge is the best level patch 60 up that is 75 or more from a package, 80 from the nearest. Of those that keep
+ * every rule each is the flattest and the clearest of trees. The ground is the island's as it stands, so an island
+ * made again otherwise moves every one, and the tests that pin them say so.
+ */
+export const RESCUE_SPOTS: readonly RescueSpot[] = [
+  {
+    id: 'wood-rescue',
+    name: 'Wood rescue',
+    who: 'the walker',
+    where: 'in the western wood',
+    x: -426.1,
+    y: -100.1,
+    z: 23.61,
+  },
+  {
+    id: 'beach-rescue',
+    name: 'Beach rescue',
+    who: 'the stranded swimmer',
+    where: 'on the east beach',
+    x: 495.9,
+    y: -244.1,
+    z: 0.17,
+  },
+  {
+    id: 'ledge-rescue',
+    name: 'Ledge rescue',
+    who: 'the climber',
+    where: 'on the southern ledge',
+    x: 177.9,
+    y: -370.1,
+    z: 63.1,
+  },
+];
+
 /** The ground kept clear of trees under and round each structure. */
 const CLEARINGS: readonly Clearing[] = BUILT.flatMap((b) => b.clearings);
 
@@ -583,6 +639,19 @@ function delivery(id: string, name: string, pickup: number, drop: number): Level
   };
 }
 
+/** A level that is a person winched up where they wait and flown to the home pad, which every rescue ends on. */
+function rescue({ id, name, who, where, x, y, z }: RescueSpot): Level {
+  return {
+    id,
+    name,
+    kind: 'rescue',
+    steps: [
+      { kind: 'winch', x, y, z, who, where },
+      { kind: 'land', pad: 0 },
+    ],
+  };
+}
+
 /**
  * A level that is a run of rings to fly through, the first of them where it begins: each ring at its middle
  * `[x, y, z]`, an `opening` wide, facing the way from the ring before it, and the first the way from the point `from`,
@@ -654,6 +723,9 @@ function course(): Level {
  * The course, last for now, begins by flying between the towers and ends on the shoulder pad: between the towers,
  * under the bridge and through three rings, as `course` says, its clock stopping as the skids touch. Nothing is
  * locked, so it is open from the first.
+ *
+ * The three rescues follow, one for each place a person waits, in the order wood, beach, ledge: each begun by hovering
+ * in the window over the person for as long as the winch takes, and ended by landing on the home pad.
  */
 export const LEVELS: readonly Level[] = [
   delivery('first-delivery', 'First delivery', 4, 1),
@@ -680,6 +752,7 @@ export const LEVELS: readonly Level[] = [
   ]),
   delivery('mountain-drop', 'Mountain drop', 2, 6),
   course(),
+  ...RESCUE_SPOTS.map(rescue),
 ];
 
 /**

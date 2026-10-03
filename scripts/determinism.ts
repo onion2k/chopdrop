@@ -2,7 +2,7 @@
  * The same seed, played twice, giving the same game, checked a hash at a time, so a run that parts from itself says
  * at which frame.
  *
- *   npm run determinism                    seeds 1-6, 3600 frames each
+ *   npm run determinism                    seeds 1-10, 3600 frames each
  *   npm run determinism -- --seeds 1-12 --frames 7200
  *
  * Everything that holds the game to a figure rests on this: the pace gate, the fuzzer replaying a failure by seed,
@@ -13,6 +13,7 @@
  * The autopilot is told the levels in turn, from home, and goes to each one's start and does it, so the two runs are
  * played the same way without a recording.
  */
+import { LEVELS } from '../src/arena';
 import { Autopilot } from '../src/autopilot';
 import { Game } from '../src/game';
 import { seeded } from '../src/random';
@@ -90,13 +91,27 @@ export function hashGame(game: Game): string {
 }
 
 /**
- * A game from a seed, flown by the autopilot for `frames` frames from home: told the levels in turn, from the first,
- * and the next each time one is done, with the first again after the last.
+ * The default run: seeds 1 to `seeds`, `frames` each. A flight of a minute gets from home to the start of one level and
+ * not much further, so ten seeds, each beginning at its own level, are what it takes for the run to begin all ten.
  */
-export function* flight(seed: number, frames: number): Generator<Game> {
+export const DEFAULT = { seeds: 10, frames: 3600 };
+
+/**
+ * Which level a seed's flight begins at, of `count`: each seed its own in turn, so that the default run begins every
+ * level, and the rescues at the end of the list are played by the gate and not only by the long runs.
+ */
+export function startingLevel(seed: number, count: number): number {
+  return (seed - 1) % count;
+}
+
+/**
+ * A game from a seed, flown by the autopilot for `frames` frames from home: told the levels in turn, from the one at
+ * `first` (the first by default), and the next each time one is done, with the first again after the last.
+ */
+export function* flight(seed: number, frames: number, first = 0): Generator<Game> {
   const game = new Game({ random: seeded(seed) });
   const pilot = new Autopilot(game);
-  let at = 0;
+  let at = first;
   let seen = game.last;
   pilot.wanted = game.levels[at].id;
   for (let f = 1; f <= frames; f++) {
@@ -116,7 +131,7 @@ export function playTwice({ seed, frames, every = 300, meddle }: TwiceOptions): 
   for (let pass = 0; pass < 2; pass++) {
     const hashes: string[] = [];
     let f = 0;
-    for (const game of flight(seed, frames)) {
+    for (const game of flight(seed, frames, startingLevel(seed, LEVELS.length))) {
       f++;
       meddle?.(game, pass, f);
       if (f % every === 0) hashes.push(hashGame(game));

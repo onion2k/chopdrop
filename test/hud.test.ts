@@ -15,11 +15,14 @@ import {
   RADAR_STEPS,
   collectedWords,
   foundWords,
+  loaderSteps,
+  loaderWords,
   pointer,
   radarBadge,
   radarRing,
   startPoint,
   startWords,
+  stepWords,
   toastShown,
   toastWords,
 } from '../src/hud';
@@ -387,5 +390,71 @@ describe("the radar's ring", () => {
   it('has a ring for every ping that can be alive at once, at the fastest the radar pings', () => {
     expect(RADAR_RINGS).toBe(Math.ceil(RADAR_RING / RADAR.fastest));
     expect(RADAR_RINGS).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('the words of a rescue', () => {
+  const { pads } = theIsland();
+  const level = (id: string) => LEVELS.find((l) => l.id === id)!;
+  const wood = level('wood-rescue');
+  const words = (l: (typeof LEVELS)[number], k: number, ring = { n: 0, of: 0 }) => stepWords(l, l.steps[k], pads, ring);
+
+  it('guides to a rescue with the arrow, "Hover over" and who, and to the home pad with who aboard', () => {
+    expect(words(wood, 0)).toBe('Hover over the walker');
+    expect(words(level('beach-rescue'), 0)).toBe('Hover over the stranded swimmer');
+    expect(words(level('ledge-rescue'), 0)).toBe('Hover over the climber');
+    expect(pads[0].site).toBe('home');
+    expect(words(wood, 1)).toBe('Fly the walker to the home pad');
+    expect(words(level('beach-rescue'), 1)).toBe('Fly the stranded swimmer to the home pad');
+    expect(words(level('ledge-rescue'), 1)).toBe('Fly the climber to the home pad');
+  });
+
+  it("does not say a pickup's or a landing's words for a rescue, nor a rescue's for a delivery", () => {
+    for (const id of ['wood-rescue', 'beach-rescue', 'ledge-rescue']) {
+      const l = level(id);
+      for (let k = 0; k < l.steps.length; k++) {
+        expect(words(l, k)).not.toMatch(/^Land on|Deliver it|Pick up/);
+      }
+    }
+    // a delivery and a course keep their own
+    const delivery = level('first-delivery');
+    expect(words(delivery, 0)).toBe('Pick up the parcel at the meadow pad');
+    expect(words(delivery, 1)).toMatch(/^Deliver it to the .* pad$/);
+    const course = level('under-and-between');
+    const landing = course.steps.findIndex((s) => s.kind === 'land');
+    if (landing >= 0) expect(words(course, landing)).toMatch(/^Land on the .* pad$/);
+    expect(words(level('ring-trial'), 0, { n: 1, of: 6 })).toBe('Fly through ring 1 of 6');
+    expect(words(course, 0)).toMatch(/^Fly /);
+  });
+
+  it('names the loader for the person being winched, and for a parcel otherwise', () => {
+    expect(loaderWords('the walker', undefined)).toBe('Winching up the walker');
+    expect(loaderWords('the climber', wood.steps[1])).toBe('Winching up the climber');
+    expect(loaderWords(null, undefined)).toBe('Loading the parcel');
+    expect(loaderWords(null, level('first-delivery').steps[0])).toBe('Loading the parcel');
+    expect(loaderWords(null, level('first-delivery').steps[1])).toBe('Unloading the parcel');
+  });
+
+  it("fills the loader by the winch's share and by a parcel's load, in fortieths, and is hidden at none", () => {
+    expect(loaderSteps(0)).toBe(-1);
+    expect(loaderSteps(0.5)).toBe(20);
+    expect(loaderSteps(1)).toBe(40);
+    expect(loaderSteps(0.0001)).toBe(0);
+  });
+
+  it('tells the end with "Rescued!", the time and "New best" as the others do', () => {
+    expect(toastWords('rescue', 48.9, true)).toBe('Rescued! 0:48 ★ New best');
+    expect(toastWords('rescue', 61, false)).toBe('Rescued! 1:01');
+    const queue = new ToastQueue(0);
+    queue.level('rescue', 48.9, true, 10);
+    expect(queue.update(10)).toMatchObject({ title: 'Rescued!', left: '0:48', sep: ' · ', right: '★ New best' });
+    queue.level('rescue', 50, false, 20);
+    expect(queue.update(20)).toMatchObject({ title: 'Rescued!', left: '0:50', sep: '', right: '' });
+  });
+
+  it('says the panel its rows in the words of the mock', () => {
+    expect(startWords(wood, pads)).toBe('Winch up the walker in the western wood');
+    expect(startWords(level('beach-rescue'), pads)).toBe('Winch up the stranded swimmer on the east beach');
+    expect(startWords(level('ledge-rescue'), pads)).toBe('Winch up the climber on the southern ledge');
   });
 });

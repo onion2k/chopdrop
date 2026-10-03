@@ -20,7 +20,17 @@ import { Finds } from './finds';
 import { HELICOPTER, Helicopter, IDLE, type Controls } from './helicopter';
 import { TREE_STRIDE, type Island } from './island';
 import { treeSize } from './meshes';
-import { Mission, onPad, type Gate, type Level, type MissionEvents, type Ring } from './mission';
+import {
+  Mission,
+  WINCH_MIDDLE,
+  loadFor,
+  onPad,
+  type Gate,
+  type Level,
+  type MissionEvents,
+  type Ring,
+  type Winch,
+} from './mission';
 import { Progress } from './progress';
 import type { Random } from './random';
 import { Solids, type Block } from './solids';
@@ -45,6 +55,16 @@ export interface LastLevel {
   id: string;
   seconds: number;
   best: boolean;
+}
+
+/**
+ * Who is being winched up and how far, as the page draws it and the words say it: the level whose person it is (null
+ * when nobody is), what the words call them, and the winch's share of its hold run so far, 0 to 1.
+ */
+export interface WinchState {
+  spot: string | null;
+  who: string;
+  share: number;
 }
 
 /** How far back from its first opening a helicopter put at a level's start hovers, on the opening's axis. */
@@ -93,6 +113,8 @@ export class Game {
   readonly solids: Solids;
   /** The last level done, for the toast and the invariants; null until one is. */
   last: LastLevel | null = null;
+  /** What `winch` says, written in place so that reading it each frame makes nothing. */
+  private readonly winching: WinchState = { spot: null, who: '', share: 0 };
   /** The level the HUD shows the way to the start of, until any level begins; null for none. */
   guided: Level | null = null;
   /** Game time, in seconds. */
@@ -113,9 +135,10 @@ export class Game {
     this.solids = new Solids({ middle, radius: rotorRadius }, options.structures ?? STRUCTURES);
     this.startRings = this.levels.flatMap((level) => (level.steps[0].kind === 'ring' ? [level.steps[0]] : []));
     this.solids.set(this.startRings);
-    this.starts = new Starts(pads, this.levels);
     // the grid reads itself through `this`, so it is bound once here and not each time the helicopter asks the height
-    this.helicopter = new Helicopter({ bounds, heightAt: ground.heightAt.bind(ground) }, pads[0], this.solids);
+    const heightAt = ground.heightAt.bind(ground);
+    this.starts = new Starts(pads, this.levels, heightAt);
+    this.helicopter = new Helicopter({ bounds, heightAt }, pads[0], this.solids);
     const { trees, treeCount } = this.island;
     const give = TREE_KINDS.map((kind) => TREE_GIVE[kind]);
     this.sway = new Sway({ trees, stride: TREE_STRIDE, count: treeCount, bounds, give });
@@ -128,27 +151,66 @@ export class Game {
     this.finds = new Finds(PACKAGES, this.progress);
     const events = options.events ?? {};
     this.events = events;
-    this.mission = new Mission(pads, {
-      started: events.started,
-      abandoned: events.abandoned,
-      loaded: events.loaded,
-      delivered: events.delivered,
-      passed: events.passed,
-      through: events.through,
-      landed: events.landed,
-      // the time kept before it is told, so what is told is what is kept; a level that ended as it began, which has no
-      // time, is not timed. Then nothing begins from the pad it ended on until the helicopter has lifted off
-      finished: (seconds) => {
-        const { id } = this.mission.level!;
-        const best = seconds > 0 && this.progress.record(id, seconds);
-        if (best) this.progress.persist();
-        this.last = { id, seconds, best };
-        events.finished?.(id, seconds, best);
-        this.starts.reset();
-        this.starts.blocked = this.padUnder();
-        this.holdRings(null);
+    this.mission = new Mission(
+      pads,
+      {
+        started: events.started,
+        abandoned: events.abandoned,
+        loaded: events.loaded,
+        delivered: events.delivered,
+        passed: events.passed,
+        through: events.through,
+        landed: events.landed,
+        winched: events.winched,
+        // the time kept before it is told, so what is told is what is kept; a level that ended as it began, which has no
+        // time, is not timed. Then nothing begins from the pad it ended on until the helicopter has lifted off
+        finished: (seconds) => {
+          const { id } = this.mission.level!;
+          const best = seconds > 0 && this.progress.record(id, seconds);
+          if (best) this.progress.persist();
+          this.last = { id, seconds, best };
+          events.finished?.(id, seconds, best);
+          this.starts.reset();
+          this.starts.blocked = this.padUnder();
+          this.holdRings(null);
+        },
       },
-    });
+      heightAt,
+    );
+  }
+
+  /**
+   * Who is being winched up now: with nothing going, the person of the rescue whose window the helicopter is holding, by
+   * the starts' loader; with a winch the step being done, by the mission's. Nobody when no winch is running, and
+   * not for a pad's load. Written in place, and the same object each time.
+   */
+  get winch(): Readonly<WinchState> {
+    const w = this.winching;
+    const step = this.mission.current;
+    let level: Level | null = null;
+    let first: Winch | undefined;
+    let loading = 0;
+    if (step) {
+      if (step.kind === 'winch') {
+        level = this.mission.level;
+        first = step;
+        loading = this.mission.loading;
+      }
+    } else if (this.starts.winching) {
+      level = this.starts.winching;
+      first = level.steps[0] as Winch;
+      loading = this.starts.loading;
+    }
+    if (!level || !first || !(loading > 0)) {
+      w.spot = null;
+      w.who = '';
+      w.share = 0;
+    } else {
+      w.spot = level.id;
+      w.who = first.who;
+      w.share = Math.min(1, loading / loadFor(first));
+    }
+    return w;
   }
 
   /** The level named `id`; a name the game does not have is refused. */
@@ -230,8 +292,9 @@ export class Game {
 
   /**
    * The helicopter put at the start of the level named `id`, with nothing begun and anything going abandoned: landed on
-   * the pickup pad of a delivery, which then loads and begins as the helicopter is stepped; hovering `START_BACK` back
-   * on the axis of a ring or an opening, its middle at the opening's height and facing it.
+   * the pickup pad of a delivery, which then loads and begins as the helicopter is stepped; hovering in the middle of
+   * the window over the person of a rescue, which holding begins; hovering `START_BACK` back on the axis of a ring or an
+   * opening, its middle at the opening's height and facing it.
    */
   moveToStart(id: string): void {
     const level = this.named(id);
@@ -239,7 +302,10 @@ export class Game {
     this.holdRings(null);
     const first = level.steps[0];
     if (first.kind === 'ring' || first.kind === 'gate') this.hoverBefore(first);
-    else {
+    else if (first.kind === 'winch') {
+      // in the middle of the window over the person, which holding it begins the level from
+      this.helicopter.placeAbove(first.x, first.y, WINCH_MIDDLE, 0);
+    } else {
       const pad = this.island.pads[first.pad];
       this.helicopter.place(pad.x, pad.y, 0, pad.yaw);
     }

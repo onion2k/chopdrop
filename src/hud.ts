@@ -56,6 +56,7 @@ function firstOf(level: { steps: readonly Step[] }): Step {
 export function startWords(level: { steps: readonly Step[] }, pads: readonly PadWords[]): string {
   const first = firstOf(level);
   if (first.kind === 'gate') return `Fly ${first.label}`;
+  if (first.kind === 'winch') return `Winch up ${first.who} ${first.where}`;
   if (first.kind === 'ring') {
     let site = '';
     let nearest = Infinity;
@@ -71,10 +72,47 @@ export function startWords(level: { steps: readonly Step[] }, pads: readonly Pad
   return `Land on the ${pads[first.pad].site} pad`;
 }
 
+/**
+ * What the bar says of the step being done, by the level it is in: a ring "Fly through ring 2 of 6" (`ring` is which and
+ * of how many), an opening "Fly under the bridge", a person "Hover over the walker", and a pad by its site, which a
+ * rescue's landing says as the person aboard being flown to it ("Fly the walker to the home pad") and a delivery's
+ * pickup and drop say as a parcel's. One function, so the bar and the tests read the same words.
+ */
+export function stepWords(
+  level: { kind: LevelKind; steps: readonly Step[] },
+  step: Step,
+  pads: readonly PadWords[],
+  ring: { n: number; of: number },
+): string {
+  if (step.kind === 'ring') return `Fly through ring ${ring.n} of ${ring.of}`;
+  if (step.kind === 'gate') return `Fly ${step.label}`;
+  if (step.kind === 'winch') return `Hover over ${step.who}`;
+  const site = pads[step.pad].site;
+  if (step.kind === 'land') {
+    const person = level.kind === 'rescue' ? level.steps.find((s) => s.kind === 'winch') : undefined;
+    return person?.kind === 'winch' ? `Fly ${person.who} to the ${site} pad` : `Land on the ${site} pad`;
+  }
+  return step.kind === 'pickup' ? `Pick up the parcel at the ${site} pad` : `Deliver it to the ${site} pad`;
+}
+
+/** What the loader says: the person being winched, if one is, and otherwise a parcel loaded, or unloaded once a step other than a pickup is wanted. */
+export function loaderWords(who: string | null, step: Step | undefined): string {
+  if (who !== null) return `Winching up ${who}`;
+  return step && step.kind !== 'pickup' ? 'Unloading the parcel' : 'Loading the parcel';
+}
+
+/** How finely the loader is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
+const LOADER_STEPS = 40;
+
+/** How far round the loader is filled, in fortieths, for a `share` of its load or hold run: −1 for none, and then it is hidden. */
+export function loaderSteps(share: number): number {
+  return share > 0 ? Math.round(share * LOADER_STEPS) : -1;
+}
+
 /** Where the arrow points to start a level: the pad of a pickup, or the middle of its first ring or opening. */
 export function startPoint(level: { steps: readonly Step[] }, pads: readonly PadWords[]): { x: number; y: number } {
   const first = firstOf(level);
-  const at = first.kind === 'ring' || first.kind === 'gate' ? first : pads[first.pad];
+  const at = 'pad' in first ? pads[first.pad] : first;
   return { x: at.x, y: at.y };
 }
 
@@ -100,6 +138,7 @@ const DONE: Record<LevelKind, string> = {
   delivery: 'Delivered!',
   rings: 'Trial complete!',
   course: 'Course complete!',
+  rescue: 'Rescued!',
 };
 
 /** The toast's words, as the test API reads them: the title by the kind of level, the time, and "New best" when it is one. */
@@ -330,9 +369,6 @@ function blank(): ToastText {
 /** The hint in the bar, flying free. */
 const HINT = 'Land on a crate or fly a start';
 
-/** How finely the loader is drawn: its fill moves in fortieths, so it is written a few dozen times a load, and no more. */
-const LOADER_STEPS = 40;
-
 /** What the HUD's one button does, which is the page's to say: open the panel. */
 export interface HudActions {
   panel: () => void;
@@ -486,10 +522,12 @@ export class Hud {
       s.clock = -1;
       s.turn = NaN;
     }
-    // the loader fills while the parcel of a level going is loaded or unloaded, or while a start's crate is loaded
+    // the loader fills while the parcel of a level going is loaded or unloaded, while a start's crate is loaded, or while a
+    // person is winched up, by the winch's share of its hold and not a parcel's of its load
+    const winch = game.winch;
     const loading = step ? d.loading : game.starts.loading;
-    const loader = loading > 0 ? Math.round((loading / DELIVERY.load) * LOADER_STEPS) : -1;
-    const loaderWords = step && step.kind !== 'pickup' ? 'Unloading the parcel' : 'Loading the parcel';
+    const loader = loaderSteps(winch.spot !== null ? winch.share : loading / DELIVERY.load);
+    const loadWords = loaderWords(winch.spot !== null ? winch.who : null, step);
     if (loader !== s.loader) {
       this.loader.hidden = loader < 0;
       if (loader >= 0) {
@@ -498,7 +536,7 @@ export class Hud {
       }
       s.loader = loader;
     }
-    if (loaderWords !== s.loaderWords) this.loaderWords.textContent = s.loaderWords = loaderWords;
+    if (loadWords !== s.loaderWords) this.loaderWords.textContent = s.loaderWords = loadWords;
     if (mode === 'free' || mode === 'quiet') return;
 
     const h = game.helicopter;
@@ -510,16 +548,7 @@ export class Hud {
       // the words are made when the step changes and not on every frame
       if (step !== this.stepFor) {
         this.stepFor = step;
-        this.stepWords =
-          step.kind === 'ring'
-            ? `Fly through ring ${d.ringNumber} of ${d.ringCount}`
-            : step.kind === 'gate'
-              ? `Fly ${step.label}`
-              : step.kind === 'land'
-                ? `Land on the ${game.island.pads[step.pad].site} pad`
-                : step.kind === 'pickup'
-                  ? `Pick up the parcel at the ${game.island.pads[step.pad].site} pad`
-                  : `Deliver it to the ${game.island.pads[step.pad].site} pad`;
+        this.stepWords = stepWords(d.level!, step, game.island.pads, { n: d.ringNumber, of: d.ringCount });
       }
       words = this.stepWords;
       const time = Math.floor(d.time);

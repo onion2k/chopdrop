@@ -1,9 +1,10 @@
 /** The test API's reading of the structures collected: what the browser tests will ask the page for. */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS } from '../src/arena';
 import { ChaseCamera } from '../src/chase';
 import { createApi, type DebugHost } from '../src/debug';
 import { Game } from '../src/game';
+import { HOVER_LIFT } from '../src/helicopter';
 import { seeded } from '../src/random';
 
 function api(over: Partial<DebugHost> = {}) {
@@ -18,6 +19,9 @@ function api(over: Partial<DebugHost> = {}) {
     toast: () => null,
     gold: () => 0,
     crates: () => 0,
+    people: () => 3,
+    smoke: () => 3,
+    rope: () => false,
     radar: () => ({ badge: 'quiet', step: 0 }),
     screen: () => 'flying',
     frame: () => 0,
@@ -93,5 +97,30 @@ describe('the test API and the packages found', () => {
   it('keeps level, structure and package names apart, since the autopilot is told any of them by name', () => {
     const ids = [...LEVELS.map((l) => l.id), ...COLLECTIBLES.map((c) => c.id), ...PACKAGES.map((p) => p.id)];
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('the test API and the rescues', () => {
+  it('lists each spot with its place and words, as copies, and its winch is in the level it begins', () => {
+    const { api: a } = api();
+    const listed = a.content().rescues;
+    expect(listed).toEqual(RESCUE_SPOTS.map((spot) => ({ ...spot })));
+    expect(listed[0]).not.toBe(RESCUE_SPOTS[0]);
+    listed[0].x += 1;
+    expect(RESCUE_SPOTS[0].x).not.toBe(listed[0].x);
+    a.begin('wood-rescue');
+    expect(a.state().mission.steps[0]).toMatchObject({ kind: 'winch', who: 'the walker' });
+  });
+
+  it('says who is being winched and how far up, and how many people are standing waiting', () => {
+    const { game, api: a } = api();
+    expect(a.state().winch).toEqual({ spot: null, share: 0 });
+    expect([a.state().people, a.state().smoke, a.state().rope]).toEqual([3, 3, false]);
+    const [spot] = RESCUE_SPOTS;
+    a.teleport(spot.x, spot.y, 10);
+    for (let f = 0; f < 90; f++) game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(a.state().winch.spot).toBe('wood-rescue');
+    expect(a.state().winch.share).toBeCloseTo(game.starts.loading / 3, 6);
+    expect(a.state().winch.share).toBeGreaterThan(0.3);
   });
 });

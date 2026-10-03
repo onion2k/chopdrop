@@ -262,6 +262,65 @@ async function findingPackage(page: Page, p: { x: number; y: number }, radius = 
   await expect(page.locator('#hud .toast h2')).toHaveText('Package found');
 }
 
+/** The walker's place, in the western wood: where the smoke rises and the winch is held. */
+const WALKER = 'wood-rescue';
+
+/** The camera parked looking at the walker's place from `azimuth` round and `polar` down, `radius` away. */
+async function lookAtWalker(page: Page, radius: number, polar: number, azimuth: number) {
+  await page.evaluate(
+    ([id, radius, polar, azimuth]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === id)!;
+      g.look(w.x, w.y, { azimuth, polar, radius });
+      g.step(1);
+    },
+    [WALKER, radius, polar, azimuth] as const,
+  );
+}
+
+/**
+ * The helicopter `back` from the walker's place along the way it faces and `up` over the ground, hovering still, facing
+ * the walker, the camera behind it; and, with `hold`, held in the window over them for that many frames first so that
+ * the winch is part way, or the level begun.
+ */
+async function overWalker(page: Page, back: number, up: number, aside = 0, yaw = 0.9) {
+  await page.evaluate(
+    ([id, back, up, aside, yaw, hover]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === id)!;
+      g.chase();
+      // `aside` to the left of the way it faces, so the person is not behind the helicopter from the camera
+      const [x, y] = [
+        w.x - Math.cos(yaw) * back - Math.sin(yaw) * aside,
+        w.y - Math.sin(yaw) * back + Math.cos(yaw) * aside,
+      ];
+      g.teleport(x, y, up, yaw);
+      g.fly(0, 0, hover);
+      g.step(45);
+      g.release();
+    },
+    [WALKER, back, up, aside, yaw, HOVER_LIFT] as const,
+  );
+}
+
+/** The walker half way up the rope: the window held for 1.5 s, the loader half full, nothing begun. */
+async function winching(page: Page) {
+  await page.evaluate(
+    ([id, hover]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === id)!;
+      g.teleport(w.x, w.y, 10, 0.9);
+      g.fly(0, 0, hover);
+      g.step(90);
+      g.release();
+    },
+    [WALKER, HOVER_LIFT] as const,
+  );
+  const now = await page.evaluate(() => window.game!.state());
+  expect(now.winch.spot).toBe(WALKER);
+  expect(now.winch.share).toBeCloseTo(0.5, 1);
+}
+
 test.describe('what it looks like', () => {
   test('the island, from above the home pad', async ({ page }) => {
     const problems = watch(page);
@@ -642,6 +701,79 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
+  test('a rescue seen from afar: the orange smoke rising over the western wood', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await lookAtWalker(page, 170, 1.15, -2.2);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect([now.people, now.smoke]).toEqual([3, 3]);
+    await expect(page.locator('#view')).toHaveScreenshot('rescue-far.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the walker waiting in the clearing, the smoke behind them, from the chase camera', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await overWalker(page, 10, 6, -8, 1.4);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('rescue-waiting.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the walker half way up the rope, the loader half full, from a fixed view that shows them', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await winching(page);
+    await lookAtWalker(page, 55, 1.45, 3.6);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect([now.rope, now.smoke, now.people]).toEqual([true, 2, 2]);
+    await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the walker');
+    await expect(page.locator('#view')).toHaveScreenshot('rescue-winch.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a rescue going: the arrow, the person aboard and the home pad wanted, the clock running', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await overWalker(page, 0, 10);
+    await page.evaluate(() => {
+      window.game!.begin('wood-rescue');
+      window.game!.fly(0, 0, 0.53);
+      window.game!.step(200);
+      window.game!.release();
+    });
+    await hideStats(page);
+    await expect(page.locator('#hud .goal')).toHaveText('Fly the walker to the home pad');
+    await expect(page.locator('#view')).toHaveScreenshot('rescue-going.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a rescue done: the toast "Rescued!" with the time and the best', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await page.evaluate(
+      ([id, hover]) => {
+        const g = window.game!;
+        const w = g.content().rescues.find((r) => r.id === id)!;
+        const home = g.content().home;
+        g.teleport(w.x, w.y, 10, 0);
+        g.begin(id);
+        g.fly(0, 0, hover);
+        g.step(2400);
+        g.release();
+        g.teleport(home.x, home.y, 0, home.yaw + 0.5);
+        g.step(100);
+      },
+      [WALKER, HOVER_LIFT] as const,
+    );
+    await hideStats(page);
+    await expect(page.locator('#hud .toast h2')).toHaveText('Rescued!');
+    await expect(page.locator('#view')).toHaveScreenshot('rescue-toast.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
   test('a small thing added to the island is a change', async ({ page }, info) => {
     // while the pictures are being written this would write its own, button and all, over the island's
     test.skip(!['none', 'missing'].includes(info.config.updateSnapshots), 'the pictures are being written');
@@ -795,6 +927,20 @@ test.describe('the first level on a phone, upright', () => {
     await hideStats(page);
     expect((await page.evaluate(() => window.game!.state())).radar).toMatchObject({ badge: 'heard', step: 3 });
     await expect(page).toHaveScreenshot('radar-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+});
+
+test.describe('a rescue on a phone, upright', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('the walker part way up the rope, the loader in view', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await winching(page);
+    await hideStats(page);
+    await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the walker');
+    await expect(page).toHaveScreenshot('rescue-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 });

@@ -7,7 +7,8 @@
  * hill, down onto a pad and low over a wood, bowing its trees, onto the
  * pad the parcel is wanted at and waiting there, down onto a level's start or
  * through it, being shown the way to one, giving up the level going, flying
- * at a ring from any side and through one in its turn — with the
+ * at a ring from any side and through one in its turn, hovering over a person waiting to be winched up, in the
+ * window and high, low or aside of it — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
@@ -24,12 +25,12 @@
  * --seed N` does, and prints what was done before it went wrong.
  */
 import { Game } from '../src/game';
-import type { Step } from '../src/mission';
+import { WINCH, type Step } from '../src/mission';
 import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
-import { COLLECTIBLES, LEVELS, PACKAGES, TREE_KINDS } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, TREE_KINDS } from '../src/arena';
 import { treeSize } from '../src/meshes';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
@@ -57,6 +58,16 @@ export interface FuzzResult {
   /** How often each thing was done, and each thing seen to happen: to see that the monkey got about. */
   done: Record<string, number>;
   happened: Record<string, number>;
+}
+
+/**
+ * The level named `id` begun where a player begins it: the helicopter put at the level's start first, and then the level
+ * begun. Begun at once from wherever the helicopter happens to be, a rescue would be begun on its own destination, the
+ * home pad, and end on the next step, which a player can never be at.
+ */
+export function beginAtStart(game: Game, id: string): void {
+  game.moveToStart(id);
+  game.begin(id);
 }
 
 /**
@@ -103,6 +114,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         abandoned: () => count(happened, 'abandoned'),
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
+        winched: () => count(happened, 'winched'),
         passed: () => count(happened, 'passed a ring'),
         through: () => count(happened, 'through a gate'),
         landed: () => count(happened, 'landed where wanted'),
@@ -113,7 +125,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
     });
     const heli = game.helicopter;
     // the game opens flying free, so a level is begun only where one is asked for
-    if (level !== undefined) game.begin(level);
+    if (level !== undefined) beginAtStart(game, level);
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
     const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
     rig.snap(heli);
@@ -230,6 +242,21 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       );
       controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
       hold.busy = 150;
+    };
+    /**
+     * Over the person at `spot`, `up` over the ground there and `aside` from them in any direction, hovering as it is
+     * put for four seconds: in the winch's window if it is within it, and out of it, high, low or to the side, if not.
+     */
+    const overRescue = (spot: (typeof RESCUE_SPOTS)[number], up: number, aside: number): void => {
+      const round = between(-Math.PI, Math.PI);
+      heli.placeAbove(
+        spot.x + Math.cos(round) * aside,
+        spot.y + Math.sin(round) * aside,
+        up,
+        between(-Math.PI, Math.PI),
+      );
+      controls = { forward: 0, turn: 0, lift: HOVER_LIFT };
+      hold.busy = 240;
     };
     /** Lined up on the ring or the opening wanted. */
     const lineUp = (): boolean => lineUpOn(game.mission.current);
@@ -464,6 +491,16 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         },
       },
       {
+        name: 'to a rescue',
+        places: true,
+        weight: 3,
+        go() {
+          // over a place a person waits, 3 to 18 up and up to 8 across, held hovering: some are in the winch's window
+          // and begin the rescue, and some are too high, too low or too far aside, and do not
+          overRescue(RESCUE_SPOTS[Math.floor(random() * RESCUE_SPOTS.length)], between(3, 18), between(0, 8));
+        },
+      },
+      {
         name: 'structure run',
         places: true,
         weight: 2,
@@ -523,7 +560,11 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
           const at = owed() ? seed % LEVELS.length : Math.floor(random() * LEVELS.length);
           const start = LEVELS[at].steps[0];
           if (start.kind === 'pickup') downOnPad(start.pad, 90);
-          else {
+          else if (start.kind === 'winch') {
+            // well inside the window, and held for longer than the hold
+            const spot = RESCUE_SPOTS.find((r) => r.x === start.x && r.y === start.y)!;
+            overRescue(spot, between(WINCH.low + 1, WINCH.high - 1), between(0, WINCH.reach - 2));
+          } else {
             lineUpOn(start);
             hold.run = random() < 0.5;
           }

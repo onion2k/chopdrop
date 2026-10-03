@@ -1,7 +1,10 @@
 /** The monkey itself: it gets about, and a clean seed is clean. `npm run fuzz` is the long form. */
 import { describe, expect, it } from 'vitest';
-import { fuzz } from '../scripts/fuzzer';
-import { LEVELS } from '../src/arena';
+import { beginAtStart, fuzz } from '../scripts/fuzzer';
+import { LEVELS, RESCUE_SPOTS } from '../src/arena';
+import { Game } from '../src/game';
+import { HOVER_LIFT } from '../src/helicopter';
+import { seeded } from '../src/random';
 
 describe('the fuzzer', () => {
   it('plays a seed through without breaking a rule, and does everything a player can', () => {
@@ -32,11 +35,12 @@ describe('the fuzzer', () => {
       'through the gate',
       'through a structure',
       'to a package',
+      'to a rescue',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
     const seen = new Set<string>();
-    for (let seed = 1; seed <= 12; seed++) for (const key of Object.keys(fuzz(seed, 4000).happened)) seen.add(key);
+    for (let seed = 1; seed <= 12; seed++) for (const key of Object.keys(fuzz(seed, 5000).happened)) seen.add(key);
     for (const happening of [
       'took off',
       'landed',
@@ -54,6 +58,7 @@ describe('the fuzzer', () => {
       'abandoned',
       'collected',
       'found',
+      'winched',
     ])
       expect(seen, happening).toContain(happening);
   });
@@ -71,6 +76,18 @@ describe('the fuzzer', () => {
       expect(seen, happening).toContain(happening);
   });
 
+  it('begins a level asked for at its start, so a rescue is not begun on the home pad it ends on', () => {
+    const game = new Game({ random: seeded(1) });
+    beginAtStart(game, 'wood-rescue');
+    const spot = game.mission.current;
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(spot?.kind).toBe('land');
+    const home = game.island.pads[0];
+    expect(Math.hypot(game.helicopter.x - home.x, game.helicopter.y - home.y)).toBeGreaterThan(100);
+    for (let f = 0; f < 90; f++) game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id, 'still going after a second and a half').toBe('wood-rescue');
+  });
+
   it('refuses a level it does not have, by name', () => {
     expect(fuzz(1, 10, 'no-such-level').failure?.problems.join()).toMatch(/there is no level "no-such-level"/);
   });
@@ -81,6 +98,7 @@ describe('the fuzzer', () => {
     for (let seed = 1; seed <= 12; seed++)
       for (const key of Object.keys(fuzz(seed, 4000).happened)) if (key.startsWith('started ')) started.add(key);
     expect([...started].sort()).toEqual(LEVELS.map((level) => `started ${level.id}`).sort());
+    for (const { id } of RESCUE_SPOTS) expect(started, id).toContain(`started ${id}`);
   });
 
   it('starts flying free at home, with nothing going, unless a level is asked for', () => {

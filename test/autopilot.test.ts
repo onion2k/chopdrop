@@ -4,7 +4,7 @@
  * about it than about the game.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, PACKAGES, STRUCTURES } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES } from '../src/arena';
 import { Autopilot, PILOT } from '../src/autopilot';
 import { FIND } from '../src/finds';
 import { Game } from '../src/game';
@@ -13,6 +13,7 @@ import { checkInvariants } from '../src/invariants';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
 import { DT } from './helpers';
+import { sweep } from './slow';
 
 /**
  * Flown by the autopilot until a level is done (a time kept, `game.last`) or `seconds` have gone, every frame checked;
@@ -126,7 +127,7 @@ describe('the autopilot', () => {
     [-600, -100, 120],
   ];
 
-  it.each(['first-delivery', 'ring-trial', 'under-and-between'])(
+  it.each(sweep(['first-delivery', 'ring-trial', 'under-and-between']))(
     'does %s told it from wherever a player might leave it: high, low, over the sea and beyond the mountains',
     (id) => {
       const { bounds } = new Game().helicopter;
@@ -150,7 +151,7 @@ describe('the autopilot', () => {
     }
   });
 
-  it.each(['ring-trial', 'up-the-valley'])(
+  it.each(sweep(['ring-trial', 'up-the-valley']))(
     'finishes %s begun, from wherever a player might leave it: high, low, beyond the course, in front of a ring and inside one',
     (id) => {
       // over the sea, on a hill above the rings, in front of the first, in the middle of the second's opening, at the
@@ -172,7 +173,7 @@ describe('the autopilot', () => {
     },
   );
 
-  it.each(LEVELS.map((level) => level.id))(
+  it.each(sweep(LEVELS.map((level) => level.id)))(
     'finishes %s begun, from under the bridge and beside it, where it must come out before it climbs',
     (id) => {
       // over the water under the deck, beside each abutment under its ends, and on the bank under the north end
@@ -477,7 +478,7 @@ describe('the autopilot and the packages', () => {
       if (!grazes) expect(knocks).toBe(0);
     };
 
-    it.each(decks.flatMap((b) => PACKAGES.map((p) => [b.name, p.id] as const)))(
+    it.each(sweep(decks.flatMap((b) => PACKAGES.map((p) => [b.name, p.id] as const))))(
       'from under %s, lands by %s',
       (name, id) => {
         const block = decks.find((k) => k.name === name)!;
@@ -488,7 +489,7 @@ describe('the autopilot and the packages', () => {
       },
     );
 
-    it.each(COLLECTIBLES.flatMap((c) => PACKAGES.map((p) => [c.id, p.id] as const)))(
+    it.each(sweep(COLLECTIBLES.flatMap((c) => PACKAGES.map((p) => [c.id, p.id] as const))))(
       'just after collecting %s, lands by %s',
       (cid, id) => {
         const game = new Game({ random: seeded(1) });
@@ -499,5 +500,74 @@ describe('the autopilot and the packages', () => {
         lands(game, pilot, id, true);
       },
     );
+  });
+});
+
+describe('the autopilot and the rescues', () => {
+  const ids = RESCUE_SPOTS.map((s) => s.id);
+
+  it.each(ids)(
+    'flies %s from home, touching nothing, and winches in the window and does not land on the spot',
+    (id) => {
+      const { game, pilot } = told(id);
+      const spot = RESCUE_SPOTS.find((s) => s.id === id)!;
+      const knocks = { count: 0 };
+      let landedOnSpot = false;
+      let began = -1;
+      const before = game.last;
+      for (let f = 0; f < 150 * 60 && game.last === before; f++) {
+        pilot.step(DT);
+        if (game.mission.level && began < 0) began = game.t;
+        const h = game.helicopter;
+        if (h.landed && Math.hypot(h.x - spot.x, h.y - spot.y) < 20) landedOnSpot = true;
+        if (game.solids.touched) knocks.count++;
+      }
+      expect(game.last?.id).toBe(id);
+      expect(began).toBeGreaterThan(0);
+      expect(landedOnSpot).toBe(false);
+      expect(knocks.count).toBe(0);
+      // under a limit: the longest takes about a minute and a half
+      expect(game.t).toBeLessThan(150);
+    },
+  );
+
+  it.each(sweep(ids))(
+    'flies %s from three awkward places: high over the sea, low in the west, and in the far corner',
+    (id) => {
+      const { bounds } = new Game().helicopter;
+      for (const [x, y, height] of [
+        [0, 0, 200],
+        [-300, 200, 3],
+        [bounds.maxX - 10, bounds.minY + 10, 20],
+      ] as const) {
+        const { game, pilot } = told(id);
+        game.helicopter.placeAbove(x, y, height, 1);
+        expect(flown(game, 240, undefined, pilot), `from ${x}, ${y}, ${height} up`).not.toBeNull();
+        expect(game.last!.id).toBe(id);
+      }
+    },
+  );
+
+  it.each(sweep(ids))('finishes %s begun, from where a player might leave it after the winch', (id) => {
+    for (const [x, y, height] of [
+      [0, 0, 150],
+      [-300, 200, 3],
+    ] as const) {
+      const game = new Game({ random: seeded(1) });
+      game.begin(id);
+      game.helicopter.placeAbove(x, y, height, 1);
+      expect(flown(game, 150), `from ${x}, ${y}, ${height} up`).not.toBeNull();
+    }
+  });
+
+  it('holds still in the window while the loader fills, ten metres over the ground', () => {
+    const { game, pilot } = told('wood-rescue');
+    const spot = RESCUE_SPOTS[0];
+    game.helicopter.placeAbove(spot.x, spot.y, 10, 0);
+    for (let f = 0; f < 60; f++) pilot.step(DT);
+    expect(game.starts.loading).toBeGreaterThan(0.9);
+    expect(game.mission.level).toBeNull();
+    for (let f = 0; f < 180; f++) pilot.step(DT);
+    expect(game.mission.level?.id).toBe('wood-rescue');
   });
 });

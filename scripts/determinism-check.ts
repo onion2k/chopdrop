@@ -1,7 +1,7 @@
 /**
  * Every seed played twice, side by side: see `determinism.ts`.
  *
- *   npm run determinism                      seeds 1-6, 3600 frames each
+ *   npm run determinism                      seeds 1-10, 3600 frames each
  *   npm run determinism -- --seeds 1-12 --frames 7200 --every 600
  *
  * Fails, and says at which frame, if any seed does not play out the same way
@@ -10,7 +10,7 @@
  */
 import { availableParallelism } from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
-import { playTwice, type TwiceOptions, type TwiceResult } from './determinism';
+import { DEFAULT, playTwice, type TwiceOptions, type TwiceResult } from './determinism';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -18,9 +18,9 @@ async function main() {
     const i = args.indexOf(`--${name}`);
     return i >= 0 ? args[i + 1] : undefined;
   };
-  const range = (value('seeds') ?? '1-6').split('-').map(Number);
+  const range = (value('seeds') ?? `1-${DEFAULT.seeds}`).split('-').map(Number);
   const seeds = Array.from({ length: (range[1] ?? range[0]) - range[0] + 1 }, (_, k) => range[0] + k);
-  const frames = +(value('frames') ?? 3600);
+  const frames = +(value('frames') ?? DEFAULT.frames);
   const every = +(value('every') ?? 300);
   const started = performance.now();
   const queue: TwiceOptions[] = seeds.map((seed) => ({ seed, frames, every }));

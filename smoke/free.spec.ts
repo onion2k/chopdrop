@@ -26,7 +26,7 @@ async function landOn(page: Page, pad: number, from = 10) {
 /** How many lines of text the bar is: its height over a line of its own text. */
 const barHeight = (page: Page) => page.locator('#hud .bar').evaluate((el) => el.getBoundingClientRect().height);
 
-test('opens flying free: the hint in the bar, no arrow, distance or clock, nothing going, and all seven levels to fly', async ({
+test('opens flying free: the hint in the bar, no arrow, distance or clock, nothing going, and all ten levels to fly', async ({
   page,
 }) => {
   const problems = watch(page);
@@ -42,7 +42,7 @@ test('opens flying free: the hint in the bar, no arrow, distance or clock, nothi
   for (const gone of ['.arrow', '.goal', '.far', '.clock', '.loader'])
     await expect(page.locator(`#hud ${gone}`)).toBeHidden();
   const levels = await page.evaluate(() => window.game!.levels());
-  expect(levels).toHaveLength(7);
+  expect(levels).toHaveLength(10);
   expect(levels.every((l) => l.best === null)).toBe(true);
   // one line of words
   expect(await barHeight(page), 'the bar is one line').toBeLessThan(44);

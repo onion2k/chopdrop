@@ -227,3 +227,50 @@ test('a view over a wood with a package in it, and the radar badge pulsing: the 
   );
   expect(problems).toEqual([]);
 });
+
+test('a view over the western wood with a person and smoke in it, and the winch out: the frames told, not held', async ({
+  page,
+}, info) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  // the chase camera behind the helicopter hovering short of the walker, who and whose smoke are in view
+  const waiting = await page.evaluate(
+    async ([hover]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === 'wood-rescue')!;
+      const yaw = 0.9;
+      g.chase();
+      g.teleport(w.x - Math.cos(yaw) * 40, w.y - Math.sin(yaw) * 40, 22, yaw);
+      g.fly(0, 0, hover);
+      g.step(40);
+      g.release();
+      const s = g.state();
+      return { people: s.people, smoke: s.smoke, rope: s.rope, ms: await g.measureFrame(50) };
+    },
+    [HOVER_LIFT] as const,
+  );
+  expect([waiting.people, waiting.smoke, waiting.rope]).toEqual([3, 3, false]);
+  // the winch part way: the rope written every frame, the person on it, and the smoke out
+  const winching = await page.evaluate(
+    async ([hover]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === 'wood-rescue')!;
+      g.teleport(w.x, w.y, 10, 0.9);
+      g.fly(0, 0, hover);
+      g.step(90);
+      g.release();
+      const s = g.state();
+      return { rope: s.rope, smoke: s.smoke, share: s.winch.share, ms: await g.measureFrame(50) };
+    },
+    [HOVER_LIFT] as const,
+  );
+  expect([winching.rope, winching.smoke]).toEqual([true, 2]);
+  const [waitMs, winchMs] = [waiting.ms, winching.ms].map((v) => Math.round(v * 1000) / 1000);
+  info.annotations.push({
+    type: 'perf-rescue',
+    description: `${waitMs} ms waiting, ${winchMs} ms winching, not held to the baseline or the budget`,
+  });
+  console.log(`perf: rescue view frame ${waitMs} ms waiting, ${winchMs} ms winching (not held)`);
+  expect(problems).toEqual([]);
+});

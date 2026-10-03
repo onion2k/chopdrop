@@ -4,7 +4,7 @@
  * makes it the level it is: over the water, over the range, up the mountain.
  */
 import { describe, expect, it } from 'vitest';
-import { COLLECTIBLES, LEVELS, PACKAGES, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
+import { COLLECTIBLES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { PILOT } from '../src/autopilot';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, TREE_STRIDE } from '../src/island';
@@ -33,6 +33,9 @@ describe('the levels', () => {
       'up-the-valley',
       'mountain-drop',
       'under-and-between',
+      'wood-rescue',
+      'beach-rescue',
+      'ledge-rescue',
     ]);
     expect(LEVELS.map((level) => level.name)).toEqual([
       'First delivery',
@@ -42,6 +45,9 @@ describe('the levels', () => {
       'Up the valley',
       'Mountain drop',
       'Under and between',
+      'Wood rescue',
+      'Beach rescue',
+      'Ledge rescue',
     ]);
     for (const level of LEVELS) {
       expect(level.id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
@@ -52,6 +58,8 @@ describe('the levels', () => {
       } else if (level.kind === 'rings') {
         expect(level.steps.every((step) => step.kind === 'ring')).toBe(true);
         expect(level.steps.length).toBeLessThanOrEqual(RINGS.capacity);
+      } else if (level.kind === 'rescue') {
+        expect(level.steps.map((step) => step.kind)).toEqual(['winch', 'land']);
       } else {
         expect(level.kind).toBe('course');
         expect(level.steps.at(-1)?.kind).toBe('land');
@@ -827,7 +835,13 @@ describe('where a level begins', () => {
   it('is a pickup for a delivery, and a ring or an opening for the trials and the course', () => {
     for (const level of LEVELS)
       expect(level.steps[0].kind, level.id).toBe(
-        level.kind === 'delivery' ? 'pickup' : level.kind === 'rings' ? 'ring' : 'gate',
+        level.kind === 'delivery'
+          ? 'pickup'
+          : level.kind === 'rings'
+            ? 'ring'
+            : level.kind === 'rescue'
+              ? 'winch'
+              : 'gate',
       );
   });
 
@@ -867,7 +881,8 @@ describe('the hidden packages', () => {
     const ids = PACKAGES.map((p) => p.id);
     expect(new Set(ids).size).toBe(10);
     for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
-    const taken = new Set([...LEVELS.map((l) => l.id), ...COLLECTIBLES.map((c) => c.id)]);
+    // a rescue spot's id is its level's, by design, so levels are not among what it must not share
+    const taken = new Set([...COLLECTIBLES.map((c) => c.id)]);
     for (const id of ids) expect(taken.has(id), id).toBe(false);
   });
 
@@ -927,5 +942,165 @@ describe('the hidden packages', () => {
       expect(p.y, p.id).toBeGreaterThan(bounds.minY + r);
       expect(p.y, p.id).toBeLessThan(bounds.maxY - r);
     }
+  });
+});
+
+/** The rules a rescue spot keeps, each said once. */
+const SPOT = {
+  /** The ground within this over a patch, and the patch's side and the step it is sampled at. */
+  level: 2,
+  patch: 10,
+  sample: 2.5,
+  /** No tree's foot within this, so the rotor has room overhead in the winch's window. */
+  clear: 8,
+  /** How far from every pad, every structure's blocks, and every package; the ledge's gap from a package is less. */
+  pad: 120,
+  structure: 60,
+  package: 100,
+  /** No ledge 60 up keeps 100 from a package: the highest that does is 56, and the nearest one 60 up is 80 away. */
+  ledgePackage: 75,
+  apart: 150,
+  /** The wood's trees' feet within 30, the beach's top above the sea, and the ledge's least. */
+  wood: 8,
+  woodReach: 30,
+  beach: 5,
+  ledge: 60,
+  /** The winch's window: the helicopter hovers this far over the ground, and its column is this far round the spot. */
+  low: 5,
+  high: 15,
+  column: 5,
+};
+
+describe('the rescue spots', () => {
+  const apartBy = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const spot = (id: string) => RESCUE_SPOTS.find((s) => s.id === id)!;
+  const wood = () => RESCUE_SPOTS.filter((s) => s.id.startsWith('wood'));
+
+  it('say where each is, as the words say it', () => {
+    expect(RESCUE_SPOTS.map((s) => s.where)).toEqual([
+      'in the western wood',
+      'on the east beach',
+      'on the southern ledge',
+    ]);
+    // each by where it stands: the wood is west of home, the beach east, the ledge south
+    expect(spot('wood-rescue').x).toBeLessThan(-300);
+    expect(spot('beach-rescue').x).toBeGreaterThan(300);
+    expect(spot('ledge-rescue').y).toBeLessThan(-300);
+  });
+
+  it('are three, one of each kind, each known by a name that is kebab-case, unique, and no other thing its own', () => {
+    expect(RESCUE_SPOTS.map((s) => s.id)).toEqual(['wood-rescue', 'beach-rescue', 'ledge-rescue']);
+    expect(RESCUE_SPOTS.map((s) => s.who)).toEqual(['the walker', 'the stranded swimmer', 'the climber']);
+    expect(RESCUE_SPOTS.map((s) => s.name)).toEqual(['Wood rescue', 'Beach rescue', 'Ledge rescue']);
+    for (const s of RESCUE_SPOTS) expect(s.id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    // a rescue spot's id is its level's, by design, so levels are not among what it must not share
+    const taken = new Set([...COLLECTIBLES.map((c) => c.id), ...PACKAGES.map((p) => p.id)]);
+    for (const s of RESCUE_SPOTS) expect(taken.has(s.id), s.id).toBe(false);
+    expect(wood()).toHaveLength(1);
+  });
+
+  it('stand on dry land: in no lake, no sea and no river', () => {
+    for (const s of RESCUE_SPOTS) expect(wet(s.x, s.y), s.id).toBe(false);
+  });
+
+  it(`have z equal to the ground there, within 0.05`, () => {
+    for (const s of RESCUE_SPOTS) expect(Math.abs(s.z - ground.heightAt(s.x, s.y)), s.id).toBeLessThanOrEqual(0.05);
+  });
+
+  it(`are level: the ground within ${SPOT.level} over ${SPOT.patch} square, sampled every ${SPOT.sample}, all dry`, () => {
+    const h = SPOT.patch / 2;
+    for (const s of RESCUE_SPOTS) {
+      let lo = Infinity,
+        hi = -Infinity;
+      for (let a = -h; a <= h; a += SPOT.sample)
+        for (let b = -h; b <= h; b += SPOT.sample) {
+          const g = ground.heightAt(s.x + a, s.y + b);
+          [lo, hi] = [Math.min(lo, g), Math.max(hi, g)];
+          expect(wet(s.x + a, s.y + b), `${s.id} at ${a},${b}`).toBe(false);
+        }
+      expect(hi - lo, s.id).toBeLessThanOrEqual(SPOT.level);
+    }
+  });
+
+  it(`have no tree's foot within ${SPOT.clear}`, () => {
+    for (const s of RESCUE_SPOTS)
+      expect(
+        TREES.filter((t) => apartBy(t, s) < SPOT.clear),
+        s.id,
+      ).toEqual([]);
+  });
+
+  it(`keep each kind's own rule: ${SPOT.wood} or more trees' feet within ${SPOT.woodReach} of the walker, the swimmer under ${SPOT.beach} up and the climber ${SPOT.ledge} up or more`, () => {
+    expect(TREES.filter((t) => apartBy(t, spot('wood-rescue')) <= SPOT.woodReach).length).toBeGreaterThanOrEqual(
+      SPOT.wood,
+    );
+    expect(spot('beach-rescue').z).toBeLessThan(SPOT.beach);
+    expect(spot('ledge-rescue').z).toBeGreaterThanOrEqual(SPOT.ledge);
+  });
+
+  it(`keep ${SPOT.pad} from every pad, ${SPOT.structure} from every structure block and ${SPOT.package} from every package (the climber ${SPOT.ledgePackage})`, () => {
+    for (const s of RESCUE_SPOTS) {
+      const gap = s.id === 'ledge-rescue' ? SPOT.ledgePackage : SPOT.package;
+      for (const pad of pads) expect(apartBy(s, pad), `${s.id} and a pad`).toBeGreaterThanOrEqual(SPOT.pad);
+      for (const b of STRUCTURES)
+        expect(fromBlock(b, s.x, s.y), `${s.id} and ${b.name}`).toBeGreaterThanOrEqual(SPOT.structure);
+      for (const p of PACKAGES) expect(apartBy(s, p), `${s.id} and ${p.id}`).toBeGreaterThanOrEqual(gap);
+    }
+  });
+
+  it(`keep ${SPOT.apart} from each other`, () => {
+    RESCUE_SPOTS.forEach((a, i) =>
+      RESCUE_SPOTS.slice(i + 1).forEach((b) =>
+        expect(apartBy(a, b), `${a.id} and ${b.id}`).toBeGreaterThanOrEqual(SPOT.apart),
+      ),
+    );
+  });
+
+  it("stand inside the bounds the helicopter's middle is kept to", () => {
+    const r = HELICOPTER.reach;
+    for (const s of RESCUE_SPOTS) {
+      expect(s.x, s.id).toBeGreaterThan(bounds.minX + r);
+      expect(s.x, s.id).toBeLessThan(bounds.maxX - r);
+      expect(s.y, s.id).toBeGreaterThan(bounds.minY + r);
+      expect(s.y, s.id).toBeLessThan(bounds.maxY - r);
+    }
+  });
+
+  it(`have a winch window that fits: hovering ${SPOT.low} to ${SPOT.high} up is under the ceiling, and no structure is within the rotor's reach of the column ${SPOT.column} round`, () => {
+    const { middle, rotorRadius, height } = HELICOPTER.size;
+    const solids = new Solids({ middle, radius: rotorRadius }, STRUCTURES);
+    for (const s of RESCUE_SPOTS) {
+      expect(s.z + SPOT.high + height, s.id).toBeLessThanOrEqual(HELICOPTER.ceiling);
+      for (let up = SPOT.low; up <= SPOT.high; up += 2.5)
+        for (let k = -1; k < 8; k++) {
+          const dx = k < 0 ? 0 : SPOT.column * Math.cos((k * Math.PI) / 4);
+          const dy = k < 0 ? 0 : SPOT.column * Math.sin((k * Math.PI) / 4);
+          expect(
+            solids.distanceAt(s.x + dx, s.y + dy, s.z + up + middle),
+            `${s.id} at ${dx},${dy},${up}`,
+          ).toBeGreaterThan(0);
+        }
+    }
+  });
+});
+
+describe('the rescue levels', () => {
+  const rescues = LEVELS.filter((l) => l.kind === 'rescue');
+
+  it('are three, one for each spot, after the course, in the order wood, beach, ledge', () => {
+    expect(rescues.map((l) => l.id)).toEqual(RESCUE_SPOTS.map((s) => s.id));
+    expect(LEVELS.slice(-3)).toEqual(rescues);
+    expect(LEVELS.indexOf(rescues[0])).toBe(LEVELS.findIndex((l) => l.kind === 'course') + 1);
+  });
+
+  it('are named for their kind, each a winch at its spot and then a landing on the home pad', () => {
+    expect(rescues.map((l) => l.name)).toEqual(['Wood rescue', 'Beach rescue', 'Ledge rescue']);
+    rescues.forEach((level, k) => {
+      const s = RESCUE_SPOTS[k];
+      expect(level.steps).toEqual([
+        { kind: 'winch', x: s.x, y: s.y, z: s.z, who: s.who, where: s.where },
+        { kind: 'land', pad: 0 },
+      ]);
+    });
   });
 });

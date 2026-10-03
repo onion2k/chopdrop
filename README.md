@@ -22,7 +22,7 @@ stand on open ground: they are there in every level, and solid, and each is
 collected the first time the helicopter flies under or between it, a toast
 telling which and how many, a gold collar or gold rails left to show it.
 
-The game opens flying free from home, with seven levels to find and
+The game opens flying free from home, with ten levels to find and
 nothing locked. A level begins where its first step is done, one at a time,
 and the best time on each is kept in the browser, the clock at the top of
 the screen running from that first step. Four are deliveries: a crate waits
@@ -34,13 +34,16 @@ through a first ring with a chequered flag on it: rings to fly through in
 order, the one wanted lit gold, solid enough to knock the helicopter back,
 six over the meadow and nine up a river valley. The last is a course begun
 between the flagged towers: up the gorge and under the bridge, through three
-rings over the hills, and down onto the shoulder pad. A level's end is told
+rings over the hills, and down onto the shoulder pad. Three are rescues: a
+walker in a wood, a swimmer cut off on a beach and a climber on a ledge each
+wait under orange smoke, and holding a low hover over one for three seconds
+winches them up, to be flown to the home pad. A level's end is told
 in a toast with its time, and flight carries on. Esc, or the corner button,
 brings up the panel: every level, its best time and where it starts, a way
 shown to any of them, the one going given up, and the structures ticked as
 collected. Ten packages are hidden in woods across the island, in blue
 crates: a radar in the corner pings when one is within 100 m, faster as it
-is neared, and landing within 15 m of one finds it. A rescue level comes
+is neared, and landing within 15 m of one finds it. Water bombing comes
 next, through `/feature`. The template's stub,
 a sled shoving balls into a hole, was taken out in the second commit, and
 the first commit keeps it as the model to copy from.
