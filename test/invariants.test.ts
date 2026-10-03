@@ -11,7 +11,7 @@ import { TREE_STRIDE } from '../src/island';
 import { Game } from '../src/game';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
-import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
+import { DT, canopyKinds, newGame, thickestWood } from './helpers';
 
 function flown() {
   const { game } = newGame();
@@ -138,7 +138,7 @@ describe('what must always hold', () => {
 
   it('holds of the camera chasing a helicopter hovering low in a wood', () => {
     const game = hovered();
-    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    const cam = new ChaseCamera(game.island.ground, game.crown);
     cam.snap(game.helicopter);
     for (let f = 0; f < 120; f++) {
       game.step(DT, { forward: 1, turn: 0.2, lift: HOVER_LIFT });
@@ -149,7 +149,7 @@ describe('what must always hold', () => {
 
   it('reports a camera inside a crown, and one under the ground, and holds a parked one to neither', () => {
     const game = hovered();
-    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    const cam = new ChaseCamera(game.island.ground, game.crown);
     cam.snap(game.helicopter);
     const { trees, ground } = game.island;
     const [x, y, z, s] = [1, 2, 3, 5].map((k) => trees[k]);
@@ -168,7 +168,7 @@ describe('what must always hold', () => {
 
   it('reports a camera nearer a structure than it draws, inside it or beside it, and holds one just far enough off', () => {
     const { game } = newGame();
-    const cam = new ChaseCamera(game.island.ground, islandCanopy(), game.solids);
+    const cam = new ChaseCamera(game.island.ground, game.crown, game.solids);
     const tower = game.solids.blocks.find((block) => block.kind === 'tower')!;
     const [c, s] = [Math.cos(tower.yaw), Math.sin(tower.yaw)];
     // chasing, set at a distance out from the tower's face, half way up it

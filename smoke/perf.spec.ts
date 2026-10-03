@@ -25,7 +25,7 @@ import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Ring } from '../src/mission';
 import { COLLECTIBLES, PACKAGES } from '../src/arena';
 import { WOOD, standardView, start, watch } from './game';
-import { DROP_HEIGHT, EDGE, WEST, hoverOver, scoop, settle } from './fire';
+import { DROP_HEIGHT, EDGE, WEST, hoverOver, sceneSpray, scoop, settle } from './fire';
 import { moved as hasMoved, type Figures } from './judging';
 
 const BASELINE = 'smoke/perf-baseline.json';
@@ -329,6 +329,55 @@ test('a view over the west fire, every patch burning and then a drop pouring on 
   });
   console.log(
     `perf: fire view frame ${allMs} ms with every patch burning (${all.live} live), ${pourMs} ms with a drop pouring (${pouring.burning} burning, ${pouring.live} live) (not held)`,
+  );
+  expect(problems).toEqual([]);
+});
+
+test('a view hovering 3 m over the west lake with the rotor’s spray thrown up, and one hovering 2 m over a wood with the trees bowed: the frames told, not held', async ({
+  page,
+}, info) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  await settle(page, 60);
+  // the spray at its thickest the helicopter can make it over open water: low, the ring and the mist both out
+  await sceneSpray(page, 3, 120);
+  const sprayed = await page.evaluate(async () => {
+    const g = window.game!;
+    const s = g.state();
+    return {
+      wash: s.particles.wash,
+      live: s.particles.live,
+      refused: s.particles.refused,
+      ms: await g.measureFrame(50),
+    };
+  });
+  expect(sprayed.wash, 'the spray thrown up').toBeGreaterThan(0);
+  expect(sprayed.refused).toBe(0);
+  // the trees bowed: skids two metres over the highest crown of the wood round the clearing, the sway at work
+  const bowed = await page.evaluate(
+    async ([w, hover]) => {
+      const g = window.game!;
+      const top = Math.max(...g.treesNear(w.x, w.y, 12).map((t) => t.z + t.height));
+      g.chase();
+      g.teleport(w.x, w.y, top - g.floorAt(w.x, w.y) + 2, 0);
+      g.fly(0, 0, hover);
+      g.step(150);
+      const moving = g.sway().count;
+      const ms = await g.measureFrame(50);
+      g.release();
+      return { moving, ms };
+    },
+    [WOOD, HOVER_LIFT] as const,
+  );
+  expect(bowed.moving, 'trees bowed').toBeGreaterThan(30);
+  const [sprayMs, woodMs] = [sprayed.ms, bowed.ms].map((v) => Math.round(v * 1000) / 1000);
+  info.annotations.push({
+    type: 'perf-spray-wood',
+    description: `${sprayMs} ms over the lake with the spray (${sprayed.live} live), ${woodMs} ms over the wood with ${bowed.moving} trees bowed; not held to the baseline or the budget`,
+  });
+  console.log(
+    `perf: spray view frame ${sprayMs} ms (${sprayed.live} live), wood view frame ${woodMs} ms with ${bowed.moving} trees bowed (not held)`,
   );
   expect(problems).toEqual([]);
 });

@@ -27,7 +27,7 @@ import type { Level } from './mission';
  * The renderer's particle pool: the ring's size, which is its own default, and how many bursts it takes a frame, which
  * is its own limit too (`emit` says no past it), so this is said here once for the page to build the renderer by.
  */
-export const PARTICLES = { capacity: 16384, emitters: 128 };
+export const PARTICLES = { capacity: 32768, emitters: 128 };
 
 type Rgb = [number, number, number];
 
@@ -87,7 +87,7 @@ export const FLAMES = {
 };
 
 /** Which way the wind takes the smoke and the flare's smoke, in radians over the ground, and how fast, in metres a second. */
-const DRIFT = { yaw: 0.9 + Math.PI / 2, speed: 4, off: 2 };
+export const DRIFT = { yaw: 0.9 + Math.PI / 2, speed: 4, off: 2 };
 
 /**
  * The smoke over a burning fire, dark and dense at the flames and pale as it towers. A fire sends up `perPatch` a second
@@ -161,6 +161,51 @@ export const MIST = {
 };
 
 /**
+ * The water the rotor throws up when the hub is low over open water: a ring of spray thrown out from under the rotor,
+ * and a faint mist over the water. It is full from `full` metres of hub over the water and thins to nothing at `reach`.
+ * Each ring is `n` emitters set round a circle of `radius` about the point under the hub, `over` above the water's face,
+ * and the circle is turned by `turn` every frame drawn, the golden angle, so the spray is a ring and not `n` streams.
+ */
+export const ROTOR_SPRAY = {
+  reach: 16,
+  full: 4,
+  turn: 2.39996,
+  over: 0.2,
+  ring: {
+    n: 12,
+    radius: 4.5,
+    out: 10,
+    up: 4,
+    rate: 75,
+    spread: 3,
+    life: 0.9,
+    lifeSpread: 0.3,
+    size: 0.35,
+    growth: 1.5,
+    colour: [0.92, 0.96, 1] as Rgb,
+    fade: [1, 1, 1] as Rgb,
+    alpha: 0.6,
+    gravity: 1,
+  },
+  mist: {
+    n: 8,
+    radius: 7,
+    out: 5,
+    up: 1.5,
+    rate: 15,
+    spread: 3,
+    life: 2,
+    lifeSpread: 0.3,
+    size: 1.4,
+    growth: 3.5,
+    colour: [0.9, 0.94, 0.97] as Rgb,
+    fade: [1, 1, 1] as Rgb,
+    alpha: 0.14,
+    gravity: -0.05,
+  },
+};
+
+/**
  * The rotor's air as the renderer is told it: how fast it blows at full speed, in metres a second, which smoke takes
  * nearly all of. Its reach and width are the downwash's own, and its strength goes as the trees feel it.
  */
@@ -209,12 +254,24 @@ export function waitingFlares(
   return n;
 }
 
+/**
+ * What the rotor's spray reads of the helicopter: where it is, its skids' height as the helicopter's is, and the level of
+ * the open water under it, `-Infinity` where there is none (land, a river).
+ */
+export interface Air {
+  x: number;
+  y: number;
+  z: number;
+  level: number;
+}
+
 /** What each kind of burst emitted at the last step, in particles. */
 export interface Counts {
   flames: number;
   smoke: number;
   flares: number;
   spray: number;
+  wash: number;
 }
 
 /** How far through a unit a source is born, so that sources that start together do not all emit on the same frame. */
@@ -226,7 +283,7 @@ export class Effects {
   /** The bursts of the last step, the first `step` returned of them; made once and written into, as are their arrays. */
   readonly records: Emit[];
   /** What each kind emitted at the last step, in particles. */
-  readonly counts: Counts = { flames: 0, smoke: 0, flares: 0, spray: 0 };
+  readonly counts: Counts = { flames: 0, smoke: 0, flares: 0, spray: 0, wash: 0 };
   /** How many flares are lit: the people waiting at the last step, whether or not one was born in it. */
   flaring = 0;
 
@@ -246,6 +303,9 @@ export class Effects {
   private readonly sprayAcc = new Float64Array(POURS);
   private readonly mistAcc = new Float64Array(POURS);
   private nextPour = 0;
+  /** The rotor's spray: each emitter's accumulator, the ring's then the mist's, and the turn of the circles, in frames drawn. */
+  private readonly airAcc = new Float64Array(ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n);
+  private turn = 0;
   private readonly wash_: Wash = {
     position: [0, 0, 0],
     radius: HELICOPTER.size.rotorRadius,
@@ -269,8 +329,8 @@ export class Effects {
     this.flareLit = new Uint8Array(people.length);
     this.washes = [this.wash_];
     // room for every source to burst in one frame: two flames and a smoke on each patch, a flare for each person, and the
-    // spray and mist of each pour
-    const room = patches * 3 + people.length + POURS * 2;
+    // spray and mist of each pour and the rotor's ring and mist
+    const room = patches * 3 + people.length + POURS * 2 + ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n;
     this.fades = Array.from({ length: room }, (): Rgb => [0, 0, 0]);
     this.records = Array.from({ length: room }, (): Emit => ({
       position: [0, 0, 0],
@@ -330,6 +390,7 @@ export class Effects {
     fires: readonly FireView[],
     waiting: ArrayLike<number>,
     camera: readonly [number, number, number],
+    air?: Readonly<Air>,
   ): number {
     this.used = 0;
     this.flaring = 0;
@@ -338,10 +399,11 @@ export class Effects {
     // that moved left them, which is what the test API reads
     if (!(dt > 0)) return 0;
     const counts = this.counts;
-    counts.flames = counts.smoke = counts.flares = counts.spray = 0;
+    counts.flames = counts.smoke = counts.flares = counts.spray = counts.wash = 0;
     this.burn(dt, fires, camera);
     this.flares(dt, waiting, camera);
     this.pours(dt);
+    if (air) this.rotorSpray(dt, air);
     return this.used;
   }
 
@@ -466,6 +528,42 @@ export class Effects {
       const [vx, vy, vz] = FLARE.velocity;
       this.put(FLARE, p.x + ox, p.y + oy, p.z + oz, vx, vy, vz, n, -1e9);
       this.counts.flares += n;
+    }
+  }
+
+  /**
+   * The rotor's ring of spray and its mist while the hub is within `ROTOR_SPRAY.reach` of the open water under it, at
+   * a strength that is full from `full` down. The circles turn by the golden angle every frame drawn, whether or not a
+   * burst is born in it, so the same frames give the same ring.
+   */
+  private rotorSpray(dt: number, air: Readonly<Air>): void {
+    this.turn += ROTOR_SPRAY.turn;
+    const { reach, full, over } = ROTOR_SPRAY;
+    const above = air.z + HELICOPTER.size.mastTop - air.level;
+    if (!(above <= reach)) return;
+    const strength = Math.min(1, (reach - above) / (reach - full));
+    let a = 0;
+    for (const look of [ROTOR_SPRAY.ring, ROTOR_SPRAY.mist]) {
+      for (let k = 0; k < look.n; k++, a++) {
+        this.airAcc[a] += look.rate * strength * dt;
+        const n = Math.floor(this.airAcc[a]);
+        if (n === 0) continue;
+        this.airAcc[a] -= n;
+        const angle = this.turn + (2 * Math.PI * k) / look.n;
+        const [cos, sin] = [Math.cos(angle), Math.sin(angle)];
+        this.put(
+          look,
+          air.x + cos * look.radius,
+          air.y + sin * look.radius,
+          air.level + over,
+          cos * look.out,
+          sin * look.out,
+          look.up,
+          n,
+          -1e9,
+        );
+        this.counts.wash += n;
+      }
     }
   }
 

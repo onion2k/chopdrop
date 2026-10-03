@@ -11,7 +11,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { HOVER_LIFT } from '../src/helicopter';
 import { SCOOP } from '../src/water';
 import { fingers, leverTravel, start, watch } from './game';
-import { DROP_HEIGHT, WEST, hoverOver, scoop, settle } from './fire';
+import { DROP_HEIGHT, LAKE, WEST, hoverOver, sceneAfar, sceneSpray, scoop, settle, smokePixels } from './fire';
 
 const state = (page: Page) => page.evaluate(() => window.game!.state());
 const events = (page: Page) => page.evaluate(() => window.game!.events());
@@ -283,4 +283,70 @@ test.describe('on a phone', () => {
     expect(s.particles.refused).toBe(0);
     expect(problems).toEqual([]);
   });
+});
+
+test('hovering 3 m over the west lake throws the rotor’s spray up, and over the land beside it does not', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true, save: { best: {} } });
+  await settle(page, 1);
+  expect((await state(page)).particles.wash, 'none while landed at home').toBe(0);
+  await sceneSpray(page, 3, 60);
+  const over = await state(page);
+  expect(over.particles.wash, 'spray thrown up at the last frame drawn').toBeGreaterThan(0);
+  expect(over.particles.refused).toBe(0);
+  // high over the same water it is none: past the reach of the spray
+  await sceneSpray(page, 30, 60);
+  expect((await state(page)).particles.wash, 'none from 30 m up').toBe(0);
+  // and low over the land, none: the fire's own ground has no open water
+  await sceneSpray(page, 3, 60);
+  await hoverOver(page, WEST.x, WEST.y, 3, 0.9, 60);
+  expect((await state(page)).particles.wash, 'none over land').toBe(0);
+  expect(LAKE.z).toBeGreaterThan(0);
+  expect(problems).toEqual([]);
+});
+
+/**
+ * How many pixels of smoke are in the upper picture from 450 m: measured on the game before the column was drawn (at
+ * b62c135, the same scene, hud hidden) it was `BEFORE`. The renderer's haze takes whatever is drawn over the sky to the
+ * colour of the sky, by the depth behind it, so the west fire's column, which stands against sky from here, hardly shows,
+ * while the south fire's, against its wood at the picture's right, is plain: what is counted is both.
+ */
+const BEFORE = { pixels: 10179 };
+const SKY = { x0: 0, x1: 1280, y0: 0, y1: 320 };
+
+test('450 m from the west fire the column of smoke is plainly in the picture, over the horizon', async ({ page }) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true, save: { best: {} } });
+  await sceneAfar(page, 450);
+  for (const id of ['#stats', '#hud'])
+    await page.locator(id).evaluate((el: HTMLElement) => (el.style.display = 'none'));
+  // every fire that burns has its column drawn, however far the camera is: three fires of the puffs each
+  const column = (await state(page)).particles.sprites;
+  expect(column % 3, 'the same puffs for each of three fires').toBe(0);
+  expect(column, 'sprites drawn').toBeGreaterThan(0);
+  const picture = await page.screenshot();
+  const smoke = await smokePixels(page, picture, SKY);
+  console.log(`smoke pixels in the upper picture from 450 m: ${smoke} (before the column: ${BEFORE.pixels})`);
+  // 36,376 when this was written: three and a half times what there was, and held at twice
+  expect(smoke, 'smoke in the upper picture').toBeGreaterThan(2 * BEFORE.pixels);
+  expect(problems).toEqual([]);
+});
+
+test('the column of smoke is drawn for every fire that burns, from 900 m as from 100', async ({ page }) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true, save: { best: {} } });
+  const sprites = async () => (await state(page)).particles.sprites;
+  await sceneAfar(page, 100);
+  const near = await sprites();
+  expect(near, 'puffs, a third of them for each fire').toBeGreaterThan(0);
+  expect(near % 3).toBe(0);
+  await sceneAfar(page, 900);
+  expect(await sprites(), 'from 900 m').toBe(near);
+  expect((await state(page)).particles.refused).toBe(0);
+  expect(problems).toEqual([]);
 });

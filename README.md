@@ -14,9 +14,11 @@ The island is 1,536 units square, land and sea, made once at boot from a
 recipe of numbers and the same every time: a coast of bays and beaches,
 hills and meadows, a snowy range in the north-west, gullies and valleys
 cut where the rain would cut them, lakes, rivers from the hills to the sea,
-some seven thousand trees of five kinds, which bow away from the rotor's
-downwash when the helicopter comes down low over them and spring back when
-it has gone, and nine landing pads with home on the south coast. Two
+some seven thousand trees of five kinds, which bow hard away from the
+rotor's downwash and thrash in it when the helicopter comes down low over
+them, and spring back when it has gone, water that sprays up in a ring
+under it when it is low over a lake or the sea, and nine landing pads with
+home on the south coast. Two
 bridges in red steel cross gorges, and five pairs of red and white towers
 stand on open ground: they are there in every level, and solid, and each is
 collected the first time the helicopter flies under or between it, a toast
@@ -112,7 +114,7 @@ is fixed, and no baseline is moved to make it green.
     src/touch.ts       the touch stick and lever: fingers in, controls out
     src/touch-view.ts  the touch controls as the page draws and feeds them
     src/chase.ts       the camera that follows it, above the ground and the treetops, and off the bridge and the towers
-    src/canopy.ts      the top of the crowns over a point: what the camera keeps over
+    src/canopy.ts      the crowns over a point: the camera keeps out of them as they lean, the autopilot over them
     src/downwash.ts    the air under the rotor, and how it blows at a point
     src/sway.ts        the trees in the downwash: which are moving, and how each leans
     src/tree-grid.ts   the trees sorted into squares, to find those near a point
@@ -125,6 +127,7 @@ is fixed, and no baseline is moved to make it green.
     src/scene.ts       the island and the helicopter as they are drawn
     src/effects.ts     the particles the page emits: flames, smoke, the rescue's flare, the water's spray
     src/bucket.ts      where the bucket hangs on its line, and when
+    src/column.ts      the tall column of smoke over a burning fire, seen across the island
     src/meshes.ts      the shapes: the helicopter, five trees, a landing pad
     src/random.ts      chance, from one seed
     scripts/           the fuzzer, and the determinism, leak and pace gates

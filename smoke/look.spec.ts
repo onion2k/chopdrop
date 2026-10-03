@@ -22,7 +22,17 @@ import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Gate, Ring } from '../src/mission';
 import { DELIVERIES, WOOD, fingers, leverTravel, standardView, start, watch } from './game';
-import { sceneChase, sceneDrop, sceneFar, sceneGoing, sceneNear, sceneScooping, settle } from './fire';
+import {
+  sceneAfar,
+  sceneChase,
+  sceneDrop,
+  sceneFar,
+  sceneGoing,
+  sceneNear,
+  sceneScooping,
+  sceneSpray,
+  settle,
+} from './fire';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -376,6 +386,38 @@ test.describe('what it looks like', () => {
     expect(bowed, 'trees bowed in the picture').toBeGreaterThan(20);
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('downwash.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the helicopter hovering 2 m over the crowns of a wood: the whole wood bowed away under it, the trees plainly moving', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    const bowed = await page.evaluate(
+      ([w, hover]) => {
+        const g = window.game!;
+        // the helicopter in the wood beside the clearing, its skids two metres over the highest crown there; the view
+        // is parked on the ground beyond it, on the line from the camera through the helicopter, so that it sits in the
+        // middle of the picture with the wood bowed round it
+        const at = { x: w.x + 14, y: w.y - 10 };
+        const top = Math.max(...g.treesNear(at.x, at.y, 12).map((t) => t.z + t.height));
+        g.teleport(at.x, at.y, top - g.floorAt(at.x, at.y) + 2, 0);
+        const view = { azimuth: -Math.PI / 2, polar: 1.0, radius: 60 };
+        const camera = view.radius * Math.cos(view.polar),
+          across = view.radius * Math.sin(view.polar);
+        const back = ((top + 2 - g.groundAt(at.x, at.y)) / camera) * across;
+        g.look(at.x - back * Math.cos(view.azimuth), at.y - back * Math.sin(view.azimuth), view);
+        g.fly(0, 0, hover);
+        g.step(150);
+        g.release();
+        return g.sway().count;
+      },
+      [WOOD, HOVER_LIFT] as const,
+    );
+    expect(bowed, 'trees bowed in the picture').toBeGreaterThan(30);
+    await hideStats(page);
+    await expect(page.locator('#view')).toHaveScreenshot('downwash-wood.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -791,6 +833,32 @@ test.describe('what it looks like', () => {
     expect(now.ground).toEqual({ burning: 30, burnt: 0 });
     expect(now.particles.refused).toBe(0);
     await expect(page.locator('#view')).toHaveScreenshot('fire-far.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('a fire from 450 m: the column of smoke over the horizon, the chase camera facing the west fire', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneAfar(page, 450);
+    await hideStats(page);
+    expect((await page.evaluate(() => window.game!.state())).particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('fire-from-afar.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('hovering 3 m over the west lake: the ring of spray thrown out from under the rotor, and the mist over the water', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneSpray(page, 3, 120);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.particles.wash, 'the rotor throwing the water up').toBeGreaterThan(0);
+    expect(now.particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('spray.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 

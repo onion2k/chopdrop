@@ -159,26 +159,35 @@ says why. Look at every picture.
   the bucket on its line while it is in use (`src/bucket.ts`). The HUD's
   corner badges are the radar and the tank. `src/effects.ts` is what the
   page emits into the renderer's particles each frame it draws, by rates in
-  game seconds: the flames, the smoke, the rescues' flares and a drop's
-  spray, held inside the pool's ring by a test, and the rotor's air handed
-  to the renderer as a wash. Particles move only when a frame is drawn, so
-  they are emitted in `draw`, and `step(n)`, which draws once, emits none.
+  game seconds: the flames, the smoke, the rescues' flares, a drop's spray
+  and the spray the rotor throws off open water under it, held inside the
+  pool's ring by a test, and the rotor's air handed to the renderer as a
+  wash. Particles move only when a frame is drawn, so they are emitted in
+  `draw`, and `step(n)`, which draws once, emits none. `src/column.ts` is
+  the tall column of smoke over each burning fire, the renderer's sprites
+  placed from the game's time, which costs the ring nothing and is drawn
+  however far off the camera is, so the fires are seen across the island.
   There is no game logic here.
   `src/input.ts` turns keys or touch into `Controls`, whichever was used
   last: the stick and the lever are worked out in `src/touch.ts`, fed
   fingers as numbers and tested headless, and drawn and fed by the page in
   `src/touch-view.ts`; `src/chase.ts` is the camera
   rig, stepped with the game so the pictures repeat, and handed the ground
-  so that it stays above it, the canopy (`src/canopy.ts`, the top of the
-  crowns over a point, built by `game.ts`) so that it is never in a tree,
+  so that it stays above it, the crowns (`game.crown`, a `Canopy` from
+  `src/canopy.ts`: each crown as it stands, leaned as the sway has it this
+  step, spread by its height) so that it is never in a tree,
   looking ahead along its way to rise in time, and the solids, so that a
   structure between it and the helicopter draws it in, and one too near
   behind tilts its line up or down by the least that leaves it room.
 - `src/downwash.ts` is the air under the rotor: `washAt` says how it blows
   at a point, from where the helicopter is and how fast its rotor turns.
   `src/sway.ts` is the trees in it, a pool of those moving, sized once, each
-  sprung back upright and let go when it is still; `scene.ts` leans them
-  from their feet by what it says. Both find the trees near a point through
+  sprung back upright and let go when it is still, taking the wash three
+  quarters up each tree (`SWAY.crown`), so a helicopter hovering just over
+  a wood bows it; `scene.ts` leans them from their feet by what it says.
+  The autopilot flies over `game.canopy`, the crowns upright and bounded by
+  the lean they had before the wash grew (`flightLean`), so its way over a
+  wood does not move with the trees. Both find the trees near a point through
   `src/tree-grid.ts`, the trees sorted into squares once.
 - `src/debug.ts` is `window.game`, the test API: time, the seed, the
   helicopter (`fly`, whose lift of `HOVER_LIFT` holds the height, since
@@ -329,10 +338,11 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   words, the loader and the tank badge by `hud.ts`; read through
   `debug.ts` (`state().tank`, `fires`, `particles`, `bucket`, `badge`,
   `ground`, and `content().fires`); flown by key and touch in
-  `smoke/fire.spec.ts` and put out by the play-through; its frame told by
-  the perf gate over the west fire; pictured with `stepDrawn`
-  (`fire-far.png`, `fire-near.png`, `fire-chase.png`, `fire-drop.png`,
-  `scooping.png`, `fire-going.png`, `fire-phone.png`).
+  `smoke/fire.spec.ts` and put out by the play-through, its column held to
+  be seen from 450 m; its frame told by the perf gate over the west fire;
+  pictured with `stepDrawn` (`fire-from-afar.png`, `fire-far.png`,
+  `fire-near.png`, `fire-chase.png`, `fire-drop.png`, `scooping.png`,
+  `fire-going.png`, `fire-phone.png`).
 - **The course**, for a level of more than one kind of step: `gate` and
   `land` steps in `mission.ts`, a gate passed by the ring's rule with a
   rectangle for its opening; put into words by `hud.ts`; flown by the
@@ -379,8 +389,10 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   after the helicopter; leaned by `scene.ts` with `lean`; read by `debug.ts`
   (`sway`); ruled by `checkSway` in `invariants.ts`, against the wash it
   was last stepped in; played by the fuzzer's forest run; brought down into
-  a wood by key in `smoke/game.spec.ts`; pictured in `downwash.png`; its
-  frame told by the perf gate in the wood at `WOOD` (`smoke/game.ts`).
+  a wood by key in `smoke/game.spec.ts`; pictured in `downwash.png` and
+  `downwash-wood.png`, the spray in `spray.png`; its frames told by the perf
+  gate in the wood at `WOOD` (`smoke/game.ts`), over a wood bowed and over
+  the west lake with the spray up.
 - **The stub's ball**, for a body: a body kind in `arena.ts`, drawn by
   `scene.ts`, banked by `game.ts`, counted by `invariants.ts`, read by
   `debug.ts`, and pictured, all in `eda26d8`.

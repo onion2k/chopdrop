@@ -18,7 +18,8 @@ import { CHASE, ChaseCamera, fovFor } from './chase';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES } from './arena';
 import { Autopilot } from './autopilot';
 import { createApi, levelRows } from './debug';
-import { PARTICLES, Effects, rescuePeople, waitingFlares } from './effects';
+import { Column } from './column';
+import { PARTICLES, Effects, rescuePeople, waitingFlares, type Air } from './effects';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
 import { Hud } from './hud';
@@ -166,6 +167,8 @@ async function main() {
   // what is emitted into the renderer's particles; the game's events tell it a drop, so it is built before the game
   const people = rescuePeople(LEVELS);
   const effects = new Effects(FIRES, people);
+  // the column of smoke over each fire, placed as sprites each frame from the game's own time
+  const column = new Column(FIRES);
   // built before the game, which tells it the end; what its button does is below, where the game is put back
   const hud = new Hud({ panel: showPanel }, COLLECTIBLES.length + PACKAGES.length);
   const game = new Game({
@@ -266,7 +269,7 @@ async function main() {
   let pilot: Autopilot | null = null;
   /** What the helicopter was flown with at the last step, copied, for the test API. */
   const flown = { forward: 0, turn: 0, lift: 0 };
-  const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+  const rig = new ChaseCamera(game.island.ground, game.crown, game.solids);
   rig.snap(game.helicopter);
   const cam = renderer.camera;
   cam.position = rig.position;
@@ -291,6 +294,10 @@ async function main() {
   const drawn: Drawn = { fires: game.fires };
   /** Which people are waiting, for their flares, written each frame in place. */
   const waiting = new Uint8Array(people.length);
+  /** Where the helicopter is and the open water under it, for the rotor's spray, written each frame in place. */
+  const air: Air = { x: 0, y: 0, z: 0, level: 0 };
+  /** How many sprites the column of smoke drew at the last frame, for the test API. */
+  let sprites = 0;
   /** How many bursts the renderer has refused, for the test API: none, while the budget holds. */
   let refused = 0;
 
@@ -300,9 +307,17 @@ async function main() {
    */
   function emitEffects(dt: number) {
     waitingFlares(people, game.mission.level?.id ?? null, game.winch.spot, waiting);
-    const n = effects.step(dt, game.fires, waiting, rig.position);
+    const h = game.helicopter;
+    air.x = h.x;
+    air.y = h.y;
+    air.z = h.z;
+    air.level = game.water.levelAt(h.x, h.y);
+    const n = effects.step(dt, game.fires, waiting, rig.position, air);
     for (let k = 0; k < n; k++) if (!renderer.emit(effects.records[k])) refused++;
-    renderer.setWash(effects.wash(game.helicopter));
+    renderer.setWash(effects.wash(h));
+    // the column is where the game's time puts it, so a frame of no time draws it as it stands
+    sprites = column.step(game.t, game.fires, h);
+    renderer.setSprites(column.data, sprites);
   }
 
   /** Where the helicopter is now, written into the groups the renderer draws, and only the groups that moved. */
@@ -419,7 +434,7 @@ async function main() {
     crates: () => scene.packagesDrawn,
     people: () => scene.peopleDrawn,
     smoke: () => effects.flaring,
-    particles: () => ({ live: renderer.particles.live, refused, ...effects.counts }),
+    particles: () => ({ live: renderer.particles.live, refused, sprites, ...effects.counts }),
     ground: () => scene.groundDrawn,
     bucket: () => scene.bucketDrawn,
     badge: () => hud.badge,

@@ -25,7 +25,7 @@ import { HELICOPTER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
 import { fireOf, inWindow, loadFor, onPad, type Step } from './mission';
-import type { Sway } from './sway';
+import { SWAY, type Sway } from './sway';
 import { SCOOP, inScoop } from './water';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
@@ -332,7 +332,7 @@ export function checkSway(sway: Sway): string[] {
     out.push(`more trees moving than there is room for: ${sway.count} in a pool of ${sway.capacity}`);
     return out;
   }
-  const { trees, stride } = sway.trees;
+  const { trees, stride, top } = sway.trees;
   for (let k = 0; k < sway.count; k++) {
     const t = sway.tree[k];
     if (sway.slot(t) !== k) {
@@ -353,11 +353,40 @@ export function checkSway(sway: Sway): string[] {
     if (Math.abs(q) > sway.maxSquash + TOLERANCE)
       out.push(`pressed too far: tree ${t} is pressed ${q.toFixed(3)}, and the most is ${sway.maxSquash.toFixed(3)}`);
     const o = t * stride;
-    washAt(source, trees[o + 1], trees[o + 2], trees[o + 3], wash);
+    // the wash is asked at the crown, three quarters up the tree as it stands, as the sway asks it
+    const crown = trees[o + 3] + SWAY.crown * top[trees[o]] * trees[o + 5];
+    washAt(source, trees[o + 1], trees[o + 2], crown, wash);
     if (wash.x === 0 && wash.y === 0 && wash.down === 0 && sway.still(k))
       out.push(`kept: tree ${t} is still and out of the wash, and is held in the pool`);
   }
   return out;
+}
+
+/**
+ * Whether the point (px, py, pz) is inside the crown of a tree of `scale` standing at (x, y, z), leaned (lx, ly) of its
+ * height each way: at the point's height up the tree, the leaned axis has moved out by the lean times that height, and the
+ * tree spreads as far as it does in the band of its height the point is in. Worked out from the shape of the tree, and
+ * not from the canopy the camera keeps over, so a canopy that runs under a crown is caught.
+ */
+export function insideCrown(
+  size: Pick<TreeSize, 'top' | 'radius'> & { profile?: readonly number[] },
+  scale: number,
+  x: number,
+  y: number,
+  z: number,
+  lx: number,
+  ly: number,
+  px: number,
+  py: number,
+  pz: number,
+): boolean {
+  const up = (pz - z) / scale;
+  if (up < 0 || up >= size.top) return false;
+  const profile = size.profile;
+  const spread = profile
+    ? profile[Math.min(profile.length - 1, Math.floor((up / size.top) * profile.length))]
+    : size.radius;
+  return Math.hypot(px - x - lx * up * scale, py - y - ly * up * scale) < spread * scale;
 }
 
 /**
@@ -367,7 +396,11 @@ export function checkSway(sway: Sway): string[] {
  * not from the canopy the camera keeps over, so a canopy that runs under a crown is caught; and a structure from its
  * own box, not from the distances the camera keeps off. A parked camera is the tests' own, and is not held to it.
  */
-export function checkCamera(camera: ChaseCamera, game: Game, sizes: readonly TreeSize[]): string[] {
+export function checkCamera(
+  camera: ChaseCamera,
+  game: Game,
+  sizes: readonly Pick<TreeSize, 'top' | 'radius'>[],
+): string[] {
   if (camera.mode !== 'chase') return [];
   const p = camera.position;
   if (!p.every(Number.isFinite)) return [`not a number: the camera is at ${p.join(', ')}`];
@@ -379,14 +412,12 @@ export function checkCamera(camera: ChaseCamera, game: Game, sizes: readonly Tre
   const { sway } = game;
   for (let t = 0; t < treeCount; t++) {
     const o = t * TREE_STRIDE;
-    const { top, radius } = sizes[trees[o]];
-    const s = trees[o + 5];
+    const size = sizes[trees[o]];
     const k = sway.slot(t);
-    const lean = k >= 0 ? Math.hypot(sway.leanX[k], sway.leanY[k]) : 0;
-    const d = Math.hypot(p[0] - trees[o + 1], p[1] - trees[o + 2]);
-    if (d < (radius + lean * top) * s && p[2] < trees[o + 3] + top * s) {
+    const [lx, ly] = k >= 0 ? [sway.leanX[k], sway.leanY[k]] : [0, 0];
+    if (insideCrown(size, trees[o + 5], trees[o + 1], trees[o + 2], trees[o + 3], lx, ly, p[0], p[1], p[2])) {
       out.push(
-        `in a crown: the camera ${where} is inside tree ${t}, whose top is at ${(trees[o + 3] + top * s).toFixed(2)}`,
+        `in a crown: the camera ${where} is inside tree ${t}, whose top is at ${(trees[o + 3] + size.top * trees[o + 5]).toFixed(2)}`,
       );
       break;
     }

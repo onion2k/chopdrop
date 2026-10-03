@@ -789,29 +789,51 @@ function bush(): TreeShape {
   };
 }
 
-/** How tall a kind of tree stands and how far its crown spreads from its trunk, at scale one. */
+/**
+ * How tall a kind of tree stands and how far its crown spreads from its trunk, at scale one, and how far it spreads at
+ * each height: `profile` is the most any part of the tree is from its axis within each of `TREE_BANDS` equal bands of its
+ * height, the lowest first.
+ */
 export interface TreeSize {
   top: number;
   radius: number;
+  profile: readonly number[];
 }
+
+/** How many bands of its height a tree's spread is told in: enough that a blob of foliage on a bare trunk is not taken for a tree as wide from foot to top. */
+export const TREE_BANDS = 16;
 
 const sizes = new Map<TreeKind, TreeSize>();
 
 /**
  * A kind of tree's height and spread, measured from its shape, so what the camera keeps over is what is drawn and is
- * said nowhere else. Measured once a kind: a map of five that is never added to past them.
+ * said nowhere else. Measured once a kind: a map of five that is never added to past them. A band's spread is the
+ * widest of every triangle that is in it at all, since a triangle that runs from one band to another is in each between.
  */
 export function treeSize(kind: TreeKind): TreeSize {
   let size = sizes.get(kind);
   if (!size) {
     const { trunk, crown } = treeShape(kind);
-    size = { top: 0, radius: 0 };
+    let top = 0,
+      radius = 0;
     for (const m of [trunk, crown]) {
       for (let i = 0; i < m.positions.length; i += 3) {
-        size.top = Math.max(size.top, m.positions[i + 2]);
-        size.radius = Math.max(size.radius, Math.hypot(m.positions[i], m.positions[i + 1]));
+        top = Math.max(top, m.positions[i + 2]);
+        radius = Math.max(radius, Math.hypot(m.positions[i], m.positions[i + 1]));
       }
     }
+    const profile = new Array<number>(TREE_BANDS).fill(0);
+    const band = (z: number) => Math.min(TREE_BANDS - 1, Math.max(0, Math.floor((z / top) * TREE_BANDS)));
+    for (const m of [trunk, crown]) {
+      const p = m.positions;
+      for (let i = 0; i < m.indices.length; i += 3) {
+        const at = [m.indices[i] * 3, m.indices[i + 1] * 3, m.indices[i + 2] * 3];
+        const z = at.map((a) => p[a + 2]);
+        const widest = Math.max(...at.map((a) => Math.hypot(p[a], p[a + 1])));
+        for (let b = band(Math.min(...z)); b <= band(Math.max(...z)); b++) profile[b] = Math.max(profile[b], widest);
+      }
+    }
+    size = { top, radius, profile };
     sizes.set(kind, size);
   }
   return size;

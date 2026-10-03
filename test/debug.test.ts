@@ -10,7 +10,7 @@ import { seeded } from '../src/random';
 
 function api(over: Partial<DebugHost> = {}) {
   const game = new Game({ random: seeded(1) });
-  const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+  const rig = new ChaseCamera(game.island.ground, game.crown, game.solids);
   const host = {
     game,
     rig,

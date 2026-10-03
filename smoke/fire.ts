@@ -148,3 +148,72 @@ export async function sceneGoing(page: Page) {
   await hoverOver(page, WEST.x - Math.cos(yaw) * 60, WEST.y - Math.sin(yaw) * 60, 26, yaw, 30);
   await settle(page, 1);
 }
+
+/** The middle of the west fire's run over its lake: open water under it, at the run's own level. */
+export const LAKE = {
+  x: (WEST.run.from.x + WEST.run.to.x) / 2,
+  y: (WEST.run.from.y + WEST.run.to.y) / 2,
+  z: WEST.run.z,
+  yaw: Math.atan2(WEST.run.to.y - WEST.run.from.y, WEST.run.to.x - WEST.run.from.x),
+};
+
+/**
+ * The helicopter hovering `height` over the west lake (its skids over the water's face), the chase camera behind it, held
+ * for `frames` frames drawn so the rotor's spray has been thrown up and is in the air.
+ */
+export async function sceneSpray(page: Page, height = 3, frames = 120) {
+  await page.evaluate(
+    ([x, y, yaw, height, frames, hover]) => {
+      const g = window.game!;
+      g.chase();
+      g.teleport(x, y, height, yaw);
+      g.fly(0, 0, hover);
+      g.stepDrawn(frames);
+      g.release();
+    },
+    [LAKE.x, LAKE.y, LAKE.yaw, height, frames, HOVER_LIFT] as const,
+  );
+}
+
+/** The west fire from `off` metres east of it, the chase camera facing it from 40 m up, the smoke let tower for ten seconds drawn. */
+export async function sceneAfar(page: Page, off = 450) {
+  await page.evaluate(
+    ([x, y, off, hover]) => {
+      const g = window.game!;
+      g.chase();
+      g.teleport(x + off, y, 40, Math.PI);
+      g.fly(0, 0, hover);
+      g.stepDrawn(600);
+    },
+    [WEST.x, WEST.y, off, HOVER_LIFT] as const,
+  );
+}
+
+/**
+ * How many pixels of the picture `png` are smoke, in `area`: grey, which neither the sky, the sea nor a wood is, so a
+ * pixel is smoke when no channel of it is more than `grey` over another and it is neither black nor white. Counted in
+ * the page, which decodes the picture as it draws it.
+ */
+export function smokePixels(
+  page: Page,
+  png: Buffer,
+  area: { x0: number; x1: number; y0: number; y1: number },
+  grey = 30,
+): Promise<number> {
+  return page.evaluate(
+    async ([data, area, grey]) => {
+      const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${data}`)).blob());
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const c = canvas.getContext('2d')!;
+      c.drawImage(bitmap, 0, 0);
+      const { data: px } = c.getImageData(area.x0, area.y0, area.x1 - area.x0, area.y1 - area.y0);
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        const top = Math.max(px[i], px[i + 1], px[i + 2]);
+        if (top - Math.min(px[i], px[i + 1], px[i + 2]) <= grey && top > 30 && top < 235) n++;
+      }
+      return n;
+    },
+    [png.toString('base64'), area, grey] as const,
+  );
+}

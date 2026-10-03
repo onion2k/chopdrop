@@ -53,7 +53,7 @@ import { Progress } from './progress';
 import type { Random } from './random';
 import { Solids, type Block } from './solids';
 import { Starts } from './starts';
-import { Sway, reachedLean } from './sway';
+import { Sway, flightLean } from './sway';
 import { NO_WATER, OpenWater, SCOOP, Tank, openWaterOf } from './water';
 
 /**
@@ -118,10 +118,15 @@ export class Game {
   /** The trees the helicopter's downwash has set moving, and how each leans. */
   readonly sway: Sway;
   /**
-   * The treetops, as what the camera keeps over: each kind's height and spread as it is drawn, and the most it leans
-   * in the wash. Built once with the island; the game itself never reads it.
+   * The treetops, as what a flight keeps over (the autopilot reads it): each kind's height and spread as it is drawn, and
+   * the lean the flight has always allowed it. Built once with the island.
    */
   readonly canopy: Canopy;
+  /**
+   * The crowns as what the camera keeps out of: each as it stands, at rest where it was planted and leaned as far as the
+   * sway has it where the wash is bowing it, with how far each kind spreads at each height. Built once with the island.
+   */
+  readonly crown: Canopy;
   /** The levels, in order, as the panel shows them. */
   readonly levels: readonly Level[];
   /** The level going and how far it has got, or nothing going: the game starts flying free. */
@@ -181,10 +186,18 @@ export class Game {
     this.helicopter = new Helicopter({ bounds, heightAt }, pads[0], this.solids);
     const { trees, treeCount } = this.island;
     const give = TREE_KINDS.map((kind) => TREE_GIVE[kind]);
-    this.sway = new Sway({ trees, stride: TREE_STRIDE, count: treeCount, bounds, give });
+    const top = TREE_KINDS.map((kind) => treeSize(kind).top);
+    this.sway = new Sway({ trees, stride: TREE_STRIDE, count: treeCount, bounds, give, top });
+    const grid = { trees, stride: TREE_STRIDE, count: treeCount, bounds };
+    const sizes = TREE_KINDS.map((kind) => treeSize(kind));
     this.canopy = new Canopy(
-      { trees, stride: TREE_STRIDE, count: treeCount, bounds },
-      TREE_KINDS.map((kind, k) => ({ ...treeSize(kind), lean: reachedLean(give[k]) })),
+      grid,
+      sizes.map(({ top, radius }, k) => ({ top, radius, lean: flightLean(give[k]) })),
+    );
+    this.crown = new Canopy(
+      grid,
+      sizes.map((size) => ({ ...size, lean: 0 })),
+      this.sway,
     );
     this.water = openWaterOf(this.island);
     this.fires = (options.fires ?? FIRES).map((place) => new Fire(place));

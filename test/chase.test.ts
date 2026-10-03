@@ -3,6 +3,8 @@
  * nor into a tree, and the fixed view the pictures are taken from.
  */
 import { describe, expect, it } from 'vitest';
+import { Canopy } from '../src/canopy';
+import { insideCrown } from '../src/invariants';
 import { CHASE, ChaseCamera, fovFor, type Distances, type Heights, type Point } from '../src/chase';
 import { LEVELS, STRUCTURES } from '../src/arena';
 import { HELICOPTER, HOVER_LIFT, IDLE } from '../src/helicopter';
@@ -10,7 +12,7 @@ import { TREE_STRIDE } from '../src/island';
 import type { Game } from '../src/game';
 import type { Gate } from '../src/mission';
 import { Solids, type Block } from '../src/solids';
-import { DT, canopyKinds, islandCanopy, newGame, thickestWood } from './helpers';
+import { DT, canopyKinds, newGame, thickestWood } from './helpers';
 
 function near(a: Point, b: Point, tolerance = 1e-9) {
   for (let k = 0; k < 3; k++) expect(Math.abs(a[k] - b[k])).toBeLessThanOrEqual(tolerance);
@@ -252,14 +254,9 @@ function crownHolding(game: Game, p: Point): number {
   const { sway } = game;
   for (let t = 0; t < treeCount; t++) {
     const o = t * TREE_STRIDE;
-    const { top, radius } = kinds[trees[o]];
-    const s = trees[o + 5];
     const k = sway.slot(t);
-    const lean = k >= 0 ? Math.hypot(sway.leanX[k], sway.leanY[k]) : 0;
-    if (
-      Math.hypot(p[0] - trees[o + 1], p[1] - trees[o + 2]) < (radius + lean * top) * s &&
-      p[2] < trees[o + 3] + top * s
-    )
+    const [lx, ly] = k >= 0 ? [sway.leanX[k], sway.leanY[k]] : [0, 0];
+    if (insideCrown(kinds[trees[o]], trees[o + 5], trees[o + 1], trees[o + 2], trees[o + 3], lx, ly, p[0], p[1], p[2]))
       return t;
   }
   return -1;
@@ -279,27 +276,43 @@ describe('over the island', () => {
    * frame that ended with it held up on the lowest it may be, which is the only move it makes without easing.
    */
   let most = 0,
-    heldRise = 0;
+    heldRise = 0,
+    bowedRise = 0,
+    bowedFrames = 0;
   const watch = (game: Game, cam: ChaseCamera) => {
     let was = cam.position[2];
-    const canopy = islandCanopy();
+    const canopy = game.crown;
+    // the crowns at rest, which the camera looks ahead for: a rise held up by a crown that is bowed over it is the trees'
+    const { trees, treeCount, bounds } = game.island;
+    const rest = new Canopy({ trees, stride: TREE_STRIDE, count: treeCount, bounds }, canopyKinds());
     return () => {
       const p = cam.position;
       const t = crownHolding(game, p);
       expect(t, `in the crown of tree ${t}`).toBe(-1);
-      most = Math.max(most, Math.abs(p[2] - was));
       const lowest = Math.max(
         game.island.ground.heightAt(p[0], p[1]) + CHASE.minHeight,
         canopy.heightAt(p[0], p[1]) + CHASE.overTrees,
       );
-      if (Math.abs(p[2] - lowest) < 1e-9) heldRise = Math.max(heldRise, p[2] - was);
+      let bowed = false;
+      if (Math.abs(p[2] - lowest) < 1e-9) {
+        const atRest = Math.max(
+          game.island.ground.heightAt(p[0], p[1]) + CHASE.minHeight,
+          rest.heightAt(p[0], p[1]) + CHASE.overTrees,
+        );
+        if (lowest > atRest + 1e-9) {
+          bowedRise = Math.max(bowedRise, p[2] - was);
+          if (p[2] - was > 0.5) bowedFrames++;
+          bowed = true;
+        } else heldRise = Math.max(heldRise, p[2] - was);
+      }
+      if (!bowed) most = Math.max(most, Math.abs(p[2] - was));
       was = p[2];
     };
   };
 
   it('is never in a crown, flown low at full speed through the thickest wood every way', () => {
     const { game } = newGame();
-    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    const cam = new ChaseCamera(game.island.ground, game.crown);
     const wood = thickestWood();
     for (let k = 0; k < 8; k++) {
       const a = (k * Math.PI) / 4;
@@ -311,7 +324,7 @@ describe('over the island', () => {
 
   it('is never in a crown, let down into the clearing in the wood and lifted out again', () => {
     const { game } = newGame();
-    const cam = new ChaseCamera(game.island.ground, islandCanopy());
+    const cam = new ChaseCamera(game.island.ground, game.crown);
     for (const yaw of [0, 1.6, 3.1, 4.7]) {
       game.helicopter.placeAbove(116, -280, 14, yaw);
       cam.snap(game.helicopter);
@@ -327,10 +340,17 @@ describe('over the island', () => {
   it('eases over the trees without a jump', () => {
     // measured over everything flown above. Held up against a crown it rose at most 0.08 in a frame, looking ahead as
     // it does; with a canopy falling away at a slope and no looking ahead it was held in half the frames and rose 0.43
-    expect(heldRise).toBeGreaterThan(0);
     expect(heldRise).toBeLessThan(0.15);
-    // and every other move is its easing toward where it settles, which crossed 0.42 in a frame at the most
-    expect(most).toBeLessThan(0.5);
+    // a crown the wash has bowed over it comes onto it whole, the top of a tree leaning in, and the camera is lifted over it
+    // as it does, never left in it: in the frames it was, which are few, it rose 3.75 in a frame at the most
+    // (flown here through the thickest wood every way the trees within the wash's reach are all bowed, so no rise was held
+    // up by a crown at rest at all, and the look-ahead has nothing left to do)
+    expect(bowedRise).toBeGreaterThan(0);
+    expect(bowedRise).toBeLessThan(4);
+    expect(bowedFrames).toBeLessThan(15);
+    // and every other move is its easing toward where it settles, which crossed 0.42 in a frame at the most before the
+    // trees bowed, and 0.62 since, settling back down from a lift over a crown that has gone
+    expect(most).toBeLessThan(0.65);
   });
 });
 
@@ -481,7 +501,7 @@ describe('off the structures', () => {
       'is never within its distance of a structure, flown %s at full speed',
       (_, gate) => {
         const { game } = newGame();
-        const cam = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+        const cam = new ChaseCamera(game.island.ground, game.crown, game.solids);
         const [ax, ay] = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
         const [x, y] = [gate.x - ax * 60, gate.y - ay * 60];
         game.helicopter.place(x, y, gate.z - HELICOPTER.size.middle, gate.yaw);
@@ -492,7 +512,7 @@ describe('off the structures', () => {
 
     it('is drawn in, never within its distance, as the helicopter turns on the spot beside a tower', () => {
       const { game } = newGame();
-      const cam = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+      const cam = new ChaseCamera(game.island.ground, game.crown, game.solids);
       for (const tower of STRUCTURES.filter((b) => b.kind === 'tower')) {
         // hovering with its rotor clear of the tower's face by 2, at half its height
         const out = tower.length / 2 + HELICOPTER.size.rotorRadius + 2;

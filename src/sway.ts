@@ -18,28 +18,38 @@ import { TreeGrid, type GridTrees } from './tree-grid';
 /** How a tree takes the wash. A lean is how far its top moves across the ground, as a share of its height. */
 export const SWAY = {
   /**
-   * The most trees that may be moving at once: more than three times the most seen, 150, flying low through the
-   * thickest wood at top speed every way across it. A test holds the most seen to two thirds of this.
+   * The most trees that may be moving at once: more than three times the most seen, 166, flying low through the
+   * thickest wood at top speed every way across it, the wash measured up the crowns. A test holds the most seen to two thirds of this.
    */
   capacity: 512,
   /** How far a tree that gives one leans in the wash at its strongest, and how far it is pressed down under the hub. */
-  lean: 0.18,
-  squash: 0.08,
+  lean: 0.45,
+  squash: 0.12,
   /** How much the wash flutters, as a share of it, and how fast. */
-  flutter: 0.25,
-  flutterHz: 3,
+  flutter: 0.5,
+  flutterHz: 3.5,
   /** How fast a tree springs back, and how little it is held, so that it swings past upright once or twice. */
   hz: 1,
   damping: 0.25,
   /** How little a tree may lean and swing, all told, as a share of its height, to be still: a centimetre and a half on the tallest. */
   still: 1e-3,
+  /**
+   * How far up a tree the wash is measured, as a share of its height. A tree stands up to 17 m, so a hub a few metres
+   * over the crowns is some twenty over their feet, where the wash is less than half: it is the crown that the air
+   * moves, and so it is the crown's three quarters that is asked.
+   */
+  crown: 0.75,
   /** The size of the squares the trees are sorted into, so those near the helicopter are found without looking at the rest. */
   cell: 16,
 };
 
-/** The trees a sway is handed: `stride` floats a tree (kind, x, y, z, yaw, scale, …), the world's edge, and how much each kind gives, by its index. */
+/**
+ * The trees a sway is handed: `stride` floats a tree (kind, x, y, z, yaw, scale, …), the world's edge, and how much
+ * each kind gives and how tall each stands (before its scale), by its index.
+ */
 export interface SwayTrees extends GridTrees {
   give: readonly number[];
+  top: readonly number[];
 }
 
 export class Sway {
@@ -123,7 +133,7 @@ export class Sway {
     const beatAt = 2 * Math.PI * SWAY.flutterHz * t;
     for (let k = 0; k < this.count; k++) {
       const o = this.tree[k] * stride;
-      washAt(source, trees[o + 1], trees[o + 2], trees[o + 3], w);
+      this.washOn(source, o, w);
       let toX = 0,
         toY = 0,
         toSquash = 0;
@@ -150,9 +160,16 @@ export class Sway {
     }
   }
 
+  /** The wash at three quarters up the tree whose numbers start at `o`, written into `w`. */
+  private washOn(source: Readonly<WashSource>, o: number, w: Wash): void {
+    const { trees, top } = this.trees;
+    const z = trees[o + 3] + SWAY.crown * top[trees[o]] * trees[o + 5];
+    washAt(source, trees[o + 1], trees[o + 2], z, w);
+  }
+
   /** Every standing tree the wash reaches now, put in the pool to move, while there is room. */
   private takeIn(source: Readonly<WashSource>): void {
-    const { trees, stride } = this.trees;
+    const { stride } = this.trees;
     const w = this.wash;
     const r = DOWNWASH.reach;
     const grid = this.grid;
@@ -167,7 +184,7 @@ export class Sway {
           const t = grid.cellTrees[n];
           if (this.slots[t] >= 0) continue;
           const o = t * stride;
-          washAt(source, trees[o + 1], trees[o + 2], trees[o + 3], w);
+          this.washOn(source, o, w);
           if (w.x === 0 && w.y === 0 && w.down === 0) continue;
           if (this.count === this.capacity) {
             this.missed++;
@@ -212,6 +229,15 @@ export class Sway {
  */
 export function reachedLean(give: number): number {
   return SWAY.lean * give * (1 + SIDE * SWAY.flutter + SWAY.flutter) * SWING;
+}
+
+/**
+ * How far the flight's clearance takes a tree of `give` to lean: what `reachedLean` was before the trees were made to bow
+ * plainly (a lean of 0.18, a flutter of a quarter). The autopilot flies over the canopy built from it, and a flight that
+ * moved with how the trees look would move the pace; the camera's canopy is built from `reachedLean`.
+ */
+export function flightLean(give: number): number {
+  return 0.18 * give * (1 + SIDE * 0.25 + 0.25) * SWING;
 }
 
 /** How far a spring held at `SWAY.damping` carries past what it is asked, once: e^(−πζ / √(1 − ζ²)) over one. */

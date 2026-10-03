@@ -135,9 +135,19 @@ export interface GameState {
   /**
    * The particles: how many slots of the renderer's pool may hold a live one, how many bursts the renderer has refused
    * since the page began (none, if the budget holds), and how many particles of each kind the page emitted at the last
-   * frame it drew: flames, smoke, the rescue's flares and the drop's spray and mist.
+   * frame it drew: flames, smoke, the rescue's flares, the drop's spray and mist, and the rotor's spray over open water;
+   * and how many sprites the column of smoke drew at it.
    */
-  particles: { live: number; refused: number; flames: number; smoke: number; flares: number; spray: number };
+  particles: {
+    live: number;
+    refused: number;
+    sprites: number;
+    flames: number;
+    smoke: number;
+    flares: number;
+    spray: number;
+    wash: number;
+  };
   /** How many patches of every fire the scene draws glowing, and how many burnt: what the pictures show of the fires' ground. */
   ground: { burning: number; burnt: number };
   /** The bucket as the scene draws it: whether it hangs, whether it holds water, and how long its line is. */

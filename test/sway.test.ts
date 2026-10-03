@@ -12,6 +12,7 @@ import { HELICOPTER, IDLE } from '../src/helicopter';
 import { checkSway } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
 import { TREE_GIVE, TREE_KINDS } from '../src/arena';
+import { treeSize } from '../src/meshes';
 import { SWAY, reachedLean, type Sway } from '../src/sway';
 import { DT, islandSway, newGame, thickestWood, watchedTrees } from './helpers';
 
@@ -23,6 +24,9 @@ const tx = (t: number) => trees[t * TREE_STRIDE + 1];
 const ty = (t: number) => trees[t * TREE_STRIDE + 2];
 const tz = (t: number) => trees[t * TREE_STRIDE + 3];
 const wood = thickestWood();
+/** Where the wash is measured on a tree: its foot and the crown's share of its height, from the kind's height and the tree's scale, not from the sway. */
+const crownAt = (t: number) =>
+  tz(t) + SWAY.crown * treeSize(TREE_KINDS[trees[t * TREE_STRIDE]]).top * trees[t * TREE_STRIDE + 5];
 
 /** A helicopter over (x, y), its skids `height` above the ground there, its rotor at full. */
 const hovering = (x: number, y: number, height: number): WashSource => ({
@@ -111,6 +115,24 @@ describe('the trees in the downwash', () => {
     }
   });
 
+  it('bows a tree plainly under a helicopter hovering just over the canopy of the thickest wood, and still at ten metres', () => {
+    // how far the tree that bends most bows, as a share of its height, flutter averaged out, the skids `over` metres
+    // above the top of the crowns there: what a player sees as the trees moving, or as them hardly moving
+    const bow = (over: number) => {
+      const sway = islandSway();
+      const source = hovering(
+        wood.x,
+        wood.y,
+        newGame().game.canopy.heightAt(wood.x, wood.y) - ground.heightAt(wood.x, wood.y) + over,
+      );
+      const means = meanLeans(sway, source, 1, run(sway, source, 2));
+      return Math.max(...[...means.values()].map(([x, y]) => Math.hypot(x, y)));
+    };
+    const [close, ten] = [bow(2), bow(10)];
+    expect(close, 'at 2 m over the canopy').toBeGreaterThanOrEqual(0.3);
+    expect(ten, 'at 10 m over the canopy').toBeGreaterThanOrEqual(0.1);
+  });
+
   it('leans them less the higher the helicopter hovers', () => {
     const lean = (height: number) => {
       const sway = islandSway();
@@ -151,10 +173,11 @@ describe('the trees in the downwash', () => {
 
   it('moves no tree under a helicopter too high to be felt', () => {
     const sway = islandSway();
-    // the highest foot in reach, so the hub is past the depth from every tree
+    // the highest place the wash is measured at, three quarters up a tree, in reach, so the hub is past the depth from
+    // every one
     let top = -Infinity;
     for (let tree = 0; tree < treeCount; tree++)
-      if (Math.hypot(tx(tree) - wood.x, ty(tree) - wood.y) < DOWNWASH.reach) top = Math.max(top, tz(tree));
+      if (Math.hypot(tx(tree) - wood.x, ty(tree) - wood.y) < DOWNWASH.reach) top = Math.max(top, crownAt(tree));
     run(sway, { x: wood.x, y: wood.y, z: top + DOWNWASH.depth - mastTop, rotorSpeed: FULL }, 3);
     expect(sway.count).toBe(0);
     // and a little lower, it is felt: the depth is where it stops, not somewhere above it

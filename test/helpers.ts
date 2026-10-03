@@ -10,6 +10,7 @@ import { Game } from '../src/game';
 import type { Ground } from '../src/helicopter';
 import type { Level } from '../src/mission';
 import { TREE_STRIDE } from '../src/island';
+import { treeSize } from '../src/meshes';
 import { seeded } from '../src/random';
 import { SWAY, Sway } from '../src/sway';
 
@@ -39,6 +40,7 @@ export function islandSway(capacity = SWAY.capacity, trees = theIsland().trees):
       count: island.treeCount,
       bounds: island.bounds,
       give: TREE_KINDS.map((kind) => TREE_GIVE[kind]),
+      top: TREE_KINDS.map((kind) => treeSize(kind).top),
     },
     capacity,
   );
@@ -100,9 +102,9 @@ export function canopyKinds(): readonly CanopyKind[] {
   return (kinds ??= islandCanopy().kinds);
 }
 
-/** What the camera keeps over on the island, as the game builds it. */
+/** What the camera keeps out of on the island, as the game builds it. */
 export function islandCanopy(): Canopy {
-  return new Game({ random: seeded(1) }).canopy;
+  return new Game({ random: seeded(1) }).crown;
 }
 
 /** The pads of a level's steps, in order: where its parcels wait and where they are wanted. */

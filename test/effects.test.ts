@@ -6,7 +6,7 @@
  */
 import type { Emit } from 'artshape-render/game/particles';
 import { describe, expect, it } from 'vitest';
-import { FIRES, LEVELS } from '../src/arena';
+import { FIRES, LEVELS, theIsland } from '../src/arena';
 import { DOWNWASH } from '../src/downwash';
 import {
   Effects,
@@ -14,6 +14,7 @@ import {
   FLARE,
   MIST,
   PARTICLES,
+  ROTOR_SPRAY,
   SMOKE,
   SPRAY,
   WASH,
@@ -23,9 +24,11 @@ import {
   type FireView,
 } from '../src/effects';
 import { PATCH } from '../src/fire';
+import { NO_WATER, openWaterOf } from '../src/water';
 import { HELICOPTER } from '../src/helicopter';
 
 type Camera = readonly [number, number, number];
+type Air = Parameters<Effects['step']>[4] & object;
 const NOBODY = new Uint8Array(0);
 const FAR: Camera = [5000, 5000, 100];
 
@@ -45,6 +48,7 @@ interface Run {
   smoke: number;
   flares: number;
   spray: number;
+  wash: number;
   mostEmitters: number;
 }
 
@@ -57,11 +61,13 @@ function run(
   camera: Camera,
   waiting: ArrayLike<number> = NOBODY,
   each?: (frame: number, n: number) => void,
+  air?: Air,
 ): Run {
-  const total: Run = { flames: 0, smoke: 0, flares: 0, spray: 0, mostEmitters: 0 };
+  const total: Run = { flames: 0, smoke: 0, flares: 0, spray: 0, wash: 0, mostEmitters: 0 };
   const frames = Math.round(seconds / dt);
   for (let f = 0; f < frames; f++) {
-    const n = effects.step(dt, fires, waiting, camera);
+    const n = effects.step(dt, fires, waiting, camera, air);
+    total.wash += effects.counts.wash;
     total.flames += effects.counts.flames;
     total.smoke += effects.counts.smoke;
     total.flares += effects.counts.flares;
@@ -97,7 +103,7 @@ describe('the rates', () => {
     const waiting = Uint8Array.of(1, 1, 1);
     const n = effects.step(0, [view(WEST, 10), view(FIRES[1], 10), view(FIRES[2], 10)], waiting, middle(WEST));
     expect(n).toBe(0);
-    expect(effects.counts).toEqual({ flames: 0, smoke: 0, flares: 0, spray: 0 });
+    expect(effects.counts).toEqual({ flames: 0, smoke: 0, flares: 0, spray: 0, wash: 0 });
     // the counts of the last frame that moved are kept through the frames that do not, as a paused page draws many
     const moved = new Effects(FIRES, PEOPLE);
     moved.step(1 / 60, [view(WEST, 10)], NOBODY, middle(WEST));
@@ -289,12 +295,126 @@ describe('the spray', () => {
   });
 });
 
+describe('the rotor’s spray', () => {
+  const { mastTop } = HELICOPTER.size;
+  /** A helicopter whose hub is `above` metres over the water level `level`, and the level under it. */
+  const over = (above: number, level = 30): Air => ({ x: 10, y: -20, z: level + above - mastTop, level });
+  const wash = (air: Air, seconds = 2, dt = 1 / 60) =>
+    run(new Effects(FIRES, PEOPLE), seconds, dt, [], FAR, NOBODY, undefined, air).wash;
+  /** The most emitted in a second, by the rates: every ring emitter and every mist emitter, at the strength asked. */
+  const full = ROTOR_SPRAY.ring.n * ROTOR_SPRAY.ring.rate + ROTOR_SPRAY.mist.n * ROTOR_SPRAY.mist.rate;
+
+  it('is thrown up when the hub is 3 m over a lake, at the rates told, and at full strength from 4 m down', () => {
+    const three = wash(over(3));
+    expect(three).toBeGreaterThan(0.95 * full * 2 - 20);
+    expect(three).toBeLessThan(1.05 * full * 2 + 20);
+    // full from 4 m down: no more at the water's face than at 4 m, and as much at 4 as at 3
+    expect(wash(over(4))).toBeGreaterThan(0.95 * three);
+    expect(wash(over(0))).toBeLessThan(1.05 * three);
+  });
+
+  it('thins as the hub rises, to half at 10 m, and is none at 16.1 m and over', () => {
+    const half = wash(over(10));
+    expect(half).toBeGreaterThan(0.45 * full * 2 - 20);
+    expect(half).toBeLessThan(0.55 * full * 2 + 20);
+    expect(wash(over(15.9))).toBeGreaterThan(0);
+    expect(wash(over(ROTOR_SPRAY.reach + 0.1))).toBe(0);
+    expect(wash(over(60))).toBe(0);
+  });
+
+  it('is none over a river or over land, which have no open water, whatever the height', () => {
+    expect(wash({ x: 10, y: -20, z: 31, level: NO_WATER })).toBe(0);
+    expect(wash({ x: 10, y: -20, z: 0, level: NO_WATER })).toBe(0);
+  });
+
+  it('is none at a step of no time, and leaves the count of the last frame that moved as it was', () => {
+    const effects = new Effects(FIRES, PEOPLE);
+    expect(effects.step(0, [], NOBODY, FAR, over(3))).toBe(0);
+    expect(effects.counts.wash).toBe(0);
+    effects.step(1 / 60, [], NOBODY, FAR, over(3));
+    const kept = effects.counts.wash;
+    expect(kept).toBeGreaterThan(0);
+    expect(effects.step(0, [], NOBODY, FAR, over(3))).toBe(0);
+    expect(effects.counts.wash).toBe(kept);
+  });
+
+  it('is by game seconds: many small steps and a few large ones emit the same, within a particle an emitter', () => {
+    const small = wash(over(3), 5, 1 / 240);
+    for (const dt of [1 / 60, 1 / 20, 1 / 5]) {
+      expect(Math.abs(wash(over(3), 5, dt) - small), `at ${dt}`).toBeLessThanOrEqual(
+        ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n,
+      );
+    }
+  });
+
+  it('is a ring: the emitters round a circle about the point under the hub, at the water, turned by the golden angle each frame', () => {
+    const effects = new Effects(FIRES, PEOPLE);
+    const air = over(3);
+    const seen: Emit[][] = [];
+    run(
+      effects,
+      3 / 60,
+      1 / 60,
+      [],
+      FAR,
+      NOBODY,
+      (_, n) => {
+        seen.push(Array.from({ length: n }, (_, k) => JSON.parse(JSON.stringify(effects.records[k])) as Emit));
+      },
+      air,
+    );
+    const ring = seen.map((frame) => frame.filter((r) => r.gravity === ROTOR_SPRAY.ring.gravity));
+    expect(ring.every((frame) => frame.length > 0)).toBe(true);
+    for (const frame of ring)
+      for (const r of frame) {
+        // a circle of its radius about the hub's foot, thrown out from the middle and up, over the water
+        expect(Math.hypot(r.position[0] - air.x, r.position[1] - air.y)).toBeCloseTo(ROTOR_SPRAY.ring.radius, 6);
+        expect(r.position[2]).toBeCloseTo(air.level + ROTOR_SPRAY.over, 6);
+        expect(Math.hypot(r.velocity[0], r.velocity[1])).toBeCloseTo(ROTOR_SPRAY.ring.out, 6);
+        expect(r.velocity[2]).toBeCloseTo(ROTOR_SPRAY.ring.up, 6);
+      }
+    // the first emitter of each frame is at the angle of the frame before it, turned by the golden angle
+    const angle = (r: Emit) => Math.atan2(r.position[1] - air.y, r.position[0] - air.x);
+    const turn = (a: Emit, b: Emit) => (((angle(b) - angle(a)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const [first, second] = [ring[0][0], ring[1][0]];
+    // the same emitter may not fire in two frames, so the turn is read between any two, modulo the spacing of twelve
+    const spacing = (2 * Math.PI) / ROTOR_SPRAY.ring.n;
+    const off = (turn(first, second) - ROTOR_SPRAY.turn + 10 * Math.PI) % spacing;
+    expect(Math.min(off, spacing - off)).toBeLessThan(1e-4);
+  });
+
+  it('is the same every time: the same frames give the same records', () => {
+    const seen = () => {
+      const effects = new Effects(FIRES, PEOPLE);
+      const out: string[] = [];
+      run(
+        effects,
+        1,
+        1 / 60,
+        [],
+        FAR,
+        NOBODY,
+        (_, n) => {
+          for (let k = 0; k < n; k++) out.push(JSON.stringify(effects.records[k]));
+        },
+        over(5),
+      );
+      return out;
+    };
+    const [a, b] = [seen(), seen()];
+    expect(a.length).toBeGreaterThan(100);
+    expect(a).toEqual(b);
+  });
+});
+
 describe('the budget', () => {
   /**
    * The worst the island can ask of the pool at once, as the model allows it: the going fire with every patch burning, the
    * other two at their start (only the going fire spreads past `lit`, which `checkFires` holds), all three people waiting
-   * and a drop pouring. The pool is a ring, so what must fit is everything emitted over the longest life of any stream,
-   * not what is alive at once: a particle is lost when the ring comes round to its slot again.
+   * and either a drop pouring or the rotor's spray at full: the two cannot happen together, since a drop falls only
+   * over a fire, which burns on land, and the spray is only over open water, so the larger of the two is taken. The pool is
+   * a ring, so what must fit is everything emitted over the longest life of any stream, not what is alive at once: a
+   * particle is lost when the ring comes round to its slot again.
    */
   const patches = FIRES[0].patches.length;
   const lit = FIRES[0].lit;
@@ -307,16 +427,22 @@ describe('the budget', () => {
       longest(FLARE),
       longest(SPRAY),
       longest(MIST),
+      longest(ROTOR_SPRAY.ring),
+      longest(ROTOR_SPRAY.mist),
     ) + slack;
   const flames = patches * (FLAMES.core.rate + FLAMES.licks.rate);
   const smokeOf = (burning: number) => SMOKE.perPatch * Math.min(burning, SMOKE.cap);
   const smoke = smokeOf(patches) + 2 * smokeOf(lit);
   const flares = 3 * FLARE.rate;
   const pour = (SPRAY.rate + MIST.rate) * SPRAY.pour;
-  const window = (flames + smoke + flares) * longestLife + pour;
+  const sprayRate = ROTOR_SPRAY.ring.n * ROTOR_SPRAY.ring.rate + ROTOR_SPRAY.mist.n * ROTOR_SPRAY.mist.rate;
+  /** What the fires, the flares and the one thing that is not the other, over the longest life. */
+  const windowOf = (extra: 'a drop' | 'the spray') =>
+    (flames + smoke + flares + (extra === 'the spray' ? sprayRate : 0)) * longestLife + (extra === 'a drop' ? pour : 0);
+  const window = Math.max(windowOf('a drop'), windowOf('the spray'));
 
   it('has the pool and the renderer’s emitters said once', () => {
-    expect(PARTICLES).toEqual({ capacity: 16384, emitters: 128 });
+    expect(PARTICLES).toEqual({ capacity: 32768, emitters: 128 });
   });
 
   it('keeps everything emitted over the longest life within 90% of the pool, with the flames of one fire in range at a time', () => {
@@ -327,41 +453,60 @@ describe('the budget', () => {
     expect(window).toBeLessThanOrEqual(0.9 * PARTICLES.capacity);
     // a pour is within a life of each stream, so what it adds is all of it
     expect(SPRAY.pour).toBeLessThanOrEqual(Math.min(longest(SPRAY), longest(MIST)));
+    // the spray is the larger of the two, so what the pool is held to is the spray's
+    expect(window).toBe(windowOf('the spray'));
   });
 
-  it('holds when played, by the renderer’s own rule for the live run of its ring, and the emitters in a frame', () => {
-    for (const dt of [1 / 60, 1 / 30, 1 / 20]) {
-      const effects = new Effects(FIRES, PEOPLE);
-      const fires = [view(FIRES[0], patches), view(FIRES[1], FIRES[1].lit), view(FIRES[2], FIRES[2].lit)];
-      // the camera over the going fire, which is within the smoke range of the others
-      const camera = middle(FIRES[0]);
-      // the renderer keeps every burst with the moment its last particle can have died, and the live run of the ring is
-      // all that was emitted since the oldest burst not yet dead: this is that rule
-      const bursts: { start: number; until: number }[] = [];
-      let emitted = 0;
-      let time = 0;
-      let most = 0;
-      let emitters = 0;
-      const frames = Math.round(40 / dt);
-      for (let f = 0; f < frames; f++) {
-        if (f === Math.round(15 / dt)) effects.drop(FIRES[0].x, FIRES[0].y, 80, 60);
-        const n = effects.step(dt, fires, Uint8Array.of(1, 1, 1), camera);
-        emitters = Math.max(emitters, n);
-        for (let k = 0; k < n; k++) {
-          const r = effects.records[k];
-          bursts.push({ start: emitted, until: time + r.life * (1 + (r.lifeSpread ?? 0)) + slack });
-          emitted += r.count;
-        }
-        time += dt;
-        while (bursts.length && bursts[0].until < time) bursts.shift();
-        const run = bursts.length ? emitted - bursts[0].start : 0;
-        if (time > 8) most = Math.max(most, run);
-      }
-      expect(most, `live run at ${dt}`).toBeLessThanOrEqual(0.9 * PARTICLES.capacity);
-      expect(most, `live run at ${dt}`).toBeGreaterThan(0.6 * PARTICLES.capacity);
-      expect(emitters, `emitters at ${dt}`).toBeLessThanOrEqual(PARTICLES.emitters);
-    }
+  it('has the drop and the spray apart: a fire burns on land, and the spray is only over open water', () => {
+    // a burning patch is dry land, by the fires' own pins; the water at a patch is none
+    const island = theIsland();
+    const water = openWaterOf(island);
+    for (const fire of FIRES)
+      for (const patch of fire.patches) expect(water.levelAt(patch.x, patch.y), `${fire.id}`).toBe(NO_WATER);
   });
+
+  for (const extra of ['a drop', 'the spray'] as const) {
+    it(`holds when played with ${extra}, by the renderer’s own rule for the live run of its ring, and the emitters in a frame`, () => {
+      for (const dt of [1 / 60, 1 / 30, 1 / 20]) {
+        const effects = new Effects(FIRES, PEOPLE);
+        const fires = [view(FIRES[0], patches), view(FIRES[1], FIRES[1].lit), view(FIRES[2], FIRES[2].lit)];
+        // the camera over the going fire, which is within the smoke range of the others
+        const camera = middle(FIRES[0]);
+        // the helicopter at the water's face, the spray full, wherever the camera is
+        const air: Air = { x: 0, y: 0, z: 0, level: 0 };
+        // the renderer keeps every burst with the moment its last particle can have died, and the live run of the ring is
+        // all that was emitted since the oldest burst not yet dead: this is that rule
+        const bursts: { start: number; until: number }[] = [];
+        let emitted = 0;
+        let time = 0;
+        let most = 0;
+        let emitters = 0;
+        const frames = Math.round(40 / dt);
+        for (let f = 0; f < frames; f++) {
+          if (extra === 'a drop' && f === Math.round(15 / dt)) effects.drop(FIRES[0].x, FIRES[0].y, 80, 60);
+          const n = effects.step(dt, fires, Uint8Array.of(1, 1, 1), camera, extra === 'the spray' ? air : undefined);
+          emitters = Math.max(emitters, n);
+          for (let k = 0; k < n; k++) {
+            const r = effects.records[k];
+            bursts.push({ start: emitted, until: time + r.life * (1 + (r.lifeSpread ?? 0)) + slack });
+            emitted += r.count;
+          }
+          time += dt;
+          while (bursts.length && bursts[0].until < time) bursts.shift();
+          const run = bursts.length ? emitted - bursts[0].start : 0;
+          if (time > 8) most = Math.max(most, run);
+        }
+        const label = `${extra} at ${dt}: live run ${most} of ${PARTICLES.capacity}, emitters ${emitters}`;
+        expect(most, label).toBeLessThanOrEqual(0.9 * PARTICLES.capacity);
+        // the run reaches most of what the model says, so the check is looking at the worst case and not at nothing
+        expect(most, label).toBeGreaterThan(0.6 * windowOf(extra));
+        // a frame's emitters, with the spray's twenty on top of whatever else, within the renderer's limit: those of the
+        // spray's run have them already, and those of a drop's, which has none, are given them
+        const sprays = extra === 'the spray' ? 0 : ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n;
+        expect(emitters + sprays, label).toBeLessThanOrEqual(PARTICLES.emitters);
+      }
+    });
+  }
 });
 
 describe('making nothing', () => {

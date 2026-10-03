@@ -133,7 +133,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
     // the game opens flying free, so a level is begun only where one is asked for
     if (level !== undefined) beginAtStart(game, level);
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
-    const rig = new ChaseCamera(game.island.ground, game.canopy, game.solids);
+    const rig = new ChaseCamera(game.island.ground, game.crown, game.solids);
     rig.snap(heli);
     const sizes = TREE_KINDS.map(treeSize);
     const { bounds } = heli;
