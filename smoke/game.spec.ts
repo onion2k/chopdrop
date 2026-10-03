@@ -116,50 +116,57 @@ test('flies by the keyboard', async ({ page }) => {
   const turned = await state();
   expect(turned.yaw - flown.yaw, 'A turns it left').toBeGreaterThan(0.3);
 
-  // nothing held: it settles into a gentle sink
+  // nothing held: it hangs where it is, to the centimetre
   await step(90);
-  const sinking = await state();
-  expect(sinking.vz, 'let go, it sinks at the sink speed').toBeCloseTo(-HELICOPTER.sinkSpeed, 6);
-  expect(sinking.height).toBeLessThan(turned.height);
-  // Space and Shift together cancel, to the sink
+  const held = await state();
+  expect(held.vz, 'let go, it holds still').toBe(0);
+  expect(held.landed).toBe(false);
+  await step(180);
+  expect(Math.abs((await state()).z - held.z), 'and holds its height above the sea').toBeLessThan(0.01);
+  // Space and Shift together cancel, to the hover
   await page.keyboard.down('Space');
   await page.keyboard.down('Shift');
   await step(30);
   await page.keyboard.up('Space');
   await page.keyboard.up('Shift');
-  expect((await state()).vz, 'Space and Shift together sink').toBeCloseTo(-HELICOPTER.sinkSpeed, 6);
+  expect((await state()).vz, 'Space and Shift together hold still').toBeCloseTo(0, 6);
 
+  // Shift brings it down at the climb speed, eased over the last of the way so it touches down gently
   await page.keyboard.down('Shift');
   let landed = turned.landed;
   let fastest = 0;
-  for (let frames = 0; !landed && frames < 400; frames += 10) {
-    await step(10);
+  let touched = 0;
+  for (let frames = 0; !landed && frames < 600; frames++) {
+    const before = await state();
+    await step(1);
     const now = await state();
     landed = now.landed;
     fastest = Math.min(fastest, now.vz);
+    if (landed) touched = -before.vz;
   }
   await page.keyboard.up('Shift');
   expect(landed, 'Shift brings it down to the ground').toBe(true);
-  expect(fastest, 'and faster than it sinks').toBeLessThan(-2 * HELICOPTER.sinkSpeed);
+  expect(fastest, 'at the climb speed').toBeCloseTo(-HELICOPTER.climbSpeed, 6);
+  expect(touched, 'and eased: it touches down no faster than the landing speed').toBeLessThanOrEqual(
+    HELICOPTER.landSpeed + 1e-6,
+  );
+  expect(touched, 'and does touch down at it').toBeGreaterThan(HELICOPTER.landSpeed - 0.5);
 
-  // up a little, let go, and it comes down by itself and lands
+  // up a little, let go, and it stays where it is, in the air, until Shift
   await page.keyboard.down('Space');
   await step(30);
   await page.keyboard.up('Space');
-  expect((await state()).landed).toBe(false);
-  landed = false;
-  for (let frames = 0; !landed && frames < 600; frames += 30) {
-    await step(30);
-    landed = (await state()).landed;
-  }
-  expect(landed, 'let go, it comes down and lands with no key held').toBe(true);
+  await step(300);
+  const hung = await state();
+  expect(hung.landed, 'let go in the air, it stays in the air').toBe(false);
+  expect(hung.vz).toBe(0);
   expect(problems).toEqual([]);
 });
 
 test('the trees bow as it comes down into a wood, stand once it lands, and bow again as it climbs away', async ({
   page,
 }) => {
-  // let go over a wood, it sinks into it, and Space takes it up and away, as a player would
+  // brought down over a wood by Shift, and Space takes it up and away, as a player would
   const problems = watch(page);
   await start(page, { seed: 11, paused: true });
   const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
@@ -174,7 +181,8 @@ test('the trees bow as it comes down into a wood, stand once it lands, and bow a
   await page.evaluate((w) => window.game!.teleport(w.x, w.y, 12, 0), WOOD);
   await step(60);
   const high = bowing(await sway());
-  // nothing held: it sinks into the wood, and the trees bow further as it comes
+  // Shift held: it comes down into the wood, and the trees bow further as it comes
+  await page.keyboard.down('Shift');
   let h = await heli();
   for (let frames = 0; h.height > 4.5 && frames < 300; frames += 10) {
     await step(10);
@@ -197,7 +205,8 @@ test('the trees bow as it comes down into a wood, stand once it lands, and bow a
     await step(10);
     h = await heli();
   }
-  expect(h.landed, 'set down in the clearing with no key held').toBe(true);
+  await page.keyboard.up('Shift');
+  expect(h.landed, 'set down in the clearing by Shift').toBe(true);
   // the camera behind it is over the crowns round it, and what it shows is the wood, not the inside of a tree
   await step(60);
   const cam = await page.evaluate(() => window.game!.state().camera.position);
@@ -376,6 +385,9 @@ for (const [name, viewport] of [
       const travel = await leverTravel(page);
       const hand = await fingers(page);
 
+      // untouched, the lever rests at the hover in the middle of its travel, and the helicopter holds still
+      expect((await state()).input.lever, 'the lever starts at the hover').toBe(HOVER_LIFT);
+      expect(HOVER_LIFT, 'which is the middle').toBe(0);
       // the right thumb slides the lever up: it climbs
       const rx = W - 60,
         ry = H - 160;

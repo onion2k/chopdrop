@@ -45,7 +45,7 @@ test('a ring trial by the keys: begun by its first ring, one missed and gone bac
   // put at the start, nothing begun: the hint, no clock, the first ring's flag drawn and no other ring solid
   expect((await state(page)).mission.level).toBeNull();
   await expect(page.locator('#hud .hint')).toBeVisible();
-  // the helicopter sinks with no key held, so the wait before it is flown at is a frame and not a second
+  // the helicopter holds its height with no key held, and so is where it was put when it is flown at
   expect((await state(page)).mission.level).toBeNull();
 
   // the first ring flown through the way it faces, thirty back with W held: that begins the trial

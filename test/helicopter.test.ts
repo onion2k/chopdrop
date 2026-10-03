@@ -17,9 +17,24 @@ function airborne(x = 0, y = 0, z = 10, yaw = 0) {
 
 /**
  * The stick held level, at the lift that holds the height, for the tests that fly to try something else (the speed,
- * a turn, an edge) and would otherwise sink to the ground before they had tried it.
+ * a turn, an edge) and want it plain that the height is held.
  */
 const level = (forward: number, turn: number): Controls => ({ forward, turn, lift: HOVER_LIFT });
+
+/** Brought down by the lift held down until it lands: how long that took, and how fast it was going as the skids touched. */
+function comeDown(h: Helicopter, limit = 3000) {
+  let frames = 0;
+  let speed = 0;
+  for (let before = h.vz; frames < limit; frames++) {
+    before = h.vz;
+    h.step(DT, { forward: 0, turn: 0, lift: -1 });
+    if (h.landed) {
+      speed = -before;
+      break;
+    }
+  }
+  return { seconds: frames * DT, speed };
+}
 
 /** Fly `seconds` of the stick as given, calling `each` after every frame. */
 function fly(h: Helicopter, controls: Controls, seconds: number, each?: (h: Helicopter) => void) {
@@ -76,78 +91,110 @@ describe('climbing and landing', () => {
     expect(h.vz).toBe(0);
   });
 
-  it('settles into a sink with lift let go, eased and never faster than the sink', () => {
-    const h = airborne(0, 0, 60);
-    fly(h, IDLE, 0.25, (h) => expect(h.vz).toBeGreaterThanOrEqual(-H.sinkSpeed));
-    // a settle and not a drop: a quarter of a second in, it is sinking, and slowly
-    expect(h.vz).toBeLessThan(0);
-    expect(h.vz).toBeGreaterThan(-1.5);
-    fly(h, IDLE, 1.25, (h) => expect(h.vz).toBeGreaterThanOrEqual(-H.sinkSpeed));
-    expect(h.vz).toBe(-H.sinkSpeed);
-    fly(h, IDLE, 2, (h) => expect(h.vz).toBe(-H.sinkSpeed));
-  });
-
-  it('comes down with nothing held until it lands, and rests there with its rotor idling', () => {
-    const h = airborne(0, 0, 20);
-    h.rotorSpeed = H.rotorFull;
-    let frames = 0;
-    while (!h.landed && frames++ < 600) h.step(DT, IDLE);
-    expect(h.landed).toBe(true);
-    // twenty at four a second, and a second to settle into it
-    expect(frames * DT).toBeGreaterThan(5);
-    expect(frames * DT).toBeLessThan(6);
+  it('holds its height with nothing held, to the centimetre, over five seconds', () => {
+    const h = airborne(0, 0, 30);
     fly(h, IDLE, 5, (h) => {
-      expect(h.z).toBe(h.floor);
+      expect(Math.abs(h.z - 30)).toBeLessThan(0.01);
       expect(h.vz).toBe(0);
     });
-    expect(h.rotorSpeed).toBeCloseTo(H.rotorIdle, 2);
-  });
-
-  it('sinks from the ceiling once the lift is let go', () => {
-    const h = new Helicopter(FLAT);
-    fly(h, { forward: 0, turn: 0, lift: 1 }, 24);
-    expect(h.z).toBe(H.ceiling);
-    fly(h, IDLE, 2);
-    expect(h.z).toBeLessThan(H.ceiling - 3);
     expect(h.landed).toBe(false);
   });
 
-  it('comes down at the climb speed with lift down, faster than it sinks', () => {
+  it('holds its height at the ceiling with nothing held, and does not drift off the world on the sea', () => {
+    const h = new Helicopter(FLAT);
+    fly(h, { forward: 0, turn: 0, lift: 1 }, 24);
+    expect(h.z).toBe(H.ceiling);
+    fly(h, IDLE, 3);
+    expect(h.z).toBe(H.ceiling);
+  });
+
+  it('lands from thirty metres by Shift within four seconds, and no slower than the old way down', () => {
+    const h = airborne(0, 0, 30);
+    const { seconds } = comeDown(h);
+    expect(h.landed).toBe(true);
+    // the old way down, a straight 12 m/s with no settle, took 2.9 s from here: the settle may cost under half a second
+    expect(seconds).toBeLessThan(4);
+    expect(seconds).toBeLessThanOrEqual(2.9 + 0.5);
+  });
+
+  it('touches down no faster than the landing speed, from any height', () => {
+    for (const z of [3, 5, 12, 30, 100]) {
+      const h = airborne(0, 0, z);
+      const { speed } = comeDown(h);
+      expect(h.landed, `from ${z}`).toBe(true);
+      expect(speed, `from ${z}`).toBeLessThanOrEqual(H.landSpeed + 1e-9);
+    }
+  });
+
+  it('is eased over the last of the way down: at full speed above the settle, held to the landing speed within it', () => {
+    const h = airborne(0, 0, 100);
+    let fastest = 0;
+    fly(h, { forward: 0, turn: 0, lift: -1 }, 20, (h) => {
+      if (h.height > H.settle + 1) fastest = Math.min(fastest, h.vz);
+      if (h.height < 0.2 && !h.landed) expect(h.vz).toBeGreaterThanOrEqual(-H.landSpeed - 1e-9);
+    });
+    expect(fastest).toBe(-H.climbSpeed);
+    expect(h.landed).toBe(true);
+  });
+
+  it('can brake from the climb speed to the landing speed inside the settle', () => {
+    const brake = (H.climbSpeed ** 2 - H.landSpeed ** 2) / (2 * H.climbAccel);
+    expect(brake).toBeLessThan(H.settle);
+  });
+
+  it('is not slowed by the settle above it, nor when a gentler descent is asked for', () => {
+    const h = airborne(0, 0, H.settle + 20);
+    fly(h, { forward: 0, turn: 0, lift: -1 }, 1);
+    expect(h.vz).toBe(-H.climbSpeed);
+    const slow = airborne(0, 0, 2);
+    fly(slow, { forward: 0, turn: 0, lift: -0.1 }, 0.3);
+    expect(slow.vz).toBeCloseTo(-0.1 * H.climbSpeed, 9);
+  });
+
+  it('settles at the floor over a hill and not at the sea', () => {
+    const h = new Helicopter(landscape(() => 40));
+    h.place(0, 0, 60, 0);
+    const { speed } = comeDown(h, 600);
+    expect(h.z).toBe(40);
+    expect(speed).toBeLessThanOrEqual(H.landSpeed + 1e-9);
+  });
+
+  it('comes up and off the ground at the climb speed, the settle in no way holding it', () => {
+    const h = new Helicopter(FLAT);
+    fly(h, { forward: 0, turn: 0, lift: 1 }, 1);
+    expect(h.vz).toBe(H.climbSpeed);
+  });
+
+  it('comes down at the climb speed with lift down', () => {
     const h = airborne(0, 0, 100);
     fly(h, { forward: 0, turn: 0, lift: -1 }, 2);
     expect(h.vz).toBe(-H.climbSpeed);
-    expect(H.climbSpeed).toBeGreaterThan(2 * H.sinkSpeed);
   });
 
-  it('let go mid-climb, rises no further than the climb takes to stop, then sinks', () => {
+  it('let go mid-climb, rises no further than the climb takes to stop, then holds', () => {
     const h = new Helicopter(FLAT);
     fly(h, { forward: 0, turn: 0, lift: 1 }, 3);
     expect(h.vz).toBe(H.climbSpeed);
     const z = h.z;
     let top = z;
     fly(h, IDLE, 4, (h) => (top = Math.max(top, h.z)));
-    // the climb is braked as hard as it ever was, and the gentle ease is only for settling into the sink
     expect(top - z).toBeLessThanOrEqual(H.climbSpeed ** 2 / (2 * H.climbAccel) + 0.25);
-    expect(h.vz).toBe(-H.sinkSpeed);
+    expect(h.vz).toBe(0);
+    expect(h.z).toBeCloseTo(top, 9);
   });
 
-  it('holds its height exactly at the hover lift, and the lift runs on one line through it', () => {
-    expect(HOVER_LIFT).toBe(0.25);
+  it('holds its height exactly at the hover lift, which is the middle of the line', () => {
+    expect(HOVER_LIFT).toBe(0);
     const h = airborne(0, 0, 30);
     fly(h, level(0, 0), 5, (h) => {
       expect(h.z).toBe(30);
       expect(h.vz).toBe(0);
     });
-    // settled at each lift, it climbs or sinks as the line says: from the sink at nothing, up to the climb and
-    // down to the way down, with no step anywhere in it
-    for (const lift of [1, 0.75, 0.5, 0.25, 1e-6, 0, -0.5, -1]) {
+    // settled at each lift, it climbs or comes down as one straight line says, with no step anywhere in it
+    for (const lift of [1, 0.75, 0.5, 0.25, 1e-6, 0, -1e-6, -0.25, -0.5, -1]) {
       const at = airborne(0, 0, 150);
       fly(at, { forward: 0, turn: 0, lift }, 3);
-      const want =
-        lift >= 0
-          ? -H.sinkSpeed + lift * (H.climbSpeed + H.sinkSpeed)
-          : -H.sinkSpeed + lift * (H.climbSpeed - H.sinkSpeed);
-      expect(at.vz, `lift ${lift}`).toBeCloseTo(want, 3);
+      expect(at.vz, `lift ${lift}`).toBeCloseTo(lift * H.climbSpeed, 3);
     }
   });
 
@@ -309,7 +356,7 @@ describe('on the ground', () => {
     const h = airborne(-20, 0, 6, 0);
     fly(h, { forward: 1, turn: 0, lift: -1 }, 3);
     expect(h.landed).toBe(true);
-    fly(h, { forward: 1, turn: 0, lift: 0 }, 1);
+    fly(h, { forward: 1, turn: 0, lift: 0 }, 2);
     expect(h.speed).toBeLessThan(1e-6);
   });
 });
@@ -472,18 +519,23 @@ describe('the rotor', () => {
     expect(h.rotorSpeed).toBeGreaterThan(H.rotorIdle);
   });
 
-  it('stays at full speed in the air as it sinks with nothing asked, and slows after it lands', () => {
+  it('stays at full speed in the air held there with nothing asked, and slows once it is landed and nothing asks it up', () => {
     const h = airborne(0, 0, 10, 0);
     h.rotorSpeed = H.rotorFull;
-    let inTheAir = 0;
     fly(h, IDLE, 4, (h) => {
-      if (h.landed) return;
-      inTheAir++;
+      expect(h.landed).toBe(false);
       expect(h.rotorSpeed).toBeCloseTo(H.rotorFull, 9);
     });
-    expect(inTheAir).toBeGreaterThan(120);
+    fly(h, { forward: 0, turn: 0, lift: -1 }, 4);
     expect(h.landed).toBe(true);
-    fly(h, IDLE, 5);
+    fly(h, IDLE, 5, (h) => expect(h.landed).toBe(true));
+    expect(h.rotorSpeed).toBeCloseTo(H.rotorIdle, 2);
+  });
+
+  it('idles on the ground with nothing held, and stays landed', () => {
+    const h = new Helicopter(FLAT);
+    h.rotorSpeed = H.rotorFull;
+    fly(h, IDLE, 6, (h) => expect(h.landed).toBe(true));
     expect(h.rotorSpeed).toBeCloseTo(H.rotorIdle, 2);
   });
 

@@ -1,8 +1,8 @@
 /**
  * The player's machine: an arcade helicopter, flown with a stick of three
- * axes and nothing else. It climbs with the lift held, settles into a
- * gentle sink with it let go and comes down fast with it pushed down, and
- * lands; flies forward and back along its heading and turns; tilts into
+ * axes and nothing else. It climbs with the lift held, hangs where it is
+ * with it let go and comes down fast with it pushed down, eased onto the
+ * ground at the last, and lands; flies forward and back along its heading and turns; tilts into
  * what it does, for the eye; and spins its rotor. It is not a body to the physics, and
  * it is kept inside the world's edge by its own reach, at any height.
  *
@@ -22,7 +22,7 @@ export interface Controls {
   lift: number;
 }
 
-/** Nothing asked for: a gentle sink in the air until it lands, and rest on the ground. */
+/** Nothing asked for: it hangs at its height in the air, and rests on the ground. */
 export const IDLE: Readonly<Controls> = { forward: 0, turn: 0, lift: 0 };
 
 /** A rectangle on the ground, in world units. */
@@ -82,16 +82,17 @@ export const HELICOPTER = {
   /** The fastest it turns, and how quickly the turn follows the stick. */
   turnRate: 1.9,
   turnEase: 6,
-  /** The fastest it climbs or sinks, how fast it gets there, and the highest it can climb to: above the sea, and above every peak. */
+  /** The fastest it climbs or comes down, how fast it gets there, and the highest it can climb to: above the sea, and above every peak. */
   climbSpeed: 12,
   climbAccel: 16,
   ceiling: 220,
   /**
-   * How fast it sinks with the lift let go, a third of the climb, and how gently it settles into that sink, so
-   * letting go is a settle and not a drop: from a hover it is sinking at the full rate in a second.
+   * How it is eased onto the ground: coming down within `settle` metres of the floor it is held to `landSpeed`, so a
+   * fast descent brakes over the last of the way and touches down gently and never slams. The brake from the climb
+   * speed to the landing speed at `climbAccel` takes a little over four metres, which the settle has room for.
    */
-  sinkSpeed: 4,
-  sinkEase: 4,
+  settle: 5,
+  landSpeed: 3,
   /** The most it tilts nose-down or nose-up, and banks; and how quickly the tilt follows. */
   maxPitch: 0.28,
   maxRoll: 0.35,
@@ -133,10 +134,10 @@ export const HELICOPTER = {
 };
 
 /**
- * The lift that holds its height: lift runs on one line from the climb at 1, through the sink at 0, to the way down
- * at −1, and crosses still air a quarter of the way up. A touch stick can hold it; keys can only tap at it.
+ * The lift that holds its height: lift runs on one straight line from the way down at −1, through holding still at 0,
+ * to the climb at 1, so holding still is the middle of the line. A touch lever clicks into it; the keys let go to it.
  */
-export const HOVER_LIFT = HELICOPTER.sinkSpeed / (HELICOPTER.climbSpeed + HELICOPTER.sinkSpeed);
+export const HOVER_LIFT = 0;
 
 export class Helicopter {
   /** Where it is: x and y across the ground, and z the height of its skids' base above the sea. */
@@ -226,16 +227,12 @@ export class Helicopter {
     this.rotorSpeed += (rotorTarget - this.rotorSpeed) * (1 - Math.exp(-H.rotorEase * dt));
     this.rotor = wrapTurn(this.rotor + this.rotorSpeed * dt);
 
-    // up and down: the climb follows the stick along one line, from the climb at 1 through the sink at nothing to the
-    // way down at −1, and the ground and the ceiling are hard stops
-    const climb =
-      lift >= 0
-        ? -H.sinkSpeed + lift * (H.climbSpeed + H.sinkSpeed)
-        : -H.sinkSpeed + lift * (H.climbSpeed - H.sinkSpeed);
-    // settling into a sink no faster than the sink is eased gently, so letting go is a settle and not a drop; braking
-    // a climb, and coming down faster than the sink, are as quick as they ever were
-    const settling = climb < 0 && climb >= -H.sinkSpeed && this.vz <= 0;
-    this.vz = moveToward(this.vz, climb, (settling ? H.sinkEase : H.climbAccel) * dt);
+    // up and down: the speed follows the stick along one straight line, the climb at 1, still at nothing and the way
+    // down at −1, and the ground and the ceiling are hard stops; within the settle of the floor the way down is held
+    // to the landing speed, which the speed is braked to at the same rate it is always changed
+    let climb = lift * H.climbSpeed;
+    if (this.z - this.floor < H.settle) climb = Math.max(climb, -H.landSpeed);
+    this.vz = moveToward(this.vz, climb, H.climbAccel * dt);
     this.z += this.vz * dt;
     if (this.z <= this.floor) {
       this.z = this.floor;

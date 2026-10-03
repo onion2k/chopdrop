@@ -22,8 +22,9 @@ const walker = async (page: Page) =>
   (await page.evaluate(() => window.game!.content().rescues)).find((r) => r.id === WOOD)!;
 
 /**
- * The window held by the keys for `frames` frames: Space pressed and let go in turn, since a helicopter with nothing
- * held sinks and one with Space held climbs, and the window is ten metres tall. The rules are checked as it goes, and
+ * The window held by the keys for `frames` frames: a helicopter with nothing held hangs where it is, so Space and Shift
+ * are pressed in turn, a short beat each, to nudge it up and down as a player's thumbs do, and the window is ten metres
+ * tall. The rules are checked as it goes, and
  * the height it kept is told, so a test can say it was held in the window and not by luck at one end.
  */
 async function holdByKeys(page: Page, frames: number, beat = 6) {
@@ -33,7 +34,9 @@ async function holdByKeys(page: Page, frames: number, beat = 6) {
     await page.keyboard.down('Space');
     await step(page, beat);
     await page.keyboard.up('Space');
+    await page.keyboard.down('Shift');
     await step(page, beat);
+    await page.keyboard.up('Shift');
     const { height } = (await state(page)).helicopter;
     lowest = Math.min(lowest, height);
     highest = Math.max(highest, height);

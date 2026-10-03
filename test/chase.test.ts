@@ -329,7 +329,7 @@ describe('over the island', () => {
       game.helicopter.placeAbove(116, -280, 14, yaw);
       cam.snap(game.helicopter);
       const check = watch(game, cam);
-      chase(game, cam, 480, IDLE, check);
+      chase(game, cam, 480, { forward: 0, turn: 0, lift: -1 }, check);
       expect(game.helicopter.landed).toBe(true);
       // landed in the clearing, it is over the crowns round it and looking down at the helicopter
       expect(cam.position[2]).toBeGreaterThan(game.helicopter.z + CHASE.up);

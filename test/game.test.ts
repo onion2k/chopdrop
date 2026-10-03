@@ -549,22 +549,22 @@ describe('the helicopter and the rings', () => {
       const h = game.helicopter;
       const { middle, rotorRadius } = HELICOPTER.size;
       const top = block.z + block.height;
-      // over its middle, facing across it, let sink onto it with nothing held, every frame checked
+      // over its middle, facing across it, let down onto it with the lift held down, every frame checked
       h.place(block.x, block.y, top + rotorRadius - middle + 4, block.yaw + Math.PI / 2);
       for (let f = 0; f < 240; f++) {
-        game.step(DT);
+        game.step(DT, { forward: 0, turn: 0, lift: -1 });
         expect(checkInvariants(game), `frame ${f}`).toEqual([]);
         expect(h.landed, `frame ${f}`).toBe(false);
       }
       // pressed on its top by the reach of its rotor, and all but still
       expect(h.z + middle - rotorRadius).toBeCloseTo(top, 1);
       expect(Math.abs(h.vz)).toBeLessThan(0.5);
-      // flown on across it, off its side, and sinking once it is past the edge: lower than it rested, over ground
+      // flown on across it, off its side, and coming down once it is past the edge: lower than it rested, over ground
       // that is not the block's, which west of the towers rises to meet it higher than their tops
       const rested = h.z;
       let lowest = rested;
       for (let f = 0; f < 300; f++) {
-        game.step(DT, { forward: 1, turn: 0, lift: 0 });
+        game.step(DT, { forward: 1, turn: 0, lift: -1 });
         expect(checkInvariants(game), `frame ${f}`).toEqual([]);
         lowest = Math.min(lowest, h.z);
       }

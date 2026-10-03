@@ -190,8 +190,8 @@ says why. Look at every picture.
   wood does not move with the trees. Both find the trees near a point through
   `src/tree-grid.ts`, the trees sorted into squares once.
 - `src/debug.ts` is `window.game`, the test API: time, the seed, the
-  helicopter (`fly`, whose lift of `HOVER_LIFT` holds the height, since
-  nothing held sinks; `release`; `teleport`, which takes a height above the
+  helicopter (`fly`, whose lift of `HOVER_LIFT`, nothing, holds the
+  height, as letting go does; `release`; `teleport`, which takes a height above the
   floor, where the skids rest, and not a height above the sea), the ground
   (`groundAt`, and `floorAt`, which on a slope is higher, so a test that
   wants a height above the sea takes the floor from it), what is on the

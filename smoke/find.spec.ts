@@ -11,7 +11,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { RADAR, radarInterval } from '../src/finds';
 import { RADAR_RING, RADAR_STEPS } from '../src/hud';
 import { HOVER_LIFT } from '../src/helicopter';
-import { fingers, ready, start, watch } from './game';
+import { fingers, leverTravel, ready, start, watch } from './game';
 
 /** The package these tests find: its nearest neighbour is 130 m and more from where a helicopter let down by it lands. */
 const ID = 'east-wood';
@@ -277,12 +277,16 @@ test.describe('on a phone', () => {
     await start(page, { seed: 11, paused: true });
     await step(page, 1);
     const p = await place(page);
-    // 8 m before it, 12 up, facing it: the left thumb pushes the stick a little and lifts, and the lever, left at the
-    // sink, lets the helicopter down
+    // 8 m before it, 12 up, facing it: the left thumb pushes the stick a little, and the right slides the lever down to
+    // let the helicopter down
     await page.evaluate(([x, y]) => window.game!.teleport(x - 8, y, 12, 0), [p.x, p.y] as const);
     const hand = await fingers(page);
+    const travel = await leverTravel(page);
     await hand.down(1, 100, 690);
     await hand.move(1, 100, 670);
+    await hand.down(2, 330, 600);
+    await hand.move(2, 330, 600 + travel / 2);
+    expect((await state(page)).input.lever, 'the lever at the bottom').toBe(-1);
     await step(page, 20);
     await hand.up(1);
     expect((await state(page)).input.by).toBe('touch');

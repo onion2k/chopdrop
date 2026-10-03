@@ -1,17 +1,17 @@
 {
   "levels": {
-    "first-delivery": 0.28,
+    "first-delivery": 0.29,
     "ring-trial": 0.43,
-    "over-the-water": 0.64,
-    "over-the-range": 0.7,
+    "over-the-water": 0.65,
+    "over-the-range": 0.71,
     "up-the-valley": 0.63,
-    "mountain-drop": 0.48,
-    "under-and-between": 0.78,
-    "wood-rescue": 0.43,
-    "beach-rescue": 0.61,
-    "ledge-rescue": 0.31,
-    "west-lake-fire": 0.9,
-    "south-lake-fire": 1.29,
-    "north-wood-fire": 5.36
+    "mountain-drop": 0.49,
+    "under-and-between": 0.79,
+    "wood-rescue": 0.44,
+    "beach-rescue": 0.62,
+    "ledge-rescue": 0.32,
+    "west-lake-fire": 1.47,
+    "south-lake-fire": 1.72,
+    "north-wood-fire": 5.47
   }
 }

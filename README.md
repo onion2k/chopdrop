@@ -59,17 +59,17 @@ the first commit keeps it as the model to copy from.
 
 **W** and **S** fly forward and back, **A** and **D** turn, **Space** climbs
 and **Shift** comes down fast; the arrows do what W A S D do. Let go of
-Space and it settles into a gentle sink, a third of the climb, until it
-lands, so a height is held by tapping Space. It starts landed on the home
+both and it hangs where it is. Coming down, it eases over the last few
+metres and settles onto the ground. It starts landed on the home
 pad, climbs to a ceiling of 220, above every peak, and sets down on
 whatever is under it: a pad, a field, a lake, or a hillside that rises to
 meet it, which it has to lift over.
 
 On a phone it is flown by touch: a stick under the left thumb, which comes
 up wherever the thumb lands, flies forward and back and turns; a lever under
-the right, slid anywhere on that side, climbs at the top, holds the height
-at its stop, sinks in the middle and comes down fast at the bottom, and
-stays where it is left. A key pressed goes back to the keys.
+the right, slid anywhere on that side, climbs above the middle, holds the
+height at its stop in the middle, and comes down below it, faster the further
+it is slid, and stays where it is left. A key pressed goes back to the keys.
 
 ## What is here
 

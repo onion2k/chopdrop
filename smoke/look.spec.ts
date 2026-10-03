@@ -21,7 +21,7 @@ import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
 import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Gate, Ring } from '../src/mission';
-import { DELIVERIES, WOOD, fingers, leverTravel, standardView, start, watch } from './game';
+import { DELIVERIES, SLOW_CLIMB, WOOD, fingers, leverTravel, standardView, start, watch } from './game';
 import {
   sceneAfar,
   sceneChase,
@@ -170,7 +170,7 @@ async function before(
   aside = 0,
 ) {
   await page.evaluate(
-    ([o, back, up, aside, middle]) => {
+    ([o, back, up, aside, middle, climb]) => {
       const g = window.game!;
       const [x, y] = [
         o.x - Math.cos(o.yaw) * back - Math.sin(o.yaw) * aside,
@@ -178,11 +178,11 @@ async function before(
       ];
       g.chase();
       g.teleport(x, y, o.z + up - middle - g.floorAt(x, y), o.yaw);
-      g.fly(0.6, 0, 0.53);
+      g.fly(0.6, 0, climb);
       g.step(30);
       g.release();
     },
-    [o, back, up, aside, HELICOPTER.size.middle] as const,
+    [o, back, up, aside, HELICOPTER.size.middle, SLOW_CLIMB] as const,
   );
 }
 
@@ -257,14 +257,15 @@ async function hoverBy(page: Page, p: { x: number; y: number }, back: number, up
   );
 }
 
-/** The helicopter let down on the ground 6 m from a package, by letting it sink, and the camera parked over the place. */
+/** The helicopter let down on the ground 6 m from a package, by the lift held down, and the camera parked over the place. */
 async function findingPackage(page: Page, p: { x: number; y: number }, radius = 50) {
   await page.evaluate(
     ([x, y, radius]) => {
       const g = window.game!;
       g.teleport(x - 6, y, 8, 0);
-      g.release();
+      g.fly(0, 0, -1);
       for (let f = 0; f < 300 && !g.state().helicopter.landed; f += 5) g.step(5);
+      g.release();
       g.look(x, y, { azimuth: -2.2, polar: 1.0, radius });
       g.step(1);
     },
@@ -427,7 +428,9 @@ test.describe('what it looks like', () => {
     const landed = await page.evaluate((w) => {
       const g = window.game!;
       g.teleport(w.x, w.y, 14, 0);
+      g.fly(0, 0, -1);
       g.step(420);
+      g.release();
       return g.state().helicopter.landed;
     }, WOOD);
     expect(landed, 'set down in the clearing').toBe(true);
@@ -543,16 +546,19 @@ test.describe('what it looks like', () => {
   test('flying free near a start ring: the hint in the bar, and a crate on a pad in view', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
-    await page.evaluate((ring) => {
-      // the helicopter hovering beside the trial's first ring, which is seen from the side with its flag, and the lakeside
-      // pad and the crate that waits on it beyond, from a camera parked over the meadow
-      const g = window.game!;
-      g.teleport(ring.x - 30, ring.y, 12, ring.yaw);
-      g.look(ring.x + 20, ring.y + 6, { azimuth: -0.8, polar: 1.15, radius: 125 });
-      g.fly(0, 0, 0.53);
-      g.step(30);
-      g.release();
-    }, TRIAL);
+    await page.evaluate(
+      ([ring, climb]) => {
+        // the helicopter rising beside the trial's first ring, which is seen from the side with its flag, and the lakeside
+        // pad and the crate that waits on it beyond, from a camera parked over the meadow
+        const g = window.game!;
+        g.teleport(ring.x - 30, ring.y, 12, ring.yaw);
+        g.look(ring.x + 20, ring.y + 6, { azimuth: -0.8, polar: 1.15, radius: 125 });
+        g.fly(0, 0, climb);
+        g.step(30);
+        g.release();
+      },
+      [TRIAL, SLOW_CLIMB] as const,
+    );
     await hideStats(page);
     await expect(page.locator('#hud .hint')).toBeVisible();
     await expect(page.locator('#view')).toHaveScreenshot('free.png', TOLERANCE);
@@ -786,12 +792,12 @@ test.describe('what it looks like', () => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await overWalker(page, 0, 10);
-    await page.evaluate(() => {
+    await page.evaluate((climb) => {
       window.game!.begin('wood-rescue');
-      window.game!.fly(0, 0, 0.53);
+      window.game!.fly(0, 0, climb);
       window.game!.step(200);
       window.game!.release();
-    });
+    }, SLOW_CLIMB);
     await hideStats(page);
     await expect(page.locator('#hud .goal')).toHaveText('Fly the walker to the home pad');
     await expect(page.locator('#view')).toHaveScreenshot('rescue-going.png', TOLERANCE);

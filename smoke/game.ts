@@ -18,6 +18,13 @@ import type { GameApi } from '../src/debug';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import { WINCH_MIDDLE } from '../src/mission';
 
+/**
+ * The lift that climbs at 4.48 m/s, a slow rise: the pictures and the frames measured while it rose were taken at the
+ * lift of 0.53 that gave that climb when the line through the lift bent at the hover, and it is kept to the speed and
+ * not to the number, which the straight line has moved.
+ */
+export const SLOW_CLIMB = 4.48 / HELICOPTER.climbSpeed;
+
 declare global {
   interface Window {
     game?: GameApi;

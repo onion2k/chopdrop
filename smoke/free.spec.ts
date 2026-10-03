@@ -7,7 +7,7 @@
  * `rings.spec.ts` and `course.spec.ts`.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { DELIVERIES, start, watch } from './game';
+import { DELIVERIES, fingers, leverTravel, start, watch } from './game';
 
 const state = (page: Page) => page.evaluate(() => window.game!.state());
 const step = (page: Page, frames: number) => page.evaluate((n) => window.game!.step(n), frames);
@@ -245,8 +245,14 @@ test.describe('on a phone', () => {
     expect(corner.x + corner.width, 'clear of the corner button').toBeLessThanOrEqual(bar.x);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
-    // the lever starts at the sink: set over a crate, the helicopter settles onto it and the level begins, and ends
+    // the lever starts at the hover and a thumb slides it down: set over a crate, the helicopter comes down onto it, eased,
+    // and the level begins, and ends
     const { pickup, drop } = DELIVERIES['first-delivery'];
+    const hand = await fingers(page);
+    const travel = await leverTravel(page);
+    await hand.down(2, 330, 600);
+    await hand.move(2, 330, 600 + travel / 2);
+    expect((await state(page)).input.lever, 'the lever at the bottom').toBe(-1);
     const pads = await page.evaluate(() => window.game!.content().pads);
     await page.evaluate((p) => window.game!.teleport(p.x, p.y, 4, 0), pads[pickup]);
     await step(page, 240);

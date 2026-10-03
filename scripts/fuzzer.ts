@@ -1,7 +1,7 @@
 /**
  * The game played by a monkey: the real game, without the picture, driven
  * at random and made to do at random everything a player can make happen —
- * flying about, letting go and sinking, hovering by tapping the lift,
+ * flying about, letting go to hang where it is, coming down by the lift held down, tapping the lift,
  * climbing to the ceiling, landing, being somewhere
  * else, taking off from a pad, flying out to the edge of the world, up at a
  * hill, down onto a pad and low over a wood, bowing its trees, onto the
@@ -340,7 +340,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         name: 'hover',
         weight: 2,
         go() {
-          // held up by tapping the lift, as a player on keys holds a height: on for a frame or three, off for a few
+          // the lift tapped, as a player on keys nudges a height: on for a frame or three, off for a few, and let go it holds
           controls = { ...IDLE };
           hold.tap.on = 1 + Math.floor(random() * 3);
           hold.tap.every = hold.tap.on + 2 + Math.floor(random() * 5);
@@ -351,7 +351,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         name: 'let go',
         weight: 2,
         go() {
-          // nothing held: it sinks, and lands if it is held long enough
+          // nothing held: it hangs at its height, in the air or on the ground, however long it is left
           controls = { ...IDLE };
           hold.busy = Math.floor(between(60, 400));
         },
@@ -444,8 +444,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
             if (rise > 12) break;
           }
           heli.placeAbove(x, y, between(0.5, 6), yaw);
-          // a third of them climb as they go, and the rest only fly at it, holding their height by tapping the lift
-          // about one frame in two or three, as a player does, since let go it would sink to the land before the hill
+          // a third of them climb as they go, and the rest only fly at it, nudging their height by tapping the lift
+          // about one frame in two or three, as a player does
           controls = { forward: 1, turn: 0, lift: random() < 0.33 ? 1 : 0 };
           hold.busy = Math.floor(between(150, 300));
           if (controls.lift === 0) {
@@ -591,8 +591,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         places: true,
         weight: 1,
         go() {
-          // over the deck or a tower's top, and let down or left to sink onto it: it rests there, pressed on it and
-          // never in it, and never landed, and pushed on, it slides off its edge
+          // over the deck or a tower's top, and let down by the lift held down or left to hang: it rests there, pressed
+          // on it and never in it, and never landed, and pushed on, it slides off its edge
           const { blocks } = game.solids;
           const block = blocks[Math.floor(random() * blocks.length)];
           const along = between(-block.length / 2, block.length / 2),
@@ -692,7 +692,14 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
           // through the wood at full tilt, leaving them to spring back behind it
           const t = Math.floor(random() * treeCount) * TREE_STRIDE;
           heli.placeAbove(trees[t + 1], trees[t + 2], between(0.5, 12), between(-Math.PI, Math.PI));
-          controls = random() < 0.5 ? { ...IDLE } : { forward: 1, turn: between(-0.3, 0.3), lift: 0 };
+          // (or let down into it by the lift held down, eased onto the ground at the last, as a player lands in a clearing)
+          const how = random();
+          controls =
+            how < 0.35
+              ? { ...IDLE }
+              : how < 0.7
+                ? { forward: 1, turn: between(-0.3, 0.3), lift: 0 }
+                : { forward: 0, turn: 0, lift: -1 };
           hold.busy = Math.floor(between(120, 360));
         },
       },

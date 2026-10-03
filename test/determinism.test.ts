@@ -25,8 +25,8 @@ describe('the determinism check', () => {
     const done: string[] = [];
     let at = '';
     let last: unknown = null;
-    // long enough for all thirteen, a little over twenty minutes of game with the flights between them, and the first begun again
-    for (const game of flight(1, 60 * 60 * 21)) {
+    // long enough for all thirteen, a little over twenty-two minutes of game with the flights between them, and the first begun again
+    for (const game of flight(1, 60 * 60 * 23)) {
       const id = game.mission.level?.id ?? '';
       if (id && id !== at) begun.push(id);
       at = id;

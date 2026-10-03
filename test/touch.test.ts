@@ -80,8 +80,34 @@ describe('the stick', () => {
 });
 
 describe('the lever', () => {
-  it('starts at the sink, so the helicopter rests with its rotor idling', () => {
-    expect(read(touch()).lift).toBe(0);
+  it('starts at the hover, so the helicopter rests with its rotor idling', () => {
+    expect(read(touch()).lift).toBe(HOVER_LIFT);
+    expect(HOVER_LIFT).toBe(0);
+  });
+
+  it('is put back at the hover by a reset, however it was left', () => {
+    const t = touch();
+    t.down(2, 330, 700);
+    t.move(2, 330, 700 - TRAVEL);
+    expect(read(t).lift).toBe(1);
+    t.up(2);
+    t.reset();
+    expect(read(t).lift).toBe(HOVER_LIFT);
+    // and slides on from there, not from where it was
+    t.down(3, 330, 700);
+    t.move(3, 330, 700 - TRAVEL / 4);
+    expect(read(t).lift).toBeCloseTo(0.5, 9);
+  });
+
+  it('is the middle of its travel: the stop is the middle, and a thumb on the middle rests there', () => {
+    expect(TOUCH.stop).toBe(HOVER_LIFT);
+    const t = touch();
+    t.down(2, 330, 700);
+    t.move(2, 330, 700 - TRAVEL / 2);
+    expect(read(t).lift).toBe(1);
+    // slid back by half the travel and a hair short of it, it clicks into the middle and holds the hover
+    t.move(2, 330, 700 - TOUCH.pull * 0.5 * (TRAVEL / 2));
+    expect(read(t).lift).toBe(HOVER_LIFT);
   });
 
   it('slides up to the climb and down to the way down, from where it was, and no further', () => {
@@ -121,7 +147,7 @@ describe('the lever', () => {
     expect(read(t).lift).toBe(HOVER_LIFT);
   });
 
-  it('at the stop holds the helicopter where it is, at the top climbs, at the middle sinks and at the bottom comes down fast', () => {
+  it('at the stop holds the helicopter where it is, at the top climbs, and at the bottom comes down fast', () => {
     const at = (lift: number) => {
       const h = new Helicopter(flatGround());
       h.place(0, 0, 100, 0);
@@ -131,11 +157,11 @@ describe('the lever', () => {
     const t = touch();
     t.down(2, 330, 700);
     const lifts: number[] = [];
-    for (const share of [1, HOVER_LIFT, 0, -1]) {
+    for (const share of [1, HOVER_LIFT, -1]) {
       t.move(2, 330, 700 - share * (TRAVEL / 2));
       lifts.push(read(t).lift);
     }
-    expect(lifts.map(at)).toEqual([HELICOPTER.climbSpeed, 0, -HELICOPTER.sinkSpeed, -HELICOPTER.climbSpeed]);
+    expect(lifts.map(at)).toEqual([HELICOPTER.climbSpeed, 0, -HELICOPTER.climbSpeed]);
   });
 });
 

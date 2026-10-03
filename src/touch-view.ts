@@ -45,7 +45,6 @@ export class TouchView {
     el('span', this.track, 'label bottom').textContent = '▼ DOWN';
     this.stop = el('div', this.track, 'stop');
     el('span', this.stop, 'label').textContent = 'HOVER';
-    el('span', this.track, 'label sink').textContent = 'sink';
     this.handle = el('div', this.track, 'handle');
     for (const [e, size] of [
       [this.base, 2 * RING],

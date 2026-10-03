@@ -1,7 +1,7 @@
 /**
  * Touch, as the helicopter's controls: a stick under the left thumb for
  * flying and turning, and a lever under the right for the height, which
- * stays where it is left and clicks into a stop at the hover. Fingers come
+ * stays where it is left and clicks into a stop at the hover, which is the middle of its travel. Fingers come
  * in as plain numbers (an id and a point on the screen, in CSS pixels) and
  * `Controls` go out, with what the page needs to draw; nothing here touches
  * the page, so it is tried headless. Without it a phone can only watch.
@@ -31,8 +31,8 @@ export class TouchControls {
    * middle is where the thumb landed, kept far enough in that its ring is on the screen.
    */
   readonly stick = { active: false, x: 0, y: 0, knobX: 0, knobY: 0 };
-  /** The lever, as lift: −1 at the bottom of its travel, 1 at the top. It starts at the sink, and stays where it is left. */
-  lever = 0;
+  /** The lever, as lift: −1 at the bottom of its travel, 1 at the top. It starts at the hover, and stays where it is left. */
+  lever: number = HOVER_LIFT;
   /** Counted up each time anything here changes, so the page draws only when it has. */
   version = 0;
   private width = 1;
@@ -42,7 +42,7 @@ export class TouchControls {
   private stickFinger = -1;
   private leverFinger = -1;
   private leverY = 0;
-  private slid = 0;
+  private slid: number = HOVER_LIFT;
   /** Where the stick's thumb landed, which is where it asks for nothing, whether or not the ring could be drawn there. */
   private landedX = 0;
   private landedY = 0;
@@ -101,11 +101,11 @@ export class TouchControls {
     this.version++;
   }
 
-  /** Back to the start: every finger let go, and the lever down at the sink, so a helicopter set on a pad rests there. */
+  /** Back to the start: every finger let go, and the lever at the hover, so a helicopter set on a pad rests there. */
   reset(): void {
     this.release();
-    this.lever = 0;
-    this.slid = 0;
+    this.lever = HOVER_LIFT;
+    this.slid = HOVER_LIFT;
   }
 
   /** Every finger let go: the page has lost its focus or been hidden. */

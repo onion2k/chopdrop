@@ -33,7 +33,7 @@ async function along(page: Page, gate: Gate) {
   return (x - gate.x) * Math.cos(gate.yaw) + (y - gate.y) * Math.sin(gate.yaw);
 }
 
-/** W held for `frames` frames, the hover lift held with it so the height is kept. */
+/** W held for `frames` frames, and nothing else, so the height is kept. */
 async function forward(page: Page, frames: number) {
   await page.keyboard.down('w');
   await step(page, frames);
@@ -83,9 +83,9 @@ test('the course by the keys: begun between the towers, the bridge gone over and
     .evaluate((el: HTMLElement) => Number(/-?\d+/.exec(el.style.transform)![0]));
   expect(Math.abs(turned), 'the arrow points back to it').toBeGreaterThan(90);
 
-  // the deck struck: flown at its side from fifteen short, the middle two over its top, so that sinking as it comes,
+  // the deck struck: flown at its side from fifteen short, the middle a metre under its top, so that holding its height,
   // with nothing but W held, it meets the side; knocked back off it, never inside it, and not passed
-  await before(page, bridge, 15, deck.z + deck.height + 2 - bridge.z);
+  await before(page, bridge, 15, deck.z + deck.height - 1 - bridge.z);
   await page.keyboard.down('w');
   let last = await along(page, bridge);
   let furthest = last;

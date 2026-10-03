@@ -24,7 +24,7 @@ import { LEVELS } from '../src/arena';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Ring } from '../src/mission';
 import { COLLECTIBLES, PACKAGES } from '../src/arena';
-import { WOOD, standardView, start, watch } from './game';
+import { SLOW_CLIMB, WOOD, standardView, start, watch } from './game';
 import { DROP_HEIGHT, EDGE, WEST, hoverOver, sceneSpray, scoop, settle } from './fire';
 import { moved as hasMoved, type Figures } from './judging';
 
@@ -307,17 +307,17 @@ test('a view over the west fire, every patch burning and then a drop pouring on 
   expect([all.burning, all.full], 'every patch burning, the water still in the tank').toEqual([20, true]);
   // the drop on the fire's edge, and the frame while it pours: the spray and the mist over what is left burning
   await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, yaw, 3);
-  const pouring = await page.evaluate(async () => {
+  const pouring = await page.evaluate(async (climb) => {
     const g = window.game!;
     const s = g.state();
-    g.fly(0, 0, 0.53);
+    g.fly(0, 0, climb);
     return {
       burning: s.fires[0].burning,
       spray: s.particles.spray,
       live: s.particles.live,
       ms: await g.measureFrame(4),
     };
-  });
+  }, SLOW_CLIMB);
   await page.evaluate(() => window.game!.release());
   expect(pouring.spray, 'a drop pouring').toBeGreaterThan(0);
   expect(pouring.burning, 'part of the fire put out').toBeLessThan(20);
