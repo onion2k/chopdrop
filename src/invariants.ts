@@ -9,8 +9,8 @@
  * clock only runs forward. With nothing going the mission reads as nothing;
  * a level going is at one of its steps past the first, and nothing starts
  * while it is. A best time is a time, and never slower than the level was
- * just done in. The helicopter is never inside anything solid. The tank fills only in the scoop's window over open
- * water, and each fire's patches are in a state it knows, counted right, and a fire that is not going is not left off
+ * just done in. The helicopter is never inside anything solid, never landed over water, and never lower over it than the
+ * hover. The tank fills only with the bucket out and its bottom in open water, and each fire's patches are in a state it knows, counted right, and a fire that is not going is not left off
  * its start for longer than it waits to be lit again.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
@@ -21,12 +21,13 @@ import { washAt, type Wash } from './downwash';
 import type { Game } from './game';
 import { RADAR } from './finds';
 import { FIRE, PATCH } from './fire';
-import { HELICOPTER } from './helicopter';
+import { bucketAt, bucketInWater } from './bucket';
+import { HELICOPTER, HOVER_OVER_WATER } from './helicopter';
 import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
-import { fireOf, inWindow, loadFor, onPad, type Step } from './mission';
+import { BOARD, fireOf, inWindow, loadFor, onBoard, onPad, type Step } from './mission';
 import { SWAY, type Sway } from './sway';
-import { SCOOP, inScoop } from './water';
+import { NO_WATER, SCOOP } from './water';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
 const TOLERANCE = 1e-9;
@@ -81,6 +82,15 @@ export function checkInvariants(game: Game): string[] {
       out.push(`too banked: the helicopter's roll is ${h.roll.toFixed(3)} ${where}`);
     if (h.landed && h.vz < 0)
       out.push(`sinking: the helicopter is on the ground ${where} and falling at ${h.vz.toFixed(3)}`);
+    // over any water, a river too, by the island's own maps and not by anything the helicopter says of itself
+    const surface = game.waters.surfaceAt(h.x, h.y);
+    if (surface !== NO_WATER) {
+      if (h.landed) out.push(`landed on water: the helicopter is landed ${where}, over water at ${surface.toFixed(2)}`);
+      if (h.z < surface + HOVER_OVER_WATER - TOLERANCE)
+        out.push(
+          `below the hover over water: the helicopter is ${where}, and the surface is at ${surface.toFixed(2)} with a hover of ${HOVER_OVER_WATER}`,
+        );
+    }
   }
 
   if (!Number.isFinite(game.t) || game.t < 0) out.push(`the clock reads ${game.t}`);
@@ -96,20 +106,25 @@ export function checkInvariants(game: Game): string[] {
 }
 
 /**
- * What must hold of the tank: its filling is a number from nothing to short of a full scoop, and above nothing only
- * with the tank not full and the helicopter in the scoop's window over open water, which is worked out here from the
- * helicopter and the island's water and not from anything the tank says of itself. The helicopter is read as it is now,
- * which is where the tank last stepped it unless a test or a teleport has moved it since.
+ * What must hold of the tank: its filling is a number from nothing to short of a full fill, and above nothing only with
+ * the tank not full, the bucket out and its bottom under the surface of open water, a lake or the sea and never a river,
+ * which is worked out here from the helicopter and the island's water and not from anything the tank says of itself.
+ * The helicopter is read as it is now, which is where the tank last stepped it unless a test or a teleport has moved it since.
  */
 export function checkTank(game: Game): string[] {
   const { tank, helicopter: h } = game;
   if (!Number.isFinite(tank.filling) || tank.filling < 0 || tank.filling >= SCOOP.time)
     return [`the tank's filling reads ${tank.filling}, and runs from 0 to short of ${SCOOP.time}`];
   if (!(tank.filling > 0)) return [];
-  if (tank.full) return [`the tank is full and filling: ${tank.filling.toFixed(3)} s of a scoop`];
-  if (!inScoop(h, game.water.levelAt(h.x, h.y), h.speed))
+  if (tank.full) return [`the tank is full and filling: ${tank.filling.toFixed(3)} s of a fill`];
+  if (!game.bucket.out) return [`the tank is filling with the bucket in: ${tank.filling.toFixed(3)} s`];
+  // the bucket where it hangs, from the helicopter and the ground, and its bottom against the open water's surface
+  const pose = { hung: false, line: 0, bottom: 0 };
+  const surface = game.water.surfaceAt(h.x, h.y);
+  bucketAt(h, game.island.ground.heightAt(h.x, h.y), surface !== NO_WATER, pose);
+  if (!pose.hung || !bucketInWater(pose.bottom, surface))
     return [
-      `the tank is filling, and the helicopter is not in the scoop's window: ${tank.filling.toFixed(3)} s with it ${h.height.toFixed(2)} up at ${h.speed.toFixed(2)} m/s${h.landed ? ' landed' : ''}`,
+      `the tank is filling, and the bucket is not in open water: ${tank.filling.toFixed(3)} s with it ${pose.hung ? `at ${pose.bottom.toFixed(2)}` : 'stowed'} and the surface ${surface === NO_WATER ? 'none' : `at ${surface.toFixed(2)}`}${h.landed ? ', landed' : ''}`,
     ];
   return [];
 }
@@ -245,8 +260,9 @@ export function checkProgress(game: Game): string[] {
  * short of its last, which ends it; the pad it wants is one of the island's; its loading is a number from nothing to
  * short of a full load, and runs only while the helicopter is landed on the pad it is wanted on; and its clock is a
  * number. A winch step's loading likewise runs only while the helicopter is in the window over the person, and short of
- * the hold. The starts' loader is a number from nothing to short of a full load (a winch's hold, in a rescue's window,
- * and a parcel's load otherwise), and runs only with nothing going and the helicopter landed on a pickup pad that is
+ * the hold; a boarding's only while it is landed within the reach of the person, and short of its hold. The starts'
+ * loader is a number from nothing to short of a full load (a winch's or a boarding's hold, in a rescue's window or
+ * reach, and a parcel's load otherwise), and runs only with nothing going and the helicopter landed on a pickup pad that is
  * not blocked or in the window of some rescue, since nothing starts while a level is going, nor from the pad a level
  * has just ended on.
  */
@@ -286,6 +302,11 @@ export function checkMission(game: Game): string[] {
   else if (d.loading > 0 && step.kind === 'winch') {
     if (!inWindow(game.helicopter, step, groundAt(game)))
       out.push(`the loading runs out of the winch's window: ${d.loading.toFixed(3)} with the helicopter not in it`);
+  } else if (d.loading > 0 && step.kind === 'board') {
+    if (!onBoard(game.helicopter, step))
+      out.push(
+        `the loading runs while the helicopter is not landed within ${BOARD.reach} of the person: ${d.loading.toFixed(3)}`,
+      );
   } else if (d.loading > 0 && (d.target < 0 || !onPad(game.helicopter, game.island.pads[d.target])))
     out.push(`the loading runs off the pad: ${d.loading.toFixed(3)} with the helicopter not landed on pad ${d.target}`);
   if (!Number.isFinite(d.time) || d.time < 0) out.push(`the level's clock reads ${d.time}`);
@@ -297,12 +318,13 @@ function groundAt(game: Game): (x: number, y: number) => number {
   return (x, y) => game.island.ground.heightAt(x, y);
 }
 
-/** The winch the helicopter is in the window of, of some level that begins with one; null for none. Not run each frame. */
+/** The winch the helicopter is in the window of, or the person it is landed within the reach of, of some level that begins with one; null for none. Not run each frame. */
 function inSomeWindow(game: Game): Step | null {
   const at = groundAt(game);
   for (const level of game.levels) {
     const first = level.steps[0];
     if (first.kind === 'winch' && inWindow(game.helicopter, first, at)) return first;
+    if (first.kind === 'board' && onBoard(game.helicopter, first)) return first;
   }
   return null;
 }

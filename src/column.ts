@@ -7,19 +7,25 @@
  * It is a pure function of the game's time and the fires: each puff is `phase` of the way up its climb, from where the
  * time says and where it began, so the same time draws the same column on every run, a paused frame draws it as it
  * stands, and it makes nothing. A puff within the rotor's wash is pushed out from under the hub, so the column bends
- * away under a helicopter. Without it a fire seen from afar is a glowing patch of ground, and a player flying about the
- * island does not know there is a fire to fight.
+ * away under a helicopter. It leans in the island's wind, each puff carried by the wind of the moment it rose through
+ * and more as it climbs, so the column bends and curls as the wind gusts and turns; and each puff dies at a height of its
+ * own, from a hash of the puff and its round and never from chance, so the top is ragged and not a clean cut. Without it
+ * a fire seen from afar is a glowing patch of ground, and a player flying about the island does not know there is a
+ * fire to fight.
  */
 import { SPRITE_CAPACITY, SPRITE_STRIDE } from 'artshape-render/game/particles';
 import type { FirePlace } from './arena';
 import { washAt, type Wash, type WashSource } from './downwash';
-import { DRIFT, SMOKE, type FireView } from './effects';
+import { SMOKE, type FireView } from './effects';
 import { HELICOPTER } from './helicopter';
+import { hash01 } from './noise';
+import { windAt, type Wind } from './wind';
 
 /**
  * How the column looks. A fire's `puffs` each climb for `life` seconds, from `from` metres over the fire's middle, about
- * the treetops, to `rise` over it, drifting `drift` metres downwind as they go (the way the smoke's own wind blows, said
- * in `effects.ts`) and swelling from `size.from` to `size.to`. A puff's colour is the smoke's, from its dark to its pale
+ * the treetops, to `rise` over it, carried downwind as they go and swelling from `size.from` to `size.to`. The wind takes
+ * a puff `wind.at` of its speed at the fire and `wind.top` of it at the top, a puff being carried by the wind of half its
+ * age ago, and it dies `ragged` of its climb short of the top at the most. A puff's colour is the smoke's, from its dark to its pale
  * as it climbs. It is thin as it begins and as it ends, over the first `fadeIn` and the last `fadeOut` of its climb, and
  * `alpha` thick between, for a fire with all its patches burning; a fire with fewer is thinner by its share, but never
  * under `floor` of the whole, so a fire at its start is plainly seen. The wash pushes a puff out `push` metres at its strongest.
@@ -31,7 +37,8 @@ export const COLUMN = {
   life: 40,
   from: 8,
   rise: 160,
-  drift: 30,
+  wind: { at: 0.4, top: 1.3 },
+  ragged: 0.45,
   size: { from: 14, to: 56 },
   fadeIn: 0.1,
   fadeOut: 1 / 3,
@@ -43,12 +50,19 @@ export const COLUMN = {
 /** How far through a unit a fire's column is begun, so that the three do not rise in step. The same golden fraction as the effects'. */
 const OFFSET = 0.6180339887498949;
 
+/** Where in a puff's climb it is gone, 1 for the top and down to `1 - COLUMN.ragged`: by a hash of the fire, the puff and its round. */
+function topOf(fire: number, puff: number, round: number): number {
+  return 1 - COLUMN.ragged * hash01(fire * COLUMN.puffs + puff, round, 0x5bd1e995);
+}
+
 export class Column {
   /** How many puffs there can be at once, one fire's for each fire: the sprites the data has room for. */
   readonly capacity: number;
   /** The sprites of the last step, `SPRITE_STRIDE` floats each (position, size, colour, alpha), made once and written into. */
   readonly data: Float32Array;
   private readonly wash: Wash = { x: 0, y: 0, down: 0 };
+  /** The wind each puff leans in, written in place for each. */
+  private readonly wind: Wind = { x: 0, y: 0 };
 
   constructor(private readonly fires: readonly FirePlace[]) {
     this.capacity = fires.length * COLUMN.puffs;
@@ -64,9 +78,7 @@ export class Column {
    * the order of the places, and `source` is the rotor's wash if it is blowing. A fire that is out has none.
    */
   step(t: number, views: readonly FireView[], source?: Readonly<WashSource>): number {
-    const { puffs, life, from, rise, drift, size, fadeIn, fadeOut, alpha, floor, push } = COLUMN;
-    const dx = Math.cos(DRIFT.yaw),
-      dy = Math.sin(DRIFT.yaw);
+    const { puffs, life, from, rise, wind, size, fadeIn, fadeOut, alpha, floor, push } = COLUMN;
     const [dark, pale] = [SMOKE.colour, SMOKE.fade];
     const d = this.data;
     const w = this.wash;
@@ -78,10 +90,15 @@ export class Column {
       const thick = alpha * Math.max(floor, view.burning / place.patches.length);
       const base = place.patches[0].z;
       for (let k = 0; k < puffs; k++) {
-        const phase = (t / life + k / puffs + f * OFFSET) % 1;
+        const turns = t / life + k / puffs + f * OFFSET;
+        const phase = turns % 1;
         const climbed = phase < 0 ? phase + 1 : phase;
-        let x = place.x + dx * drift * climbed,
-          y = place.y + dy * drift * climbed;
+        // carried by the wind of the moment it rose through, half its age ago, at a share of it that grows as it climbs
+        const age = climbed * life;
+        const blow = windAt(t - age / 2, this.wind);
+        const carried = age * (wind.at + ((wind.top - wind.at) * climbed) / 2);
+        let x = place.x + blow.x * carried,
+          y = place.y + blow.y * carried;
         const z = base + from + (rise - from) * climbed;
         // a puff over the hub is over the rotor, whose air is blown down and out from under it and not up past it
         if (source && z <= source.z + HELICOPTER.size.mastTop) {
@@ -99,7 +116,9 @@ export class Column {
         d[o + 4] = dark[0] + (pale[0] - dark[0]) * aged;
         d[o + 5] = dark[1] + (pale[1] - dark[1]) * aged;
         d[o + 6] = dark[2] + (pale[2] - dark[2]) * aged;
-        d[o + 7] = thick * Math.min(1, climbed / fadeIn, (1 - climbed) / fadeOut);
+        // it fades out over the last third of its own climb, which ends where it dies, and is none after
+        const top = topOf(f, k, Math.floor(turns));
+        d[o + 7] = climbed >= top ? 0 : thick * Math.min(1, climbed / fadeIn, (top - climbed) / (fadeOut * top));
         n++;
       }
     }

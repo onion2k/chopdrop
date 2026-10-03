@@ -17,7 +17,7 @@
  * `test-results/`. Look at all three before deciding which is right.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { COLLECTIBLES, LEVELS, PACKAGES } from '../src/arena';
+import { COLLECTIBLES, FIRES, LEVELS, PACKAGES } from '../src/arena';
 import { CHASE } from '../src/chase';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Gate, Ring } from '../src/mission';
@@ -29,10 +29,12 @@ import {
   sceneFar,
   sceneGoing,
   sceneNear,
-  sceneScooping,
+  sceneFilling,
   sceneSpray,
+  scoop,
   settle,
 } from './fire';
+import { windYaw } from '../src/wind';
 
 /**
  * How far the pictures may differ before it is a change and not the GPU: not a pixel whose colour is off by more
@@ -315,7 +317,10 @@ async function overWalker(page: Page, back: number, up: number, aside = 0, yaw =
   );
 }
 
-/** The walker half way up the rope: the window held for 1.5 s, the loader half full, nothing begun. */
+/** The sailor in the boat off the east beach: where the boat sits and the winch is held. */
+const SAILOR = 'boat-rescue';
+
+/** The sailor half way up the rope: the window held over the boat for 1.5 s, the loader half full, nothing begun. */
 async function winching(page: Page) {
   await page.evaluate(
     ([id, hover]) => {
@@ -326,11 +331,75 @@ async function winching(page: Page) {
       g.step(90);
       g.release();
     },
-    [WALKER, HOVER_LIFT] as const,
+    [SAILOR, HOVER_LIFT] as const,
   );
   const now = await page.evaluate(() => window.game!.state());
-  expect(now.winch.spot).toBe(WALKER);
+  expect(now.winch.spot).toBe(SAILOR);
   expect(now.winch.share).toBeCloseTo(0.5, 1);
+}
+
+/** The walker climbing aboard: set down beside them for half the boarding, the loader half full, nothing begun. */
+async function boarding(page: Page) {
+  await page.evaluate((id) => {
+    const g = window.game!;
+    g.play(id);
+    g.step(90);
+  }, WALKER);
+  const now = await page.evaluate(() => window.game!.state());
+  expect(now.board.spot).toBe(WALKER);
+  expect(now.board.share).toBeCloseTo(0.5, 1);
+}
+
+/** The camera parked looking at the boat from `radius` away and `polar` down, from `azimuth` round, a frame drawn. */
+async function lookAtBoat(page: Page, radius: number, polar: number, azimuth: number) {
+  await page.evaluate(
+    ([id, radius, polar, azimuth]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === id)!;
+      g.look(w.x, w.y, { azimuth, polar, radius });
+      g.step(1);
+    },
+    [SAILOR, radius, polar, azimuth] as const,
+  );
+}
+
+/** The bucket in one of its three looks, over the west lake, the corner of the radar and the badge, the game drawn so the badge is as it is drawn. */
+async function badgeScene(page: Page, state: 'in' | 'out' | 'full') {
+  if (state === 'full') await scoop(page);
+  else {
+    await page.evaluate(
+      ([id, out, hover]) => {
+        const g = window.game!;
+        g.bucket(out);
+        g.play(id);
+        g.fly(0, 0, hover);
+        g.stepDrawn(2);
+        g.release();
+      },
+      ['west-lake-fire', state === 'out', HOVER_LIFT] as const,
+    );
+  }
+  await settle(page, 2);
+  expect((await page.evaluate(() => window.game!.state())).badge).toBe(state);
+}
+
+/**
+ * The smoke seen side-on to the wind of the moment, as the mock was: the camera `radius` from (x, y) and `polar` down,
+ * its azimuth a quarter turn from the way the wind blows, after the game has been drawn for `frames` frames so the smoke
+ * has risen. Needs the game paused.
+ */
+async function sideOn(page: Page, at: { x: number; y: number }, radius: number, polar: number, frames: number) {
+  await settle(page, frames);
+  const t = await page.evaluate(() => window.game!.state().t);
+  const azimuth = windYaw(t) + Math.PI / 2;
+  await page.evaluate(
+    ([x, y, radius, polar, azimuth]) => {
+      const g = window.game!;
+      g.look(x, y, { azimuth, polar, radius });
+      g.stepDrawn(1);
+    },
+    [at.x, at.y, radius, polar, azimuth] as const,
+  );
 }
 
 test.describe('what it looks like', () => {
@@ -774,16 +843,46 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('the walker half way up the rope, the loader half full, from a fixed view that shows them', async ({ page }) => {
+  test('the walker climbing aboard: set down beside them, the loader half full, from a fixed view that shows them', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await boarding(page);
+    await lookAtWalker(page, 20, 1.0, 1.0);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect([now.rope, now.smoke, now.people, now.helicopter.landed]).toEqual([false, 3, 3, true]);
+    await expect(page.locator('#hud .loader .what')).toHaveText('The walker climbs aboard');
+    await expect(page.locator('#view')).toHaveScreenshot('rescue-boarding.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the boat seen from afar: an orange inflatable on the sea off the east beach, the sailor waving', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await lookAtBoat(page, 80, 1.2, 3.8);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect([now.boats, now.people]).toEqual([1, 3]);
+    await expect(page.locator('#view')).toHaveScreenshot('boat-far.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the sailor half way up the rope from the boat, the loader half full, from a fixed view that shows them', async ({
+    page,
+  }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await winching(page);
-    await lookAtWalker(page, 55, 1.45, 3.6);
+    await lookAtBoat(page, 70, 1.3, 3.0);
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
-    expect([now.rope, now.smoke, now.people]).toEqual([true, 2, 2]);
-    expect(now.particles.flares, 'no flare is born at the walker').toBe(0);
-    await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the walker');
+    expect([now.rope, now.smoke, now.people, now.boats]).toEqual([true, 2, 2, 1]);
+    expect(now.particles.flares, 'no flare is born at the sailor').toBe(0);
+    await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the sailor');
     await expect(page.locator('#view')).toHaveScreenshot('rescue-winch.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
@@ -860,9 +959,20 @@ test.describe('what it looks like', () => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true, save: { best: {} } });
     await sceneSpray(page, 3, 120);
+    // eight frames more, drawn, and what the rotor threw in them counted: its emitters are in step, so a frame in eight
+    // throws none, and the count of the last frame alone says nothing
+    const thrown = await page.evaluate(() => {
+      const g = window.game!;
+      let n = 0;
+      for (let f = 0; f < 8; f++) {
+        g.stepDrawn(1);
+        n += g.state().particles.wash;
+      }
+      return n;
+    });
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
-    expect(now.particles.wash, 'the rotor throwing the water up').toBeGreaterThan(0);
+    expect(thrown, 'the rotor throwing the water up').toBeGreaterThan(0);
     expect(now.particles.refused).toBe(0);
     await expect(page.locator('#view')).toHaveScreenshot('spray.png', TOLERANCE);
     expect(problems).toEqual([]);
@@ -907,29 +1017,84 @@ test.describe('what it looks like', () => {
     expect(problems).toEqual([]);
   });
 
-  test('skimming the lake: the bucket dipped, the loader "Scooping" half full, the badge an outline', async ({
+  test('hovering over the lake with the bucket out: the bucket dipped, the loader "Filling the bucket" half full, the badge a ring', async ({
     page,
   }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true, save: { best: {} } });
-    await sceneScooping(page);
+    await sceneFilling(page);
+    // seen from the side and low, so the line is seen going down into the water the bucket has sunk in
+    await page.evaluate(() => {
+      const g = window.game!;
+      const h = g.state().helicopter;
+      g.look(h.x, h.y, { azimuth: 0.5, polar: 1.4, radius: 22 });
+      g.stepDrawn(1);
+    });
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
-    expect([now.badge, now.bucket.hung, now.tank.full]).toEqual(['empty', true, false]);
-    await expect(page.locator('#hud .loader .what')).toHaveText('Scooping');
-    await expect(page.locator('#view')).toHaveScreenshot('scooping.png', TOLERANCE);
+    expect([now.badge, now.bucket.out, now.bucket.hung, now.tank.full]).toEqual(['out', true, true, false]);
+    expect(now.helicopter.overWater).toBe(true);
+    await expect(page.locator('#hud .loader .what')).toHaveText('Filling the bucket');
+    await expect(page.locator('#view')).toHaveScreenshot('bucket-dipped.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
-  test('the tank full and the fire level going: the bar, the arrow and the blue badge', async ({ page }) => {
+  test('the bucket full and the fire level going: the bar, the arrow and the badge with its water', async ({
+    page,
+  }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true, save: { best: {} } });
     await sceneGoing(page);
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
     expect([now.badge, now.bucket.full, now.mission.level]).toEqual(['full', true, 'west-lake-fire']);
-    await expect(page.locator('#hud .goal')).toHaveText('Put out the fire · 10 burning');
+    await expect(page.locator('#hud .goal')).toHaveText('Fly low over the flames to drop · 10 burning');
     await expect(page.locator('#view')).toHaveScreenshot('fire-going.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  for (const state of ['in', 'out', 'full'] as const) {
+    test(`the bucket's badge, ${state}: ${
+      {
+        in: 'grey with the key’s tag',
+        out: 'an orange ring on a dark orange ground',
+        full: 'the same with its water in blue',
+      }[state]
+    }, beside the radar`, async ({ page }) => {
+      const problems = watch(page);
+      await start(page, { seed: 11, paused: true, save: { best: {} } });
+      await badgeScene(page, state);
+      await hideStats(page);
+      await expect(page).toHaveScreenshot(`bucket-${state}.png`, { ...TOLERANCE, clip: CORNER });
+      expect(problems).toEqual([]);
+    });
+  }
+
+  test('the smoke of the west fire in the wind, seen side-on from afar: the column leaning and curling, its top ragged', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await page.evaluate(() => window.game!.chase());
+    await sideOn(page, FIRES[0], 330, 1.32, 600);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.particles.refused).toBe(0);
+    expect(now.particles.sprites).toBeGreaterThan(0);
+    await expect(page.locator('#view')).toHaveScreenshot('wind-fire.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the flare of the walker in the wind, seen side-on: its smoke leaning with the column', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    const w = (await page.evaluate(() => window.game!.content().rescues)).find((r) => r.id === WALKER)!;
+    await sideOn(page, w, 90, 1.3, 420);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.particles.refused).toBe(0);
+    expect(now.smoke).toBe(3);
+    await expect(page.locator('#view')).toHaveScreenshot('wind-flare.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -1093,29 +1258,57 @@ test.describe('the first level on a phone, upright', () => {
 test.describe('a rescue on a phone, upright', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('the walker part way up the rope, the loader in view', async ({ page }) => {
+  test('the sailor part way up the rope, the loader in view', async ({ page }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await winching(page);
     await hideStats(page);
-    await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the walker');
+    await expect(page.locator('#hud .loader .what')).toHaveText('Winching up the sailor');
     await expect(page).toHaveScreenshot('rescue-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
+
+  test('the walker climbing aboard, the loader in view', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await boarding(page);
+    await hideStats(page);
+    await expect(page.locator('#hud .loader .what')).toHaveText('The walker climbs aboard');
+    await expect(page).toHaveScreenshot('rescue-boarding-phone.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+});
+
+test.describe('the bucket on a phone, upright', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  /** The corner under the radar, where the badge is on a phone, and the radar over it: cut to them. */
+  const PHONE_CORNER = { x: 270, y: 0, width: 120, height: 130 };
+  for (const state of ['in', 'out', 'full'] as const) {
+    test(`the badge ${state}, under the radar and clear of the lever, with no key's tag`, async ({ page }) => {
+      const problems = watch(page);
+      await start(page, { seed: 11, paused: true, save: { best: {} } });
+      await badgeScene(page, state);
+      await hideStats(page);
+      await expect(page.locator('#hud .bucket .key')).toBeHidden();
+      await expect(page).toHaveScreenshot(`bucket-${state}-phone.png`, { ...TOLERANCE, clip: PHONE_CORNER });
+      expect(problems).toEqual([]);
+    });
+  }
 });
 
 test.describe('a fire on a phone, upright', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('the tank full and the fire going: the bar, the two badges under one another, the touch controls', async ({
+  test('the bucket full and the fire going: the bar, the two badges under one another, the touch controls', async ({
     page,
   }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true, save: { best: {} } });
     await sceneGoing(page);
     await hideStats(page);
-    await expect(page.locator('#hud .goal')).toHaveText('Put out the fire · 10 burning');
-    await expect(page.locator('#hud .tank')).toHaveAttribute('data-state', 'full');
+    await expect(page.locator('#hud .goal')).toHaveText('Fly low over the flames to drop · 10 burning');
+    await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'full');
     await expect(page).toHaveScreenshot('fire-phone.png', TOLERANCE);
     expect(problems).toEqual([]);
   });

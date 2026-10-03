@@ -3,7 +3,8 @@
  * for up and down, with the arrows doing what W A S D do) and touch, the
  * stick and the lever in `touch.ts`, whichever was used last. It turns them
  * into the helicopter's `Controls` and nothing more, so the game never sees
- * a key or a finger. Something other than a person, a test say, can hold the
+ * a key or a finger; B is not a control but a press, which it tells the page
+ * once, and the page puts the bucket out or takes it in. Something other than a person, a test say, can hold the
  * controls instead; without that the browser tests could only fly by
  * pressing keys on a clock they do not keep.
  */
@@ -16,6 +17,8 @@ export class Input {
   override: Controls | null = null;
   /** How it is being flown: by the keys or by touch, whichever was used last. A key pressed switches to the keys. */
   by: 'keys' | 'touch' = 'keys';
+  /** Told once for each press of B, which the page answers by putting the bucket out or taking it in (and not while the panel is up). */
+  onBucket: (() => void) | null = null;
   /** The stick and the lever, which the page feeds fingers to and draws. */
   readonly touch = new TouchControls();
   private readonly touched: Controls = { forward: 0, turn: 0, lift: 0 };
@@ -28,6 +31,8 @@ export class Input {
       this.by = 'keys';
       // the page must not scroll, nor a held key click a button, under a player flying
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
+      // B alone: a chord with it is the browser's (a bookmark bar, bold), and not a bucket
+      if (k === 'b' && !e.ctrlKey && !e.metaKey && !e.altKey) this.onBucket?.();
     });
     addEventListener('keyup', (e) => this.down.delete(e.key.toLowerCase()));
     // a key let go of in another window never sends its keyup, and would stay held

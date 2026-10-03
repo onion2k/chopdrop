@@ -16,18 +16,42 @@
  * hash, so nothing here draws on it.
  */
 import type { Emit } from 'artshape-render/game/particles';
-import type { Wash } from 'artshape-render/game/wash';
+import { washFollow, type Wash } from 'artshape-render/game/wash';
 import type { FirePlace } from './arena';
 import { DOWNWASH, washStrength } from './downwash';
 import { PATCH } from './fire';
 import { HELICOPTER } from './helicopter';
 import type { Level } from './mission';
+import { windAt, type Wind } from './wind';
 
 /**
  * The renderer's particle pool: the ring's size, which is its own default, and how many bursts it takes a frame, which
  * is its own limit too (`emit` says no past it), so this is said here once for the page to build the renderer by.
  */
 export const PARTICLES = { capacity: 32768, emitters: 128 };
+
+/**
+ * How many millimetres a world unit is, as the renderer is built by it: it fixes its own real sizes by it, gravity
+ * among them. The page builds the renderer with this, and the wind is handed to its particles by it.
+ */
+export const MM_PER_UNIT = 100;
+
+/**
+ * How many of the renderer's units a metre a second of the island's wind is, for the particles it blows. The renderer's
+ * gravity is 9.81 m/s² in its own millimetres, so with a unit of `MM_PER_UNIT` of them a floating particle climbs at
+ * about ten times what a metre a second would suggest, and a wind of 6 of them would lean the smoke by a tenth of what
+ * the column of sprites, which is placed in metres, leans. The wind is handed to the particles in the renderer's own
+ * units, so that smoke and the column lean together.
+ */
+export const WIND_SCALE = 1000 / MM_PER_UNIT;
+
+/** The island's wind at game time `t` as the renderer's particles are handed it, in their own units, written into `out`. */
+export function particleWindAt(t: number, out: Wind): Wind {
+  windAt(t, out);
+  out.x *= WIND_SCALE;
+  out.y *= WIND_SCALE;
+  return out;
+}
 
 type Rgb = [number, number, number];
 
@@ -86,9 +110,6 @@ export const FLAMES = {
   },
 };
 
-/** Which way the wind takes the smoke and the flare's smoke, in radians over the ground, and how fast, in metres a second. */
-export const DRIFT = { yaw: 0.9 + Math.PI / 2, speed: 4, off: 2 };
-
 /**
  * The smoke over a burning fire, dark and dense at the flames and pale as it towers. A fire sends up `perPatch` a second
  * for each patch burning up to `cap` of them, shared among its burning patches, so a fire dying down thins and a very
@@ -101,7 +122,7 @@ export const SMOKE = {
   cap: 8,
   spread: 1.4,
   life: 5,
-  lifeSpread: 0.25,
+  lifeSpread: 0.6,
   size: 3,
   growth: 5,
   colour: [0.16, 0.15, 0.14] as Rgb,
@@ -115,11 +136,11 @@ export const SMOKE = {
 /** The rescue's flare: orange smoke at the person's feet that pales as it swells, as far seen as a fire's. */
 export const FLARE = {
   range: 500,
-  rate: 30,
+  rate: 60,
   spread: 0.5,
   life: 5,
   lifeSpread: 0.2,
-  size: 0.9,
+  size: 1.1,
   growth: 1.6,
   colour: [0.85, 0.36, 0.1] as Rgb,
   fade: [0.98, 0.82, 0.68] as Rgb,
@@ -228,10 +249,10 @@ export interface Place {
   z: number;
 }
 
-/** The people waiting to be winched up, one for each level that begins with a winch, in the levels' order. */
+/** The people waiting to be rescued, one for each level that begins with a winch or a boarding, in the levels' order. */
 export function rescuePeople(levels: readonly Pick<Level, 'id' | 'steps'>[]): Place[] {
   return levels.flatMap(({ id, steps: [first] }) =>
-    first.kind === 'winch' ? [{ id, x: first.x, y: first.y, z: first.z }] : [],
+    first.kind === 'winch' || first.kind === 'board' ? [{ id, x: first.x, y: first.y, z: first.z }] : [],
   );
 }
 
@@ -278,6 +299,7 @@ export interface Counts {
 const phase = (i: number) => (i * 0.6180339887498949) % 1;
 
 const NO_WASH: readonly Wash[] = [];
+const NO_WIND: Readonly<Wind> = { x: 0, y: 0 };
 
 export class Effects {
   /** The bursts of the last step, the first `step` returned of them; made once and written into, as are their arrays. */
@@ -383,7 +405,8 @@ export class Effects {
    * One frame of `dt` seconds drawn: the fires as `fires` say, in the order of the places, the people as `waiting` says
    * (one or nought each, in the order of the people), and the camera at `camera`. Writes this frame's bursts into
    * `records` and says how many. A step of no time emits nothing and keeps every accumulator, every pour and the last
-   * `counts` as they were.
+   * `counts` as they were. The smoke and the flare are born moving with `wind`, the renderer's wind in its own units,
+   * so that they begin at the speed its drag settles them to and do not have to be carried up to it; none is none.
    */
   step(
     dt: number,
@@ -391,6 +414,7 @@ export class Effects {
     waiting: ArrayLike<number>,
     camera: readonly [number, number, number],
     air?: Readonly<Air>,
+    wind: Readonly<Wind> = NO_WIND,
   ): number {
     this.used = 0;
     this.flaring = 0;
@@ -400,8 +424,8 @@ export class Effects {
     if (!(dt > 0)) return 0;
     const counts = this.counts;
     counts.flames = counts.smoke = counts.flares = counts.spray = counts.wash = 0;
-    this.burn(dt, fires, camera);
-    this.flares(dt, waiting, camera);
+    this.burn(dt, fires, camera, wind);
+    this.flares(dt, waiting, camera, wind);
     this.pours(dt);
     if (air) this.rotorSpray(dt, air);
     return this.used;
@@ -469,12 +493,18 @@ export class Effects {
   }
 
   /** The flames of every burning patch in range and the smoke of every burning fire, by the camera's distance from each. */
-  private burn(dt: number, views: readonly FireView[], camera: readonly [number, number, number]): void {
+  private burn(
+    dt: number,
+    views: readonly FireView[],
+    camera: readonly [number, number, number],
+    wind: Readonly<Wind>,
+  ): void {
     const counts = this.counts;
     const flameReach = FLAMES.range;
     const smokeReach = SMOKE.range;
-    const dx = Math.cos(DRIFT.yaw),
-      dy = Math.sin(DRIFT.yaw);
+    // born at the speed the wind settles it to, which is all of it for a floating particle, and not at rest in a gale
+    const follow = washFollow(SMOKE.gravity);
+    const [vx, vy] = [wind.x * follow, wind.y * follow];
     for (let f = 0; f < this.fires.length; f++) {
       const view = f < views.length ? views[f] : undefined;
       const { patches } = this.fires[f];
@@ -500,17 +530,7 @@ export class Effects {
         }
         const nSmoke = this.take(this.smoke, this.lit, i * 3 + 2, burning && d <= smokeReach, share, dt);
         if (nSmoke > 0) {
-          this.put(
-            SMOKE,
-            p.x + dx * DRIFT.off,
-            p.y + dy * DRIFT.off,
-            p.z + SMOKE.over,
-            dx * DRIFT.speed,
-            dy * DRIFT.speed,
-            SMOKE.rise,
-            nSmoke,
-            -1e9,
-          );
+          this.put(SMOKE, p.x, p.y, p.z + SMOKE.over, vx, vy, SMOKE.rise, nSmoke, -1e9);
           counts.smoke += nSmoke;
         }
       }
@@ -518,7 +538,13 @@ export class Effects {
   }
 
   /** A flare from each person waiting in range. */
-  private flares(dt: number, waiting: ArrayLike<number>, camera: readonly [number, number, number]): void {
+  private flares(
+    dt: number,
+    waiting: ArrayLike<number>,
+    camera: readonly [number, number, number],
+    wind: Readonly<Wind>,
+  ): void {
+    const follow = washFollow(FLARE.gravity);
     for (let k = 0; k < this.people.length; k++) {
       const p = this.people[k];
       const active = !!waiting[k] && Math.hypot(p.x - camera[0], p.y - camera[1], p.z - camera[2]) <= FLARE.range;
@@ -526,7 +552,7 @@ export class Effects {
       if (n === 0) continue;
       const [ox, oy, oz] = FLARE.out;
       const [vx, vy, vz] = FLARE.velocity;
-      this.put(FLARE, p.x + ox, p.y + oy, p.z + oz, vx, vy, vz, n, -1e9);
+      this.put(FLARE, p.x + ox, p.y + oy, p.z + oz, vx + wind.x * follow, vy + wind.y * follow, vz, n, -1e9);
       this.counts.flares += n;
     }
   }

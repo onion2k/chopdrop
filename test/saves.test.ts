@@ -27,6 +27,8 @@ const KEPT: Record<string, Record<string, number>> = {
   '02-best-times.json': { 'first-delivery': 38.4, 'over-the-water': 61.25 },
   '03-collected.json': { 'first-delivery': 38.4 },
   '04-found.json': { 'first-delivery': 38.4 },
+  // the beach rescue was retired for the boat rescue: its time is kept, as any level the game does not list is
+  '05-retired-level.json': { 'first-delivery': 38.4, 'beach-rescue': 37.5 },
 };
 
 /** What each save held of the structures collected, in order: none for a shape from before there were any. */
@@ -35,6 +37,7 @@ const COLLECTED: Record<string, string[]> = {
   '02-best-times.json': [],
   '03-collected.json': ['gorge-bridge', 'shoulder-towers', 'from-a-later-game'],
   '04-found.json': ['gorge-bridge'],
+  '05-retired-level.json': ['gorge-bridge'],
 };
 
 /** What each save held of the packages found, in order: none for a shape from before there were any. */
@@ -43,6 +46,7 @@ const FOUND: Record<string, string[]> = {
   '02-best-times.json': [],
   '03-collected.json': [],
   '04-found.json': ['east-wood', 'west-shore-wood', 'from-a-later-game'],
+  '05-retired-level.json': ['east-wood'],
 };
 
 describe('saves from every shape the game has written', () => {
@@ -90,6 +94,24 @@ describe('saves from every shape the game has written', () => {
       });
     });
   }
+
+  it('keeps the time of the retired beach rescue, which no level has now, through a game played and saved on', () => {
+    expect(LEVELS.some((l) => l.id === 'beach-rescue')).toBe(false);
+    const store = memoryStore(read('05-retired-level.json'));
+    const progress = new Progress(store);
+    expect(progress.best.get('beach-rescue')).toBe(37.5);
+    const game = new Game({ random: seeded(7), progress });
+    expect(game.levels.map((l) => l.id)).not.toContain('beach-rescue');
+    progress.record('over-the-water', 61.25);
+    progress.persist();
+    const again = new Progress(memoryStore(store.json));
+    expect(again.refused).toBeNull();
+    expect(Object.fromEntries(again.best)).toEqual({
+      'first-delivery': 38.4,
+      'beach-rescue': 37.5,
+      'over-the-water': 61.25,
+    });
+  });
 
   it('has the shape the game writes now: a new field means a new file here', () => {
     const progress = new Progress(memoryStore());

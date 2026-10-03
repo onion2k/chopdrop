@@ -111,3 +111,56 @@ export function islandCanopy(): Canopy {
 export function padsOf(level: Level): number[] {
   return level.steps.flatMap((step) => ('pad' in step ? [step.pad] : []));
 }
+
+/** A place on the island and the level of the water it is over, or for dry land the height of the ground. */
+export interface Spot {
+  x: number;
+  y: number;
+  level: number;
+}
+
+/**
+ * Water of each kind and a beach, found from the island's own maps and not from anything the game says of its water:
+ * a lake's middle, the open sea at the grid's corner, the widest part of a river that is no lake's or sea's, and a
+ * beach, a square of the sea's shallows whose ground is well above its water, where the helicopter must still land.
+ */
+let spotsFound: { lake: Spot; sea: Spot; river: Spot; beach: Spot } | undefined;
+export function waterSpots(): { lake: Spot; sea: Spot; river: Spot; beach: Spot } {
+  if (spotsFound) return spotsFound;
+  const island = theIsland();
+  const { terrain, sea, lakes, rivers, ground } = island;
+  const across = terrain.cols - 1;
+  const squareAt = (x: number, y: number) =>
+    Math.floor((y - terrain.originY) / terrain.cell) * across + Math.floor((x - terrain.originX) / terrain.cell);
+  const lakeSquares = new Set(lakes.flatMap((lake) => Array.from(lake.squares)));
+  let river: Spot = { x: 0, y: 0, level: 0 };
+  let widest = 0;
+  for (const { points } of rivers)
+    // a point well inside a run, not at its ends where it meets a lake or the sea
+    for (let k = 8; k < points.length - 8; k += 4) {
+      const sq = squareAt(points[k], points[k + 1]);
+      if (lakeSquares.has(sq) || sea[sq] !== 0) continue;
+      if (points[k + 3] > widest) {
+        widest = points[k + 3];
+        river = { x: points[k], y: points[k + 1], level: points[k + 2] };
+      }
+    }
+  let beach: Spot = { x: 0, y: 0, level: 0 };
+  let found = false;
+  for (let sq = 0; sq < sea.length && !found; sq++) {
+    if (sea[sq] === 0) continue;
+    const x = terrain.originX + ((sq % across) + 0.5) * terrain.cell,
+      y = terrain.originY + (Math.floor(sq / across) + 0.5) * terrain.cell;
+    if (ground.heightAt(x, y) > island.seaLevel + 0.4 && ground.heightAt(x, y) < island.seaLevel + 2) {
+      beach = { x, y, level: ground.heightAt(x, y) };
+      found = true;
+    }
+  }
+  const [lake] = lakes;
+  return (spotsFound = {
+    lake: { x: lake.x, y: lake.y, level: lake.level },
+    sea: { x: island.bounds.minX + 20, y: island.bounds.minY + 20, level: island.seaLevel },
+    river,
+    beach,
+  });
+}

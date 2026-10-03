@@ -5,6 +5,7 @@
  * this fills, and the browser tests look at what it draws.
  */
 import type { Emit } from 'artshape-render/game/particles';
+import { washFollow } from 'artshape-render/game/wash';
 import { describe, expect, it } from 'vitest';
 import { FIRES, LEVELS, theIsland } from '../src/arena';
 import { DOWNWASH } from '../src/downwash';
@@ -13,12 +14,15 @@ import {
   FLAMES,
   FLARE,
   MIST,
+  MM_PER_UNIT,
   PARTICLES,
   ROTOR_SPRAY,
   SMOKE,
   SPRAY,
   WASH,
+  WIND_SCALE,
   longest,
+  particleWindAt,
   rescuePeople,
   waitingFlares,
   type FireView,
@@ -26,6 +30,7 @@ import {
 import { PATCH } from '../src/fire';
 import { NO_WATER, openWaterOf } from '../src/water';
 import { HELICOPTER } from '../src/helicopter';
+import { windAt } from '../src/wind';
 
 type Camera = readonly [number, number, number];
 type Air = Parameters<Effects['step']>[4] & object;
@@ -195,9 +200,15 @@ describe('the smoke', () => {
     expect(record).toBeDefined();
     const [from, to] = [record!.colour, record!.fade!];
     expect(Math.max(...from)).toBeLessThan(Math.min(...to));
-    // upward, and away: it drifts as it climbs
+    // upward; with no wind it is born with nothing sideways, and the wind alone takes it off
     expect(record!.velocity[2]).toBeGreaterThan(0);
-    expect(Math.hypot(record!.velocity[0], record!.velocity[1])).toBeGreaterThan(0);
+    expect(Math.hypot(record!.velocity[0], record!.velocity[1])).toBe(0);
+  });
+
+  it('lives from 40% to 160% of five seconds, a wide spread, so that the top of the smoke is ragged', () => {
+    expect(SMOKE.life).toBe(5);
+    expect(SMOKE.lifeSpread).toBe(0.6);
+    expect(longest(SMOKE)).toBe(8);
   });
 });
 
@@ -572,5 +583,116 @@ describe('the wash', () => {
     expect(half).toBeGreaterThan(0);
     expect(b[0]).toBe(a[0]);
     expect(b).toBe(a);
+  });
+});
+
+describe('the wind on the smoke', () => {
+  const T = 33;
+  const wind = particleWindAt(T, { x: 0, y: 0 });
+
+  /** The first record of a stream that has `alpha`, the way `Effects` made it, copied. */
+  function born(kind: 'smoke' | 'flare', w = wind): (typeof Effects.prototype.records)[number] {
+    const effects = new Effects(FIRES, PEOPLE);
+    const person = PEOPLE[0];
+    const camera: Camera = kind === 'smoke' ? middle(WEST) : [person.x, person.y, person.z];
+    const fires = kind === 'smoke' ? [view(WEST, 4)] : [];
+    const waiting = kind === 'smoke' ? NOBODY : Uint8Array.of(1, 0, 0);
+    for (let f = 0; f < 120; f++) {
+      const n = effects.step(1 / 60, fires, waiting, camera, undefined, w);
+      for (let k = 0; k < n; k++) {
+        const r = effects.records[k];
+        if (r.alpha > 0.5 && r.lifeSpread === (kind === 'smoke' ? SMOKE : FLARE).lifeSpread)
+          return JSON.parse(JSON.stringify(r)) as (typeof effects.records)[number];
+      }
+    }
+    throw new Error(`no ${kind} was born`);
+  }
+
+  /**
+   * Where a particle of a stream is `seconds` after its birth, stepped by the renderer's own update, which is its drag
+   * on a floating particle, a pull of its velocity toward the air at the rate `washFollow` says, and its gravity: the
+   * numbers are `particles.ts`'s, and the gravity is the earth's in the units `MM_PER_UNIT` makes of a millimetre.
+   */
+  function ride(record: ReturnType<typeof born>, look: { gravity: number }, seconds: number, w = wind) {
+    const DRAG = 2.4;
+    const dt = 1 / 60;
+    const drag = DRAG + (DRAG * 0.15 - DRAG) * Math.min(1, Math.max(0, look.gravity));
+    const g = 9810 / MM_PER_UNIT;
+    const [x0, y0, z0] = record.position;
+    let [x, y, z] = [x0, y0, z0];
+    let [vx, vy, vz] = record.velocity;
+    const follow = washFollow(look.gravity);
+    for (let t = 0; t < seconds - 1e-9; t += dt) {
+      const k = Math.exp(-drag * dt);
+      vx *= k;
+      vy *= k;
+      vz *= k;
+      vx += w.x * follow * (1 - k);
+      vy += w.y * follow * (1 - k);
+      vz -= g * look.gravity * dt;
+      x += vx * dt;
+      y += vy * dt;
+      z += vz * dt;
+    }
+    return { x: x - x0, y: y - y0, z: z - z0 };
+  }
+
+  /** How far it has been carried along the wind, how far the wind would have carried it in the time, and how high it has risen. */
+  function carried(look: typeof SMOKE | typeof FLARE, kind: 'smoke' | 'flare', seconds: number) {
+    const d = ride(born(kind), look, seconds);
+    const speed = Math.hypot(wind.x, wind.y);
+    return { along: (d.x * wind.x + d.y * wind.y) / speed, wind: speed * seconds, rise: d.z };
+  }
+
+  it('hands the renderer the island’s wind in its own units: a metre a second is ten of them at 100 mm to the unit', () => {
+    expect(WIND_SCALE).toBe(1000 / MM_PER_UNIT);
+    expect(WIND_SCALE).toBe(10);
+    const metres = windAt(T, { x: 0, y: 0 });
+    expect(wind.x).toBeCloseTo(metres.x * WIND_SCALE, 9);
+    expect(wind.y).toBeCloseTo(metres.y * WIND_SCALE, 9);
+    const out = { x: 0, y: 0 };
+    expect(particleWindAt(T, out)).toBe(out);
+  });
+
+  it('is born with the wind: the smoke and the flare move at the speed the renderer’s drag will settle them to', () => {
+    for (const [kind, look] of [
+      ['smoke', SMOKE],
+      ['flare', FLARE],
+    ] as const) {
+      const [calm, blown] = [born(kind, { x: 0, y: 0 }), born(kind)];
+      const follow = washFollow(look.gravity);
+      expect(blown.velocity[0] - calm.velocity[0], kind).toBeCloseTo(wind.x * follow, 6);
+      expect(blown.velocity[1] - calm.velocity[1], kind).toBeCloseTo(wind.y * follow, 6);
+      expect(blown.velocity[2], kind).toBe(calm.velocity[2]);
+    }
+    // the same wind at the same time is the same smoke, and nothing is handed in by default
+    expect(born('smoke').velocity).toEqual(born('smoke').velocity);
+  });
+
+  it('carries the smoke downwind: at five seconds old at least half of what the wind would carry it', () => {
+    const c = carried(SMOKE, 'smoke', 5);
+    expect(c.along).toBeGreaterThan(0.5 * c.wind);
+  });
+
+  it('carries the flare’s smoke downwind: at five seconds old at least half of what the wind would carry it', () => {
+    const c = carried(FLARE, 'flare', 5);
+    expect(c.along).toBeGreaterThan(0.5 * c.wind);
+  });
+
+  it('leans the flare’s smoke as far as the column leans: at five seconds old it has gone at least half as far along as up', () => {
+    // the column's top is carried by `COLUMN.wind.top` over 40 s of a 6 m/s wind to well over its own height; a flare that
+    // climbed ten times as fast as the wind could carry it would stand straight, as it did before it was tuned
+    const c = carried(FLARE, 'flare', 5);
+    expect(c.along / c.rise).toBeGreaterThan(0.5);
+  });
+
+  it('leans the same whichever way the wind turns, and not at all in none', () => {
+    const none = ride(born('flare', { x: 0, y: 0 }), FLARE, 5, { x: 0, y: 0 });
+    expect(Math.hypot(none.x, none.y)).toBeLessThan(FLARE.velocity[0] * 2);
+    const [a, b] = [particleWindAt(0, { x: 0, y: 0 }), particleWindAt(180, { x: 0, y: 0 })];
+    const [la, lb] = [ride(born('flare', a), FLARE, 5, a), ride(born('flare', b), FLARE, 5, b)];
+    expect(Math.hypot(la.x, la.y)).toBeGreaterThan(Math.hypot(none.x, none.y));
+    // half a turn on, the other way: the two leans are opposed
+    expect(la.x * lb.x + la.y * lb.y).toBeLessThan(0);
   });
 });

@@ -2,12 +2,14 @@
  * The play-through: every level flown to the end in the page, the real thing in Chromium on the GPU, by the autopilot
  * through the test API, with every rule that must always hold checked as it goes. The game is flying free from home,
  * and each level in turn is shown the way through the panel (Esc, then that row's "Show the way"), flown to its start by
- * the autopilot told the level, begun there by its first step, and flown on with the HUD's words changing and the
+ * the autopilot told the level, begun there by its first step (a drop on a fire, a landing beside the walker, a winch
+ * over the sailor in the boat and the climber on the ledge), and flown on with the HUD's words changing and the
  * events told, to the toast at the end. It is what a player can finish, finished: the objective of each step, the
  * parcel loaded, the rings and the openings flown, and, after the last, the panel with every level's best time.
  * Nothing else plays a whole level in the page.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { fireWords } from '../src/hud';
 import { SAVE_KEY, start, watch } from './game';
 
 /** `frames` frames played, the rules checked after each `every` of them; what is broken, if anything. */
@@ -50,6 +52,7 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
   const state = () => page.evaluate(() => window.game!.state());
   const step = (frames: number) => page.evaluate((n) => window.game!.step(n), frames);
   const levels = await page.evaluate(() => window.game!.levels());
+  const rescues = await page.evaluate(() => window.game!.content().rescues);
   expect(levels.map((level) => level.best)).toEqual(levels.map(() => null));
   expect((await state()).mission.level, 'flying free').toBeNull();
   await page.evaluate(() => window.game!.step(1));
@@ -85,21 +88,27 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
     await expect(page.locator('#panel')).toBeHidden();
     await page.evaluate(() => window.game!.step(1));
     expect((await state()).guided, `level ${k + 1} guided`).toBe(level.id);
-    await expect(page.locator('#hud .goal')).toHaveText(
-      level.kind === 'fire' ? 'To the fire' : `To the start · ${level.name}`,
-    );
+    if (level.kind === 'fire') {
+      // a fire is shown the way to in the bucket's words, by the bucket as the last level left it
+      const guided = await state();
+      await expect(page.locator('#hud .goal')).toHaveText(
+        fireWords(guided.bucket, guided.fires.find((f) => f.id === level.id)!.burning, false),
+      );
+    } else await expect(page.locator('#hud .goal')).toHaveText(`To the start · ${level.name}`);
     await expect(page.locator('#hud .arrow')).toBeVisible();
     // the autopilot, told the level, flies from wherever it is to the start, which begins it
     await page.evaluate((id) => window.game!.autopilot(true, id), level.id);
     told = [];
-    // a rescue is begun by hovering over its person, which the page shows as the loader filling and the rope out, the
-    // smoke gone and the person off the ground, seen on the way
+    // a rescue is begun by landing beside its person (the loader filling, the person still on the ground) or by hovering
+    // over them (the loader filling, the rope out, the smoke gone and the person off the ground), seen on the way
+    const by = rescues.find((r) => r.id === level.id)?.by;
     let winched: { words: string; rope: boolean; smoke: number; people: number } | null = null;
     expect(
       await until(
         async () => {
           const now = await state();
-          if (level.kind === 'rescue' && now.winch.spot === level.id && now.winch.share > 0.2 && !winched) {
+          const loading = by === 'land' ? now.board : now.winch;
+          if (level.kind === 'rescue' && loading.spot === level.id && loading.share > 0.2 && !winched) {
             winched = {
               words: (await page.locator('#hud .loader .what').textContent()) ?? '',
               rope: now.rope,
@@ -128,12 +137,11 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
     if (level.kind === 'rescue') {
       // the person was seen going up the rope, with the smoke out, the loader naming who
       const who = (await state()).mission.steps[0] as { who: string };
-      expect(winched, `${level.id}: seen winched`).toEqual({
-        words: `Winching up ${who.who}`,
-        rope: true,
-        smoke: 2,
-        people: 2,
-      });
+      expect(winched, `${level.id}: seen ${by === 'land' ? 'boarding' : 'winched'}`).toEqual(
+        by === 'land'
+          ? { words: `The ${who.who.replace(/^the /, '')} climbs aboard`, rope: false, smoke: 3, people: 3 }
+          : { words: `Winching up ${who.who}`, rope: true, smoke: 2, people: 2 },
+      );
       // the person aboard, and the home pad wanted, in the words of a rescue and not of a parcel
       await expect(page.locator('#hud .goal')).toHaveText(`Fly ${who.who} to the home pad`);
       expect((await state()).mission.next, `${level.id}: past its winch`).toBe(1);
@@ -142,15 +150,19 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
         true,
       );
       await hear();
-      expect(told.slice(0, 3)).toEqual([`started ${level.id}`, `winched ${level.id}`, 'landed 0']);
+      expect(told.slice(0, 3)).toEqual([
+        `started ${level.id}`,
+        `${by === 'land' ? 'boarded' : 'winched'} ${level.id}`,
+        'landed 0',
+      ]);
       expect(told[3]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
       expect(told).toHaveLength(4);
     } else if (level.kind === 'fire') {
-      // the drop emptied the tank, so the bar says to scoop, the bucket hangs and the badge is an outline
+      // the drop emptied the tank, so the bar says to fill the bucket, which is out and hangs, and the badge is a ring
       const begun = await state();
       expect(begun.tank.full, `${level.id}: the drop emptied the tank`).toBe(false);
-      await expect(page.locator('#hud .goal')).toHaveText('Scoop water');
-      expect([begun.badge, begun.bucket.hung]).toEqual(['empty', true]);
+      await expect(page.locator('#hud .goal')).toHaveText('Hover low over the water to fill the bucket');
+      expect([begun.badge, begun.bucket.out, begun.bucket.hung]).toEqual(['out', true, true]);
       expect(begun.fires.find((f) => f.id === level.id)!.burning).toBeGreaterThan(0);
       // put out by the water scooped and dropped, round and round: at least one more drop, and the bar says how many burn
       let sawBurning = false;
@@ -158,7 +170,7 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
         await until(async () => {
           const now = await state();
           if (now.tank.full && !sawBurning) {
-            await expect(page.locator('#hud .goal')).toHaveText(/^Put out the fire · \d+ burning$/);
+            await expect(page.locator('#hud .goal')).toHaveText(/^Fly low over the flames to drop · \d+ burning$/);
             sawBurning = true;
           }
           return now.mission.level === null;

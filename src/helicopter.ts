@@ -8,12 +8,15 @@
  *
  * Its height is absolute, above the sea, and it is held between the ground
  * under it and the ceiling. The ground is handed in, a bounds and a height
- * at every point, so nothing here knows what the island is. The land it
+ * at every point, so nothing here knows what the island is. Over water, a lake, the sea or a river, which the
+ * ground is also told of, it is never landed: its floor is the water's surface and `HOVER_OVER_WATER` more, so
+ * coming down onto water it holds a low hover, and its rotor never idles there. The land it
  * flies over can rise: a helicopter low over a hill is set down on the
  * slope that meets it, has no thrust there, and has to lift to get over.
  * Without it the game has nothing a player can do, and nothing the camera,
  * the scene or the fuzzer could follow.
  */
+import { NO_WATER } from './water';
 
 /** What the player is asking for, each from −1 to 1: forward and back, turning left (+) and right, up (+) and down. */
 export interface Controls {
@@ -41,6 +44,11 @@ export interface Bounds {
 export interface Ground {
   bounds: Bounds;
   heightAt(x: number, y: number): number;
+  /**
+   * The level of the water the helicopter may not land on at a point, or `NO_WATER` for dry ground and a beach; which
+   * must not allocate either. Ground with no water leaves it out.
+   */
+  surfaceAt?(x: number, y: number): number;
 }
 
 /**
@@ -134,6 +142,12 @@ export const HELICOPTER = {
 };
 
 /**
+ * How far over the water's surface its skids are held where it is let down onto water, a lake, the sea or a river:
+ * low enough that the 5 m line of a bucket dips into it, and never landed. Said once, for the flight, the rules and the pilot.
+ */
+export const HOVER_OVER_WATER = 1.5;
+
+/**
  * The lift that holds its height: lift runs on one straight line from the way down at −1, through holding still at 0,
  * to the climb at 1, so holding still is the middle of the line. A touch lever clicks into it; the keys let go to it.
  */
@@ -144,7 +158,10 @@ export class Helicopter {
   x = 0;
   y = 0;
   z = 0;
-  /** The height of the ground it stands on here: the most of the ground under its middle and under its skids. It never goes lower. */
+  /**
+   * The height of the ground it stands on here: the most of the ground under its middle and under its skids, and over
+   * water the surface and the hover over it. It never goes lower.
+   */
   floor = 0;
   /** Which way it faces: 0 is +x, and it grows turning left. */
   yaw = 0;
@@ -163,6 +180,8 @@ export class Helicopter {
   /** Where its middle may go: the ground's edge, drawn in by its reach. */
   readonly bounds: Bounds;
   private readonly ground: Ground;
+  /** Whether its middle is over water, as of where it last was put or flown to: then its floor is a hover, and it is not landed. */
+  private wet = false;
 
   /** On `ground`, landed where `start` says, and kept out of `solid` if it is handed one. */
   constructor(
@@ -177,9 +196,14 @@ export class Helicopter {
     this.place(start.x, start.y, 0, start.yaw);
   }
 
-  /** Whether it is on the ground. */
+  /** Whether it is on the ground: at its floor, and not the hover over water, which is flying. */
   get landed(): boolean {
-    return this.z === this.floor;
+    return this.z === this.floor && !this.wet;
+  }
+
+  /** Whether it is over water, a lake, the sea or a river, held at the hover and never landed. */
+  get overWater(): boolean {
+    return this.wet;
   }
 
   /** How high its skids are above the ground it stands on. */
@@ -206,13 +230,21 @@ export class Helicopter {
   floorAt(x: number, y: number): number {
     const g = this.ground;
     const f = HELICOPTER.footprint;
-    return Math.max(
+    const ground = Math.max(
       g.heightAt(x, y),
       g.heightAt(x - f, y - f),
       g.heightAt(x + f, y - f),
       g.heightAt(x - f, y + f),
       g.heightAt(x + f, y + f),
     );
+    // over water it is held a hover over the surface, which is never under the ground a beach beside it stands up from
+    const water = this.waterAt(x, y);
+    return water === NO_WATER ? ground : Math.max(ground, water + HOVER_OVER_WATER);
+  }
+
+  /** The level of the water under (x, y), or `NO_WATER`. Allocates nothing. */
+  private waterAt(x: number, y: number): number {
+    return this.ground.surfaceAt?.(x, y) ?? NO_WATER;
   }
 
   /** One step of `dt` seconds, flown so. Allocates nothing: it runs every frame. */
@@ -222,7 +254,7 @@ export class Helicopter {
     const turn = clamp(controls.turn, -1, 1);
     const lift = clamp(controls.lift, -1, 1);
 
-    // the rotor idles only when it is resting on the ground, and winds up the moment the player asks to leave it
+    // the rotor idles only when it is resting on the ground, never over water, and winds up the moment the player asks to leave it
     const rotorTarget = this.landed && lift <= 0 ? H.rotorIdle : H.rotorFull;
     this.rotorSpeed += (rotorTarget - this.rotorSpeed) * (1 - Math.exp(-H.rotorEase * dt));
     this.rotor = wrapTurn(this.rotor + this.rotorSpeed * dt);
@@ -243,7 +275,7 @@ export class Helicopter {
     }
 
     const tiltK = 1 - Math.exp(-H.tiltEase * dt);
-    const grounded = this.z === this.floor;
+    const grounded = this.landed;
     if (grounded) {
       // the skids are down: no thrust and no turning, only a slide that dies away, and a lean to the slope
       this.yawRate = 0;
@@ -306,6 +338,7 @@ export class Helicopter {
 
     // the ground where it has got to: skids down they follow it, and in the air land that has risen to meet it sets it on the slope
     this.floor = this.floorAt(this.x, this.y);
+    this.wet = this.waterAt(this.x, this.y) !== NO_WATER;
     if (grounded) this.z = this.floor;
     else if (this.z < this.floor) {
       this.z = this.floor;
@@ -329,6 +362,7 @@ export class Helicopter {
     this.x = clamp(x, b.minX, b.maxX);
     this.y = clamp(y, b.minY, b.maxY);
     this.floor = this.floorAt(this.x, this.y);
+    this.wet = this.waterAt(this.x, this.y) !== NO_WATER;
     this.z = clamp(z, this.floor, HELICOPTER.ceiling);
     this.vx = this.vy = this.vz = 0;
     // put inside something solid, it is put just outside it instead, and stands on the ground there
@@ -336,6 +370,7 @@ export class Helicopter {
       this.x = clamp(this.x, b.minX, b.maxX);
       this.y = clamp(this.y, b.minY, b.maxY);
       this.floor = this.floorAt(this.x, this.y);
+      this.wet = this.waterAt(this.x, this.y) !== NO_WATER;
       this.z = clamp(this.z, this.floor, HELICOPTER.ceiling);
     }
     this.yaw = wrapYaw(yaw);

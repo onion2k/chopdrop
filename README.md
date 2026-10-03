@@ -36,16 +36,17 @@ through a first ring with a chequered flag on it: rings to fly through in
 order, the one wanted lit gold, solid enough to knock the helicopter back,
 six over the meadow and nine up a river valley. The last is a course begun
 between the flagged towers: up the gorge and under the bridge, through three
-rings over the hills, and down onto the shoulder pad. Three are rescues: a
-walker in a wood, a swimmer cut off on a beach and a climber on a ledge each
-wait under orange smoke, and holding a low hover over one for three seconds
-winches them up, to be flown to the home pad. Three are fires, two in woods
-by the lakes and one in the northern wood far from water, each under a
-column of dark smoke the rotor's air pushes about: a bucket hangs on a line
-while one is wanted, skimming a lake or the sea low and fast fills it, and
-passing low over the flames lets it go, the first drop that hits beginning
-the level. A fire spreads while it is fought, and is out when no patch
-burns. A level's end is told
+rings over the hills, and down onto the shoulder pad. Three are rescues,
+each someone waiting under orange smoke to be flown to the home pad: the
+walker in a wood climbs aboard when the helicopter lands beside them, and
+the sailor in an inflatable off the east beach and the climber on a ledge,
+where nothing can land, are winched up by a low hover held over them for
+three seconds. Three are fires, two in woods by the lakes and one in the
+northern wood far from water, each under a column of dark smoke that leans
+in the wind: B, or the badge by the radar, puts the bucket out, letting it
+down into a lake or the sea fills it, and passing low over the flames lets
+it go, the first drop that hits beginning the level. A fire spreads while it
+is fought, and is out when no patch burns. A level's end is told
 in a toast with its time, and flight carries on. Esc, or the corner button,
 brings up the panel: every level, its best time and where it starts, a way
 shown to any of them, the one going given up, and the structures ticked as
@@ -62,8 +63,9 @@ and **Shift** comes down fast; the arrows do what W A S D do. Let go of
 both and it hangs where it is. Coming down, it eases over the last few
 metres and settles onto the ground. It starts landed on the home
 pad, climbs to a ceiling of 220, above every peak, and sets down on
-whatever is under it: a pad, a field, a lake, or a hillside that rises to
-meet it, which it has to lift over.
+whatever land is under it: a pad, a field, or a hillside that rises to meet
+it, which it has to lift over. Over water it hangs a metre and a half over
+the surface and will not land.
 
 On a phone it is flown by touch: a stick under the left thumb, which comes
 up wherever the thumb lands, flies forward and back and turns; a lever under
@@ -105,7 +107,7 @@ is fixed, and no baseline is moved to make it green.
     src/progress.ts    the save: the best time on each level and the structures collected, kept in the browser
     src/collection.ts  the structures collected: an opening flown through, either way
     src/finds.ts       the hidden packages found, and the radar that hears the nearest
-    src/water.ts       the tank: filled by skimming open water, emptied by a drop on a fire
+    src/water.ts       where the water is, which nothing lands on, and the bucket's fill and drop
     src/fire.ts        a fire's patches burning, out or not yet caught, spreading while its level is going
     src/autopilot.ts   a careful pilot that flies the level, which the gates play the game by
     src/helicopter.ts  the player's machine: how it flies over the ground, and its size
@@ -128,6 +130,7 @@ is fixed, and no baseline is moved to make it green.
     src/effects.ts     the particles the page emits: flames, smoke, the rescue's flare, the water's spray
     src/bucket.ts      where the bucket hangs on its line, and when
     src/column.ts      the tall column of smoke over a burning fire, seen across the island
+    src/wind.ts        the island's wind, gusting and turning once round in six minutes
     src/meshes.ts      the shapes: the helicopter, five trees, a landing pad
     src/random.ts      chance, from one seed
     scripts/           the fuzzer, and the determinism, leak and pace gates

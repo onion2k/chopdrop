@@ -334,31 +334,45 @@ export const PACKAGES: readonly PackagePlace[] = [
   { id: 'north-east-shore-wood', x: 485.9, y: 423.9, z: 8.7 },
 ];
 
-/** Where a person waits to be winched up: `z` is the ground under them. Its `id` is the rescue level's, in players' saves and never changed. */
+/**
+ * Where a person waits to be rescued: `z` is the ground under them, or the sea's surface for a boat. Its `id` is the
+ * rescue level's, in players' saves and never changed.
+ */
 export interface RescueSpot {
   id: string;
   /** What the panel calls the rescue level: "Wood rescue". */
   name: string;
   /** What the HUD calls them. */
   who: string;
-  /** The words for the place, after "winch up the walker": "in the western wood". */
+  /** The words for the place, after "winch up the sailor": "off the east beach". */
   where: string;
+  /**
+   * How they are rescued: `land` is landed beside them, within the boarding's reach, wherever there is ground to land on,
+   * and `winch` is a hover in the winch's window, for where there is none: a boat on the sea, a ledge. The page reads it
+   * for its words.
+   */
+  by: 'land' | 'winch';
   x: number;
   y: number;
   z: number;
+  /** Which way the boat points, for the one spot that has a boat; the page draws it so. */
+  yaw?: number;
 }
 
 /**
  * The three places a person waits to be rescued, one of each kind, found by a script on a grid of 2 and kept here as
- * the numbers it found: a walker in a clearing of a wood (eight or more trees' feet within 30), someone cut off on a
- * beach (under 5 above the sea) and a climber on a mountainside ledge (60 or more up). Each is on dry land by the
- * island's own maps, on a patch the ground keeps within 2 over 10 square, with no tree's foot within 8 so that the
- * rotor has room overhead while they are winched, 120 or more from every pad, 60 or more from every structure's
- * blocks and 150 or more from each other, inside the bounds the helicopter is kept to. The walker and the swimmer are
- * 100 or more from every package; the climber is not: no ledge 60 up keeps 100, the highest that does is 56, so the
- * ledge is the best level patch 60 up that is 75 or more from a package, 80 from the nearest. Of those that keep
- * every rule each is the flattest and the clearest of trees. The ground is the island's as it stands, so an island
- * made again otherwise moves every one, and the tests that pin them say so.
+ * the numbers it found: a walker in a clearing of a wood (eight or more trees' feet within 30), a sailor in a boat on
+ * the sea off the east shore and a climber on a mountainside ledge (60 or more up). Each is 120 or more from every pad, 60
+ * or more from every structure's blocks and 150 or more from each other, inside the bounds the helicopter is kept to.
+ * The walker and the climber are on dry land by the island's own maps, on a patch the ground keeps within 2 over 10
+ * square, with no tree's foot within 8 so that the rotor has room overhead while they are winched or landed beside. The walker and the
+ * sailor are 100 or more from every package; the climber is not: no ledge 60 up keeps 100, the highest that does is 56, so
+ * the ledge is the best level patch 60 up that is 75 or more from a package, 80 from the nearest. Of those that keep
+ * every rule each is the flattest and the clearest of trees. The boat is on a square of the sea, 40 to 120 from the
+ * nearest dry square (this one is 75), with the sea round it for 3, 150 or more from every fire, and 40 or more from
+ * the way of every other level; of those that keep every rule it is the nearest the place of the beach rescue it
+ * replaced, which stood on a spit in the same water. The ground is the island's as it stands, so an island made again
+ * otherwise moves every one, and the tests that pin them say so.
  */
 export const RESCUE_SPOTS: readonly RescueSpot[] = [
   {
@@ -366,24 +380,28 @@ export const RESCUE_SPOTS: readonly RescueSpot[] = [
     name: 'Wood rescue',
     who: 'the walker',
     where: 'in the western wood',
+    by: 'land',
     x: -426.1,
     y: -100.1,
     z: 23.61,
   },
   {
-    id: 'beach-rescue',
-    name: 'Beach rescue',
-    who: 'the stranded swimmer',
-    where: 'on the east beach',
-    x: 495.9,
-    y: -244.1,
-    z: 0.17,
+    id: 'boat-rescue',
+    name: 'Boat rescue',
+    who: 'the sailor',
+    where: 'off the east beach',
+    by: 'winch',
+    x: 410,
+    y: -239.1,
+    z: 0,
+    yaw: 3,
   },
   {
     id: 'ledge-rescue',
     name: 'Ledge rescue',
     who: 'the climber',
     where: 'on the southern ledge',
+    by: 'winch',
     x: 177.9,
     y: -370.1,
     z: 63.1,
@@ -771,14 +789,18 @@ function delivery(id: string, name: string, pickup: number, drop: number): Level
   };
 }
 
-/** A level that is a person winched up where they wait and flown to the home pad, which every rescue ends on. */
-function rescue({ id, name, who, where, x, y, z }: RescueSpot): Level {
+/**
+ * A level that is a person rescued where they wait, boarded by landing beside them or winched up, as their spot says, and
+ * flown to the home pad, which every rescue ends on.
+ */
+function rescue({ id, name, who, where, by, x, y, z, yaw }: RescueSpot): Level {
+  const person = { x, y, z, who, where };
   return {
     id,
     name,
     kind: 'rescue',
     steps: [
-      { kind: 'winch', x, y, z, who, where },
+      by === 'land' ? { kind: 'board', ...person } : { kind: 'winch', ...person, ...(yaw !== undefined && { yaw }) },
       { kind: 'land', pad: 0 },
     ],
   };
@@ -869,8 +891,9 @@ function course(): Level {
  * under the bridge and through three rings, as `course` says, its clock stopping as the skids touch. Nothing is
  * locked, so it is open from the first.
  *
- * The three rescues follow, one for each place a person waits, in the order wood, beach, ledge: each begun by hovering
- * in the window over the person for as long as the winch takes, and ended by landing on the home pad.
+ * The three rescues follow, one for each place a person waits, in the order wood, boat, ledge: the walker begun by
+ * landing beside them for as long as the boarding takes, the sailor and the climber by hovering in the window over them
+ * for as long as the winch takes, and each ended by landing on the home pad.
  *
  * The three fires come last, in the order west lake, south lake, north wood: each begun by the first drop of water that
  * puts out one of its patches, and ended when none burns. The water is scooped from the lakes and the sea.

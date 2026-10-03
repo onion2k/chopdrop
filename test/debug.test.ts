@@ -21,6 +21,7 @@ function api(over: Partial<DebugHost> = {}) {
     gold: () => 0,
     crates: () => 0,
     people: () => 3,
+    boats: () => 1,
     smoke: () => 3,
     rope: () => false,
     radar: () => ({ badge: 'quiet', step: 0 }),
@@ -113,20 +114,66 @@ describe('the test API and the rescues', () => {
     expect(listed[0]).not.toBe(RESCUE_SPOTS[0]);
     listed[0].x += 1;
     expect(RESCUE_SPOTS[0].x).not.toBe(listed[0].x);
+    // how each is done, and the boat's yaw, which only the boat has
+    expect(listed.map((r) => [r.id, r.by])).toEqual([
+      ['wood-rescue', 'land'],
+      ['boat-rescue', 'winch'],
+      ['ledge-rescue', 'winch'],
+    ]);
+    expect(listed.map((r) => r.yaw !== undefined)).toEqual([false, true, false]);
     a.begin('wood-rescue');
-    expect(a.state().mission.steps[0]).toMatchObject({ kind: 'winch', who: 'the walker' });
+    expect(a.state().mission.steps[0]).toMatchObject({ kind: 'board', who: 'the walker' });
+    a.begin('boat-rescue');
+    expect(a.state().mission.steps[0]).toMatchObject({ kind: 'winch', who: 'the sailor' });
+  });
+
+  it('says who is climbing aboard and how far, as it says who is winched', () => {
+    const { game, api: a } = api();
+    expect(a.state().board).toEqual({ spot: null, share: 0 });
+    const [spot] = RESCUE_SPOTS;
+    a.teleport(spot.x + 6, spot.y, 0);
+    for (let f = 0; f < 90; f++) game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(a.state().board.spot).toBe('wood-rescue');
+    expect(a.state().board.share).toBeCloseTo(game.starts.loading / 3, 6);
+    expect(a.state().winch).toEqual({ spot: null, share: 0 });
   });
 
   it('says who is being winched and how far up, and how many people are standing waiting', () => {
     const { game, api: a } = api();
     expect(a.state().winch).toEqual({ spot: null, share: 0 });
     expect([a.state().people, a.state().smoke, a.state().rope]).toEqual([3, 3, false]);
-    const [spot] = RESCUE_SPOTS;
+    expect(a.state().boats).toBe(1);
+    const spot = RESCUE_SPOTS.find((r) => r.id === 'ledge-rescue')!;
     a.teleport(spot.x, spot.y, 10);
     for (let f = 0; f < 90; f++) game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
-    expect(a.state().winch.spot).toBe('wood-rescue');
+    expect(a.state().winch.spot).toBe('ledge-rescue');
     expect(a.state().winch.share).toBeCloseTo(game.starts.loading / 3, 6);
     expect(a.state().winch.share).toBeGreaterThan(0.3);
+  });
+});
+
+describe('the test API and the bucket and the water', () => {
+  it('puts the bucket out, takes it in or toggles it, and says whether it is out', () => {
+    const { game, api: a } = api();
+    expect(a.state().bucket.out).toBe(false);
+    expect(a.bucket(true)).toBe(true);
+    expect(game.bucket.out).toBe(true);
+    expect(a.state().bucket.out).toBe(true);
+    expect(a.bucket(true)).toBe(true);
+    expect(a.bucket(false)).toBe(false);
+    expect(a.bucket()).toBe(true);
+    expect(a.bucket()).toBe(false);
+    expect(a.state().bucket.out).toBe(false);
+  });
+
+  it('says whether the helicopter is over water: never landed there, and landed on the home pad it is not', () => {
+    const { api: a } = api();
+    expect(a.state().helicopter.overWater).toBe(false);
+    const [lake] = a.content().fires.map((f) => f.run.from);
+    a.teleport(lake.x, lake.y, 0);
+    const now = a.state().helicopter;
+    expect([now.overWater, now.landed]).toEqual([true, false]);
+    expect(a.floorAt(lake.x, lake.y)).toBeCloseTo(a.groundAt(lake.x, lake.y) + 1.5, 6);
   });
 });
 
@@ -229,7 +276,7 @@ describe('the test API and the drawing of particles', () => {
       badge: () => 'full',
       smoke: () => 2,
     });
-    expect(a.state().bucket).toEqual({ hung: true, full: true, line: 3 });
+    expect(a.state().bucket).toEqual({ out: false, hung: true, full: true, line: 3 });
     expect(a.state().badge).toBe('full');
     expect(a.state().smoke).toBe(2);
     expect(a.state().ground).toEqual({ burning: 10, burnt: 0 });

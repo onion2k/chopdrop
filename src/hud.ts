@@ -7,9 +7,13 @@
  * for the one before it. A badge in the other corner is the package radar: a grey dot when no package is within its range
  * and a gold one that sends out a ring at each ping when one is, which says nothing of where. It reads where the game has
  * got to and is told the end, each structure collected, each package found and each ping, by the game's events; it
- * writes to the page only when a word or a figure on it changes. Beside it is the tank's badge, a water drop, shown while
- * the bucket is in use: an outline empty and blue full; and a loader that reads "Scooping" and fills in blue as the tank does. Without it a player would not know where to go, nor that they had
- * got there.
+ * writes to the page only when a word or a figure on it changes. Beside it is the bucket's button, always shown, which is
+ * the tank's badge as well: grey with the key's tag while the bucket is in, an orange ring while it is out, and with water
+ * drawn in it in blue when it is full. A click or a tap on it puts the bucket out or takes it in, as the key B does. The bucket's words
+ * (press B for it, hover low over the water to fill it, fly low over the flames to drop) are the bar's for a fire, going or
+ * guided to, and for the nearest fire flying free with the bucket out; the loader reads "Filling the bucket" and fills in blue as the
+ * tank does, and "The walker climbs aboard" for a person boarding. Without it a player would not know where to go, nor
+ * that they had got there.
  */
 import type { Point } from './chase';
 import { RADAR } from './finds';
@@ -59,6 +63,7 @@ export function startWords(level: { steps: readonly Step[]; name?: string }, pad
   const first = firstOf(level);
   if (first.kind === 'gate') return `Fly ${first.label}`;
   if (first.kind === 'winch') return `Winch up ${first.who} ${first.where}`;
+  if (first.kind === 'board') return `Land beside ${first.who} ${first.where}`;
   if (first.kind === 'ring') {
     let site = '';
     let nearest = Infinity;
@@ -79,24 +84,44 @@ export function startWords(level: { steps: readonly Step[]; name?: string }, pad
   return `Land on the ${pads[first.pad].site} pad`;
 }
 
-/** What a fire's words need beyond the step: how many patches burn, and whether the tank is full. */
+/** What a fire's words need beyond the step: how many patches burn, the bucket's state, and whether it is a finger that flies. */
 export interface FireWords {
   burning: number;
+  out: boolean;
   full: boolean;
+  touch: boolean;
 }
-const NO_FIRE: FireWords = { burning: 0, full: false };
+const NO_FIRE: FireWords = { burning: 0, out: false, full: false, touch: false };
 
-/** Whether the arrow points at the nearest water and not at the goal: a fire's step with the tank empty. */
-export function wantsWater(step: Step | undefined, full: boolean): boolean {
-  return fireOf(step) !== null && !full;
+/** Whether the bucket is out and empty, which is when the arrow points at the nearest water and not at the fire. */
+export function needsWater(bucket: Readonly<{ out: boolean; full: boolean }>): boolean {
+  return bucket.out && !bucket.full;
+}
+
+/** Whether the arrow points at the nearest water and not at the goal: a fire's step with the bucket out and empty. */
+export function wantsWater(step: Step | undefined, bucket: Readonly<{ out: boolean; full: boolean }>): boolean {
+  return fireOf(step) !== null && needsWater(bucket);
+}
+
+/**
+ * What the bar says of a fire by the bucket, for a fire going, one guided to, and the nearest flying free with the bucket
+ * out: in, press B for it ("Tap the bucket" where a finger flies, which has no key); out and empty, hover low over the
+ * water to fill it; and out and full, fly low over the flames to drop, and how many burn. One function, so every place the
+ * bar says it says the same.
+ */
+export function fireWords(bucket: Readonly<{ out: boolean; full: boolean }>, burning: number, touch: boolean): string {
+  if (!bucket.out) return touch ? 'Tap the bucket' : 'Press B for the bucket';
+  return bucket.full
+    ? `Fly low over the flames to drop · ${burning} burning`
+    : 'Hover low over the water to fill the bucket';
 }
 
 /**
  * What the bar says of the step being done, by the level it is in: a ring "Fly through ring 2 of 6" (`ring` is which and
  * of how many), an opening "Fly under the bridge", a person "Hover over the walker", and a pad by its site, which a
  * rescue's landing says as the person aboard being flown to it ("Fly the walker to the home pad") and a delivery's
- * pickup and drop say as a parcel's, and a fire's "Put out the fire · 5 burning" with the tank full and "Scoop water" with
- * it empty. One function, so the bar and the tests read the same words.
+ * pickup and drop say as a parcel's, and a fire's by the bucket (`fireWords`). A person to be landed beside is "Land beside
+ * the walker". One function, so the bar and the tests read the same words.
  */
 export function stepWords(
   level: { kind: LevelKind; steps: readonly Step[] },
@@ -108,25 +133,42 @@ export function stepWords(
   if (step.kind === 'ring') return `Fly through ring ${ring.n} of ${ring.of}`;
   if (step.kind === 'gate') return `Fly ${step.label}`;
   if (step.kind === 'winch') return `Hover over ${step.who}`;
-  if (step.kind === 'douse' || step.kind === 'fire')
-    return fire.full ? `Put out the fire · ${fire.burning} burning` : 'Scoop water';
+  if (step.kind === 'board') return `Land beside ${step.who}`;
+  if (step.kind === 'douse' || step.kind === 'fire') return fireWords(fire, fire.burning, fire.touch);
   const site = pads[step.pad].site;
   if (step.kind === 'land') {
-    const person = level.kind === 'rescue' ? level.steps.find((s) => s.kind === 'winch') : undefined;
-    return person?.kind === 'winch' ? `Fly ${person.who} to the ${site} pad` : `Land on the ${site} pad`;
+    const person =
+      level.kind === 'rescue' ? level.steps.find((s) => s.kind === 'winch' || s.kind === 'board') : undefined;
+    return person && 'who' in person ? `Fly ${person.who} to the ${site} pad` : `Land on the ${site} pad`;
   }
   return step.kind === 'pickup' ? `Pick up the parcel at the ${site} pad` : `Deliver it to the ${site} pad`;
 }
 
-/** What the loader is for: a person winched, a tank scooped (its share above nothing), or a parcel; the winch first. */
-export function loaderKind(who: string | null, scoop: number): 'winch' | 'scoop' | 'parcel' {
-  return who !== null ? 'winch' : scoop > 0 ? 'scoop' : 'parcel';
+/**
+ * What the loader is for: a person winched, one climbing aboard, the bucket filling (its share above nothing), or a
+ * parcel; the winch first, then the boarding.
+ */
+export function loaderKind(
+  who: string | null,
+  fill: number,
+  boarding: string | null = null,
+): 'winch' | 'board' | 'fill' | 'parcel' {
+  return who !== null ? 'winch' : boarding !== null ? 'board' : fill > 0 ? 'fill' : 'parcel';
 }
 
-/** What the loader says: the person being winched, if one is, then "Scooping" for the tank filling, and otherwise a parcel loaded, or unloaded once a step other than a pickup is wanted. */
-export function loaderWords(who: string | null, step: Step | undefined, scooping = false): string {
+/**
+ * What the loader says: the person being winched, if one is, then the one climbing aboard ("The walker climbs aboard"),
+ * then "Filling the bucket", and otherwise a parcel loaded, or unloaded once a step other than a pickup is wanted.
+ */
+export function loaderWords(
+  who: string | null,
+  step: Step | undefined,
+  filling = false,
+  boarding: string | null = null,
+): string {
   if (who !== null) return `Winching up ${who}`;
-  if (scooping) return 'Scooping';
+  if (boarding !== null) return `${boarding[0].toUpperCase()}${boarding.slice(1)} climbs aboard`;
+  if (filling) return 'Filling the bucket';
   return step && step.kind !== 'pickup' ? 'Unloading the parcel' : 'Loading the parcel';
 }
 
@@ -151,23 +193,29 @@ export function startPoint(
   return { x: at.x, y: at.y };
 }
 
-/** What the bar says of the level the way is shown to: "To the fire" for a fire, and for the rest the start's level by name. */
+/** What the bar says of the level the way is shown to: the start's level by name; a fire's is said by the bucket (`fireWords`). */
 export function guideWords(level: { name: string; steps: readonly Step[] }): string {
-  return fireOf(firstOf(level)) !== null ? 'To the fire' : `To the start · ${level.name}`;
+  return `To the start · ${level.name}`;
 }
 
-/** What the tank's badge shows: nothing while the bucket is stowed, and with it in use an outline empty and blue full. */
-export function tankBadge(wanted: boolean, full: boolean): 'none' | 'empty' | 'full' {
-  return !wanted ? 'none' : full ? 'full' : 'empty';
+/** What the bucket's button shows: grey in, an orange ring out, and the same with water in it when it is out and full. */
+export function bucketBadge(out: boolean, full: boolean): 'in' | 'out' | 'full' {
+  return !out ? 'in' : full ? 'full' : 'out';
 }
 
 /**
  * What the bar shows: the hint alone, flying free; the way to a start; or the level going. A level going outranks a
  * guide. Under a toast with nothing going and nothing guided it shows nothing, so the hint is not stacked over the
- * words that tell a level done; a level's words and a guide are never hidden.
+ * words that tell a level done; a level's words and a guide are never hidden. Flying free with the bucket out and a fire
+ * to fight (`fighting`) the bar is the guide's, the way to the water or the flames, in place of the hint.
  */
-export function barMode(going: boolean, guided: boolean, toast = false): 'free' | 'guided' | 'going' | 'quiet' {
-  return going ? 'going' : guided ? 'guided' : toast ? 'quiet' : 'free';
+export function barMode(
+  going: boolean,
+  guided: boolean,
+  toast = false,
+  fighting = false,
+): 'free' | 'guided' | 'going' | 'quiet' {
+  return going ? 'going' : guided ? 'guided' : toast ? 'quiet' : fighting ? 'guided' : 'free';
 }
 
 /** How long the toast is shown, in seconds of game time, so the game held behind the panel holds it too. */
@@ -412,13 +460,23 @@ function blank(): ToastText {
   return { title: '', left: '', sep: '', right: '', words: '', level: false, from: 0 };
 }
 
+/** What the words are for when no step and no level is: the nearest fire, flying free with the bucket out. */
+const FIGHTING = {};
+
 /** The hint in the bar, flying free. */
 const HINT = 'Land on a crate or fly a start';
 
-/** What the HUD's one button does, which is the page's to say: open the panel. */
+/** What the HUD's two buttons do, which is the page's to say: open the panel, and put the bucket out or take it in. */
 export interface HudActions {
   panel: () => void;
+  bucket: () => void;
 }
+
+/** The bucket's icon: a pail with its handle, and the water in it, which shows only while the button says it is full. */
+const BUCKET_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path class="pail" d="M5 8h14l-1.6 11.2a1.8 1.8 0 0 1-1.8 1.5H8.4a1.8 1.8 0 0 1-1.8-1.5z" /><path class="water" d="M6.2 13h11.6l-0.9 6a1.2 1.2 0 0 1-1.2 1H8.3a1.2 1.2 0 0 1-1.2-1z" /><path class="handle" d="M5 8c0-3 3.1-5 7-5s7 2 7 5" /></svg>`;
+
+/** What the bucket's button says to a screen reader, by its state: the word is the button's name and `aria-pressed` says whether it is out. */
+const BUCKET_LABEL = { in: 'Bucket, in', out: 'Bucket, out, empty', full: 'Bucket, out, full' };
 
 export class Hud {
   private readonly root: HTMLElement;
@@ -448,14 +506,14 @@ export class Hud {
     toast: -1,
     radar: '' as RadarBadge['state'] | '',
     step: -1,
-    tank: '' as 'none' | 'empty' | 'full' | '',
+    bucket: '' as 'in' | 'out' | 'full' | '',
   };
   /**
    * The radar's rings, one element each: the game time each was begun at (−infinity for none), the step each is drawn at
    * (−1 for not yet written), and which is begun next. Sized once.
    */
   private readonly radar: HTMLElement;
-  private readonly tank: HTMLElement;
+  private readonly bucket: HTMLButtonElement;
   private readonly rings: HTMLElement[] = [];
   private readonly pinged = new Float64Array(RADAR_RINGS).fill(-Infinity);
   private readonly ringStepShown = new Int8Array(RADAR_RINGS).fill(-1);
@@ -465,13 +523,14 @@ export class Hud {
   private guide: Level | null = null;
   private guideAt = { x: 0, y: 0 };
   private guideWords = '';
-  /** The step the words were made for, and the words: made when the step changes and not every frame. */
-  private stepFor: Step | null = null;
-  private stepWords = '';
-  private stepBurning = -1;
-  private stepFull = false;
-  /** What a fire's words are made from, written in place each frame a fire is going so that nothing is made. */
-  private readonly fireNow: FireWords = { burning: 0, full: false };
+  /** What the words were made for, the key of what they were made from (the burning there are, the bucket, touch), and the words: made when either changes and not every frame. */
+  private wordsFor: object | null = null;
+  private wordsKey = -1;
+  private words = '';
+  /** What a fire's words are made from, written in place each frame the bar shows them so that nothing is made. */
+  private readonly fireNow: FireWords = { burning: 0, out: false, full: false, touch: false };
+  /** The burning patch the arrow points at, for a fire guided to or flown to free, written in place. */
+  private readonly burningAt = { x: 0, y: 0, z: 0 };
   /** The toast shown, and those waiting behind it. */
   private readonly toasts: ToastQueue;
   /** Whether the panel is up over it: it is hidden, and its keys are the panel's. */
@@ -486,7 +545,7 @@ export class Hud {
     this.root.innerHTML = `
       <button type="button" class="to-levels" aria-label="Levels" title="Levels (Esc)"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="7" height="7" rx="2" /><rect x="11" y="2" width="7" height="7" rx="2" /><rect x="2" y="11" width="7" height="7" rx="2" /><rect x="11" y="11" width="7" height="7" rx="2" /></svg></button>
       <div class="radar" data-state="quiet" role="img" aria-label="Package radar: nothing heard">${'<span class="ring"></span>'.repeat(RADAR_RINGS)}<span class="dot"></span></div>
-      <div class="tank" data-state="none" role="img" aria-label="Water tank: empty" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5C10 2.5 4.6 8.6 4.6 12.4a5.4 5.4 0 0 0 10.8 0C15.4 8.6 10 2.5 10 2.5z" /></svg></div>
+      <button type="button" class="bucket" data-state="in" aria-pressed="false" aria-label="${BUCKET_LABEL.in}" title="Bucket (B)">${BUCKET_ICON}<span class="key" aria-hidden="true">B</span></button>
       <div class="top">
         <div class="bar" data-mode="free"><span class="hint"></span><svg class="arrow" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0,-11 L8,7 L0,3 L-8,7 Z" /></svg><span class="goal"></span><span class="far"></span><span class="clock"></span></div>
         <div class="loader" hidden><svg viewBox="-15 -15 30 30" aria-hidden="true"><circle class="track" r="11" /><circle class="fill" r="11" transform="rotate(-90)" /></svg><span class="what"></span></div>
@@ -495,7 +554,7 @@ export class Hud {
     document.body.append(this.root);
     const find = <T extends Element>(selector: string) => this.root.querySelector(selector) as T;
     this.radar = find<HTMLElement>('.radar');
-    this.tank = find<HTMLElement>('.tank');
+    this.bucket = find<HTMLButtonElement>('.bucket');
     this.rings.push(...Array.from(this.radar.querySelectorAll<HTMLElement>('.ring')));
     this.bar = find<HTMLElement>('.bar');
     this.arrow = find<SVGElement>('.arrow');
@@ -514,6 +573,11 @@ export class Hud {
     const circle = 2 * Math.PI * 11;
     this.fill.style.strokeDasharray = `0 ${circle}`;
     find<HTMLButtonElement>('.to-levels').addEventListener('click', actions.panel);
+    this.bucket.addEventListener('click', () => {
+      actions.bucket();
+      // a button left focused would be clicked again by the Space that lifts the helicopter
+      this.bucket.blur();
+    });
     addEventListener('keydown', (e) => {
       // a key the panel has already acted on, or one pressed while the panel is up, is the panel's
       if (e.defaultPrevented || this.away || this.root.hidden) return;
@@ -540,10 +604,13 @@ export class Hud {
     return { badge: this.shown.radar || 'quiet', step: Math.max(0, this.shown.step) };
   }
 
-  /** What the tank's badge shows as it was last drawn: none while the bucket is stowed, then an outline or filled. */
-  get badge(): 'none' | 'empty' | 'full' {
-    return this.shown.tank || 'none';
+  /** What the bucket's button shows as it was last drawn: grey in, an orange ring out, and with water in it when it is full. */
+  get badge(): 'in' | 'out' | 'full' {
+    return this.shown.bucket || 'in';
   }
+
+  /** Whether the helicopter is being flown by touch, which has no key: the words say "Tap the bucket". Set by the page each frame. */
+  touch = false;
 
   /** The toast's words while it is shown, or null. */
   get toast(): string | null {
@@ -572,9 +639,11 @@ export class Hud {
       }
     }
     this.drawRadar(game);
-    this.drawTank(game);
+    this.drawBucket(game);
     const step = d.current;
-    const mode = barMode(step !== undefined, game.guided !== null, on);
+    const burning = game.nearestFire();
+    const fighting = game.bucket.out && burning !== null;
+    const mode = barMode(step !== undefined, game.guided !== null, on, fighting);
     if (mode !== s.mode) {
       this.bar.dataset.mode = s.mode = mode;
       // the words for the new mode are written afresh below
@@ -583,17 +652,26 @@ export class Hud {
       s.clock = -1;
       s.turn = NaN;
     }
-    // the loader fills while the parcel of a level going is loaded or unloaded, while a start's crate is loaded, or while a
-    // person is winched up, by the winch's share of its hold and not a parcel's of its load
+    // the loader fills while the parcel of a level going is loaded or unloaded, while a start's crate is loaded, while a
+    // person is winched up (by the winch's share of its hold) or climbs aboard (by the boarding's), or while the bucket is
+    // filling, in blue; each by its own share and not a parcel's of its load
     const winch = game.winch;
+    const board = game.board;
     const loading = step ? d.loading : game.starts.loading;
-    // the tank filling is a loader of its own, in blue; the winch's and a parcel's are as they were
-    const scoop = game.tank.filling / SCOOP.time;
+    const fill = game.tank.filling / SCOOP.time;
     const who = winch.spot !== null ? winch.who : null;
-    const kind = loaderKind(who, scoop);
-    const share = kind === 'winch' ? winch.share : kind === 'scoop' ? scoop : loading / DELIVERY.load;
+    const boarding = board.spot !== null ? board.who : null;
+    const kind = loaderKind(who, fill, boarding);
+    const share =
+      kind === 'winch'
+        ? winch.share
+        : kind === 'board'
+          ? board.share
+          : kind === 'fill'
+            ? fill
+            : loading / DELIVERY.load;
     const loader = loaderSteps(share);
-    const loadWords = loaderWords(who, step, kind === 'scoop');
+    const loadWords = loaderWords(who, step, kind === 'fill', boarding);
     if (kind !== s.loaderKind) this.loader.dataset.kind = s.loaderKind = kind;
     if (loader !== s.loader) {
       this.loader.hidden = loader < 0;
@@ -607,43 +685,74 @@ export class Hud {
     if (mode === 'free' || mode === 'quiet') return;
 
     const h = game.helicopter;
+    const bucket = game.bucket;
     let to: { x: number; y: number };
-    let words: string;
+    // what the words are made for: the step going, the level guided to, or the fire flown to with the bucket out
+    let subject: object;
+    // a fire's words are by the bucket and the burning there are, and made again when any of them changes
+    const fire = this.fireNow;
+    fire.out = bucket.out;
+    fire.full = bucket.full;
+    fire.touch = this.touch;
+    fire.burning = 0;
     if (step) {
-      // a fire's arrow is to the nearest water with the tank empty, and to the nearest patch burning with it full
+      subject = step;
       const fireId = fireOf(step);
-      const fire = this.fireNow;
-      if (fireId !== null) {
-        fire.burning = game.fire(fireId).burning;
-        fire.full = game.tank.full;
-      }
-      to = wantsWater(step, game.tank.full) ? game.nearestWater() : d.goal!;
-      // the words are made when the step changes, or a fire's count or tank does, and not on every frame
-      if (
-        step !== this.stepFor ||
-        (fireId !== null && (fire.burning !== this.stepBurning || fire.full !== this.stepFull))
-      ) {
-        this.stepFor = step;
-        this.stepBurning = fire.burning;
-        this.stepFull = fire.full;
-        this.stepWords = stepWords(d.level!, step, game.island.pads, { n: d.ringNumber, of: d.ringCount }, fire);
-      }
-      words = this.stepWords;
-      const time = Math.floor(d.time);
-      if (time !== s.clock) this.clock.textContent = clock((s.clock = time));
-    } else {
+      if (fireId !== null) fire.burning = game.fire(fireId).burning;
+      // a fire's arrow is to the nearest water with the bucket out and empty, and to the nearest patch burning otherwise
+      to = wantsWater(step, bucket) ? game.nearestWater() : d.goal!;
+    } else if (game.guided) {
+      subject = game.guided;
       // shown the way: the point is worked out once for the level, since the game does not change it
       if (game.guided !== this.guide) {
         this.guide = game.guided;
         this.guideAt = startPoint(
-          game.guided!,
+          game.guided,
           game.island.pads,
           game.fires.map((f) => f.place),
         );
-        this.guideWords = guideWords(game.guided!);
+        this.guideWords = guideWords(game.guided);
       }
       to = this.guideAt;
-      words = this.guideWords;
+      // to a fire it is the bucket's words and the way to its water or its flames, as for a level going
+      const fireId = fireOf(game.guided.steps[0]);
+      if (fireId !== null) {
+        const guided = game.fire(fireId);
+        fire.burning = guided.burning;
+        to = needsWater(bucket)
+          ? game.nearestWater()
+          : guided.nearestBurning(h.x, h.y, this.burningAt)
+            ? this.burningAt
+            : to;
+      }
+    } else {
+      // flying free with the bucket out: the nearest fire, which `fighting` says there is
+      subject = FIGHTING;
+      const nearest = burning!;
+      fire.burning = nearest.burning;
+      to = needsWater(bucket)
+        ? game.nearestWater()
+        : nearest.nearestBurning(h.x, h.y, this.burningAt)
+          ? this.burningAt
+          : h;
+    }
+    // the words are made when the subject changes, or a fire's count or the bucket does, and not on every frame
+    const key = ((fire.burning * 2 + (fire.out ? 1 : 0)) * 2 + (fire.full ? 1 : 0)) * 2 + (fire.touch ? 1 : 0);
+    if (subject !== this.wordsFor || key !== this.wordsKey) {
+      this.wordsFor = subject;
+      this.wordsKey = key;
+      this.words = step
+        ? stepWords(d.level!, step, game.island.pads, { n: d.ringNumber, of: d.ringCount }, fire)
+        : game.guided
+          ? fireOf(game.guided.steps[0]) !== null
+            ? fireWords(fire, fire.burning, fire.touch)
+            : this.guideWords
+          : fireWords(fire, fire.burning, fire.touch);
+    }
+    const words = this.words;
+    if (step) {
+      const time = Math.floor(d.time);
+      if (time !== s.clock) this.clock.textContent = clock((s.clock = time));
     }
     const far = Math.round(Math.hypot(to.x - h.x, to.y - h.y));
     const turn = pointer(camera, h, to);
@@ -683,17 +792,17 @@ export class Hud {
   }
 
   /**
-   * The tank's badge: nothing while the bucket is stowed, and with it in use an outline empty and a filled blue drop full.
-   * Written only when it changes.
+   * The bucket's button: grey in, an orange ring out, and with water in it blue when it is out and full, and for a screen
+   * reader its name by state and whether it is pressed. Written only when it changes.
    */
-  private drawTank(game: Game): void {
+  private drawBucket(game: Game): void {
     const bucket = game.bucket;
-    const badge = tankBadge(bucket.wanted, bucket.full);
-    if (badge === this.shown.tank) return;
-    this.shown.tank = badge;
-    this.tank.hidden = badge === 'none';
-    this.tank.dataset.state = badge;
-    this.tank.setAttribute('aria-label', badge === 'full' ? 'Water tank: full' : 'Water tank: empty');
+    const badge = bucketBadge(bucket.out, bucket.full);
+    if (badge === this.shown.bucket) return;
+    this.shown.bucket = badge;
+    this.bucket.dataset.state = badge;
+    this.bucket.setAttribute('aria-pressed', String(bucket.out));
+    this.bucket.setAttribute('aria-label', BUCKET_LABEL[badge]);
   }
 
   /** A ping from the radar, as the game tells it, at game time `now`: a ring begins at the dot. */
@@ -738,7 +847,7 @@ export class Hud {
       toast: -1,
       radar: '',
       step: -1,
-      tank: '',
+      bucket: '',
     };
     // the rings of the last place are not carried to the new one
     this.pinged.fill(-Infinity);

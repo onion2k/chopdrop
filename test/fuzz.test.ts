@@ -39,6 +39,10 @@ describe('the fuzzer', () => {
       'to a rescue',
       'skim',
       'over a fire',
+      'let down onto water',
+      'the bucket',
+      'dip',
+      'beside a person',
     ])
       expect(r.done[action], action).toBeGreaterThan(0);
     // and what can happen, happens: over the seeds `npm run fuzz` plays, since one seed's luck is not the fuzzer's reach
@@ -62,6 +66,7 @@ describe('the fuzzer', () => {
       'collected',
       'found',
       'winched',
+      'boarded',
       'scooped',
       'dropped',
     ])
@@ -113,9 +118,10 @@ describe('the fuzzer', () => {
 
   it('comes back with a save of some levels done, and starts every level by itself, over the seeds `npm run fuzz` plays', () => {
     const started = new Set<string>();
-    // held by design: each seed's own level is gone to first, until it has begun; the first level is no seed's own, and is
-    // begun by chance, which takes 5000 frames over these seeds
-    for (let seed = 1; seed <= 12; seed++)
+    // held by design: each seed's own level is gone to first, until it has begun, and the thirteen levels are the
+    // thirteen seeds' own, which is why `npm run fuzz` plays seeds 1 to 13: the one that is none of 1 to 12's was left to
+    // chance, and the run grew more actions to do before chance had it
+    for (let seed = 1; seed <= 13; seed++)
       for (const key of Object.keys(fuzz(seed, 5000).happened)) if (key.startsWith('started ')) started.add(key);
     expect([...started].sort()).toEqual(LEVELS.map((level) => `started ${level.id}`).sort());
     expect(LEVELS).toHaveLength(13);

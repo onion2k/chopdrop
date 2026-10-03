@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { HELICOPTER, HOVER_LIFT, Helicopter, IDLE, type Controls } from '../src/helicopter';
-import { DT, flatGround, landscape } from './helpers';
+import { Game } from '../src/game';
+import { HELICOPTER, HOVER_LIFT, HOVER_OVER_WATER, Helicopter, IDLE, type Controls } from '../src/helicopter';
+import { seeded } from '../src/random';
+import { NO_WATER } from '../src/water';
+import { DT, flatGround, landscape, waterSpots } from './helpers';
 
 const H = HELICOPTER;
 const TURN = Math.PI * 2;
@@ -590,5 +593,103 @@ describe('placing it', () => {
     expect(h.yaw).toBeCloseTo(Math.PI, 12);
     h.place(0, 0, 5, TURN + 0.5);
     expect(h.yaw).toBeCloseTo(0.5, 12);
+  });
+});
+
+describe('over water', () => {
+  /** Ground at the sea with water over the half of it east of x = 0, which the helicopter is told of as it is told of its ground. */
+  const bay = (level = 0) => ({
+    ...landscape(() => level),
+    surfaceAt: (x: number) => (x > 0 ? level : NO_WATER),
+  });
+
+  it('says its hover once: 1.5 m', () => {
+    expect(HOVER_OVER_WATER).toBe(1.5);
+  });
+
+  it('is held 1.5 m over the surface when let down onto water: never landed, the rotor at full', () => {
+    const h = new Helicopter(bay(3));
+    h.place(50, 0, 40, 0);
+    fly(h, { forward: 0, turn: 0, lift: -1 }, 20);
+    expect(h.z).toBeCloseTo(3 + HOVER_OVER_WATER, 9);
+    expect(h.floor).toBeCloseTo(3 + HOVER_OVER_WATER, 9);
+    expect(h.vz).toBe(0);
+    expect(h.landed).toBe(false);
+    expect(h.overWater).toBe(true);
+    expect(h.rotorSpeed).toBeGreaterThan(H.rotorFull - 0.01);
+  });
+
+  it('is eased onto the hover as onto the ground: it touches it no faster than the landing speed, from any height', () => {
+    for (const from of [20, 60, 200]) {
+      const h = new Helicopter(bay());
+      h.place(50, 0, from, 0);
+      let touched = Infinity;
+      for (let f = 0; f < 60 * 30 && touched === Infinity; f++) {
+        const before = h.vz;
+        h.step(DT, { forward: 0, turn: 0, lift: -1 });
+        if (h.z === h.floor) touched = -before;
+      }
+      expect(h.z).toBeCloseTo(HOVER_OVER_WATER, 9);
+      expect(touched, `from ${from}`).toBeLessThanOrEqual(H.landSpeed + 1e-9);
+    }
+  });
+
+  it('can still fly, turn and skim over the water at the hover, and climb away from it', () => {
+    const h = new Helicopter(bay());
+    h.place(50, 0, 20, 0);
+    fly(h, { forward: 0, turn: 0, lift: -1 }, 10);
+    const yaw = h.yaw;
+    fly(h, { forward: 1, turn: 1, lift: -1 }, 1);
+    expect(h.yaw).not.toBe(yaw);
+    expect(h.speed).toBeGreaterThan(5);
+    expect(h.z).toBeCloseTo(HOVER_OVER_WATER, 9);
+    fly(h, { forward: 0, turn: 0, lift: 1 }, 1);
+    expect(h.z).toBeGreaterThan(HOVER_OVER_WATER + 5);
+  });
+
+  it('lands on the ground beside the water, and is lifted to the hover when it slides out over it', () => {
+    const h = new Helicopter(bay());
+    h.place(-10, 0, 0, 0);
+    expect(h.landed).toBe(true);
+    expect(h.overWater).toBe(false);
+    h.place(10, 0, 0, 0);
+    expect(h.landed).toBe(false);
+    expect(h.z).toBeCloseTo(HOVER_OVER_WATER, 9);
+  });
+
+  it('is told nothing of water and is as it was: ground that has no surface lands it', () => {
+    const h = new Helicopter(flatGround());
+    h.place(50, 0, 40, 0);
+    fly(h, { forward: 0, turn: 0, lift: -1 }, 20);
+    expect([h.landed, h.overWater, h.z]).toEqual([true, false, 0]);
+  });
+
+  describe('on the island', () => {
+    const spots = waterSpots();
+    const letDown = (x: number, y: number) => {
+      const game = new Game({ random: seeded(1) });
+      game.helicopter.placeAbove(x, y, 45, 0);
+      for (let f = 0; f < 60 * 20; f++) game.step(DT, { forward: 0, turn: 0, lift: -1 });
+      return game.helicopter;
+    };
+
+    it.each(['lake', 'sea', 'river'] as const)('holds 1.5 m over a %s it is let down onto, never landed', (kind) => {
+      const { x, y, level } = spots[kind];
+      const h = letDown(x, y);
+      expect(h.z, kind).toBeCloseTo(level + HOVER_OVER_WATER, 3);
+      expect(h.landed).toBe(false);
+      expect(h.overWater).toBe(true);
+      expect(h.rotorSpeed).toBeGreaterThan(H.rotorFull - 0.01);
+    });
+
+    it('lands on a beach at the water, whose ground is above it', () => {
+      const { x, y, level } = spots.beach;
+      const h = letDown(x, y);
+      expect(h.landed).toBe(true);
+      expect(h.overWater).toBe(false);
+      expect(h.z).toBeCloseTo(h.floor, 9);
+      expect(h.floor).toBeGreaterThanOrEqual(level - 1e-3);
+      expect(h.rotorSpeed).toBeLessThan(H.rotorFull);
+    });
   });
 });

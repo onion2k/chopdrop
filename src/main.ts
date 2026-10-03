@@ -19,19 +19,18 @@ import { COLLECTIBLES, FIRES, LEVELS, PACKAGES } from './arena';
 import { Autopilot } from './autopilot';
 import { createApi, levelRows } from './debug';
 import { Column } from './column';
-import { PARTICLES, Effects, rescuePeople, waitingFlares, type Air } from './effects';
+import { MM_PER_UNIT, PARTICLES, Effects, particleWindAt, rescuePeople, waitingFlares, type Air } from './effects';
 import { frameCost } from './frame-cost';
 import { Game } from './game';
 import { Hud } from './hud';
 import { Input } from './input';
 import { Panel } from './panel';
 import { Progress, browserStore } from './progress';
+import type { Wind } from './wind';
 import { seeded } from './random';
 import { Scene, type Drawn } from './scene';
 import { TouchView } from './touch-view';
 
-/** How many millimetres a world unit is: the renderer fixes a few real sizes by it. */
-const MM_PER_UNIT = 100;
 /** The most of what the game has told that the page keeps for the test API to read. */
 const EVENTS_KEPT = 500;
 const LIGHT_CAPACITY = 16,
@@ -173,7 +172,13 @@ async function main() {
   // the column of smoke over each fire, placed as sprites each frame from the game's own time
   const column = new Column(FIRES);
   // built before the game, which tells it the end; what its button does is below, where the game is put back
-  const hud = new Hud({ panel: showPanel }, COLLECTIBLES.length + PACKAGES.length);
+  const hud = new Hud(
+    {
+      panel: showPanel,
+      bucket: toggleBucket,
+    },
+    COLLECTIBLES.length + PACKAGES.length,
+  );
   const game = new Game({
     ...(seed !== null ? { random: seeded(+seed) } : {}),
     progress,
@@ -183,6 +188,7 @@ async function main() {
       loaded: (pad) => tell(`loaded ${pad}`),
       delivered: (pad) => tell(`delivered ${pad}`),
       winched: (id) => tell(`winched ${id}`),
+      boarded: (id) => tell(`boarded ${id}`),
       passed: (ring, of) => tell(`passed ${ring} ${of}`),
       through: (label) => tell(`through ${label}`),
       landed: (pad) => tell(`landed ${pad}`),
@@ -236,7 +242,12 @@ async function main() {
   const input = new Input();
   // a phone shows its touch controls from the start; anything else, once a finger is put on it
   if (matchMedia('(pointer: coarse)').matches) input.by = 'touch';
+  input.onBucket = toggleBucket;
   const touchView = new TouchView(input, document.getElementById('stage')!);
+  /** The bucket put out or taken in, by its key or its button: the player's to do, and never while the panel is up and the game held behind it. */
+  function toggleBucket() {
+    if (!panel.shown) game.toggleBucket();
+  }
   /** The helicopter put at the start of the level named `id`, nothing begun: the camera behind it, the lever down and the toast and the panel put away. */
   function play(id: string) {
     game.moveToStart(id);
@@ -299,6 +310,9 @@ async function main() {
   const waiting = new Uint8Array(people.length);
   /** Where the helicopter is and the open water under it, for the rotor's spray, written each frame in place. */
   const air: Air = { x: 0, y: 0, z: 0, level: 0 };
+  /** The island's wind at the game's time in the renderer's own units, written each frame in place, and as the tuple its `setWind` takes. */
+  const blow: Wind = { x: 0, y: 0 };
+  const wind: [number, number, number] = [0, 0, 0];
   /** How many sprites the column of smoke drew at the last frame, for the test API. */
   let sprites = 0;
   /** How many bursts the renderer has refused, for the test API: none, while the budget holds. */
@@ -315,7 +329,12 @@ async function main() {
     air.y = h.y;
     air.z = h.z;
     air.level = game.water.levelAt(h.x, h.y);
-    const n = effects.step(dt, game.fires, waiting, rig.position, air);
+    // the wind is the game's time's, so the same time gives the same smoke, and a game held behind the panel holds it
+    particleWindAt(game.t, blow);
+    wind[0] = blow.x;
+    wind[1] = blow.y;
+    renderer.setWind(wind);
+    const n = effects.step(dt, game.fires, waiting, rig.position, air, blow);
     for (let k = 0; k < n; k++) if (!renderer.emit(effects.records[k])) refused++;
     renderer.setWash(effects.wash(h));
     // the column is where the game's time puts it, so a frame of no time draws it as it stands
@@ -391,6 +410,7 @@ async function main() {
   }
   function draw(dt: number, emit = true) {
     touchView.draw(panel.shown);
+    hud.touch = input.by === 'touch';
     hud.draw(game, rig);
     upload();
     cam.update();
@@ -436,6 +456,7 @@ async function main() {
     gold: () => scene.gold,
     crates: () => scene.packagesDrawn,
     people: () => scene.peopleDrawn,
+    boats: () => scene.boatsDrawn,
     smoke: () => effects.flaring,
     particles: () => ({ live: renderer.particles.live, refused, sprites, ...effects.counts }),
     ground: () => scene.groundDrawn,

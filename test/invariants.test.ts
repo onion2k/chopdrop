@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import { HELICOPTER, HOVER_LIFT, HOVER_OVER_WATER } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS } from '../src/arena';
 import { FIRE, PATCH } from '../src/fire';
 import { SCOOP } from '../src/water';
-import { DELIVERY, RING, WINCH, type Level, type Ring } from '../src/mission';
+import { BOARD, DELIVERY, RING, WINCH, type Level, type Ring } from '../src/mission';
 import { checkCamera, checkCollection, checkFinds, checkFires, checkInvariants, checkTank } from '../src/invariants';
 import { RADAR } from '../src/finds';
 import { TREE_STRIDE } from '../src/island';
 import { Game } from '../src/game';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
-import { DT, canopyKinds, newGame, thickestWood } from './helpers';
+import { DT, canopyKinds, newGame, thickestWood, waterSpots } from './helpers';
+
+/** The stick let go of: the lift that holds the height. */
+const IDLE_STICK = { forward: 0, turn: 0, lift: HOVER_LIFT };
 
 function flown() {
   const { game } = newGame();
@@ -447,8 +450,8 @@ describe('what must hold of the packages found', () => {
 });
 
 describe('what must hold of a winch', () => {
-  const [spot] = RESCUE_SPOTS;
-  /** The helicopter hovering `up` over the ground at `across` from the first spot. */
+  const spot = RESCUE_SPOTS.find((r) => r.id === 'ledge-rescue')!;
+  /** The helicopter hovering `up` over the ground at `across` from the ledge. */
   const over = (game: Game, up: number, across = 0) => game.helicopter.placeAbove(spot.x + across, spot.y, up, 0);
 
   it('holds of a rescue begun by the window held, every step of the way', () => {
@@ -458,7 +461,7 @@ describe('what must hold of a winch', () => {
       game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
       expect(checkInvariants(game), `frame ${f}`).toEqual([]);
     }
-    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(game.mission.level?.id).toBe('ledge-rescue');
   });
 
   it('reports the starts loading in a rescue window as right, and under the limit for it', () => {
@@ -499,12 +502,12 @@ describe('what must hold of a winch', () => {
   it('reports the mission loading on a winch step outside its window, and at or over the hold', () => {
     const { game } = newGame();
     // a level whose second step is a winch, since a rescue's own is its first and is done as it begins
-    const [wood, beach] = ['wood-rescue', 'beach-rescue'].map((id) => LEVELS.find((l) => l.id === id)!.steps[0]);
-    const level: Level = { id: 'two', name: 'Two', kind: 'rescue', steps: [wood, beach, { kind: 'land', pad: 0 }] };
+    const [wood, boat] = ['wood-rescue', 'boat-rescue'].map((id) => LEVELS.find((l) => l.id === id)!.steps[0]);
+    const level: Level = { id: 'two', name: 'Two', kind: 'rescue', steps: [wood, boat, { kind: 'land', pad: 0 }] };
     game.mission.begin(level);
     expect(game.mission.current?.kind).toBe('winch');
     expect(checkInvariants(game)).toEqual([]);
-    const spot2 = RESCUE_SPOTS[1];
+    const spot2 = RESCUE_SPOTS.find((r) => r.id === 'boat-rescue')!;
     game.helicopter.placeAbove(spot2.x, spot2.y, 10, 0);
     game.mission.loading = 1;
     expect(checkInvariants(game)).toEqual([]);
@@ -518,32 +521,133 @@ describe('what must hold of a winch', () => {
   });
 });
 
-describe('what must hold of the tank', () => {
-  const [west] = FIRES;
-  /** Skimming the run of the west fire, a step from the window: filling, with `seconds` of it done. */
-  const skimming = (seconds: number) => {
+describe('what must hold of a boarding', () => {
+  const walker = RESCUE_SPOTS.find((r) => r.id === 'wood-rescue')!;
+  /** The helicopter `across` from the walker, landed on the ground there or `up` in the air. */
+  const beside = (game: Game, across: number, up = 0) => game.helicopter.placeAbove(walker.x + across, walker.y, up, 0);
+
+  it('holds of a rescue begun by landing beside the walker, every step of the way', () => {
     const { game } = newGame();
-    const { from, to, z } = west.run;
-    game.helicopter.place(from.x, from.y, z + 1, Math.atan2(to.y - from.y, to.x - from.x));
-    for (let f = 0; f < Math.round(seconds / DT); f++)
-      game.step(DT, { forward: 1, turn: 0, lift: HOVER_LIFT + (z + 1 - game.helicopter.z) * 0.8 });
+    beside(game, 6);
+    for (let f = 0; f < Math.round((BOARD.hold + 1) / DT); f++) {
+      game.step(DT, IDLE_STICK);
+      expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+    }
+    expect(game.mission.level?.id).toBe('wood-rescue');
+  });
+
+  it("reports the starts loading while landed within the reach right, and the limit for it a boarding's hold", () => {
+    const { game } = newGame();
+    beside(game, 6);
+    game.step(DT, IDLE_STICK);
+    expect(game.starts.loading).toBeGreaterThan(0);
+    expect(checkInvariants(game)).toEqual([]);
+    game.starts.loading = BOARD.hold;
+    expect(checkInvariants(game).join('\n')).toMatch(/the starts' loading reads 3/);
+  });
+
+  it('reports the starts loading out of the reach, or in the air over them, which is the rule broken', () => {
+    const { game } = newGame();
+    beside(game, 16);
+    game.starts.loading = 1;
+    expect(checkInvariants(game).join('\n')).toMatch(/runs off a pickup pad or out of a rescue's window/);
+    beside(game, 0, 10);
+    expect(checkInvariants(game).join('\n')).toMatch(/runs off a pickup pad or out of a rescue's window/);
+  });
+
+  it('reports the mission loading on a board step when the helicopter is not landed within the reach, or at the hold', () => {
+    const { game } = newGame();
+    const [ledge, wood] = ['ledge-rescue', 'wood-rescue'].map((id) => LEVELS.find((l) => l.id === id)!.steps[0]);
+    const level: Level = { id: 'two', name: 'Two', kind: 'rescue', steps: [ledge, wood, { kind: 'land', pad: 0 }] };
+    game.mission.begin(level);
+    expect(game.mission.current?.kind).toBe('board');
+    expect(checkInvariants(game)).toEqual([]);
+    beside(game, 5);
+    game.mission.loading = 1;
+    expect(checkInvariants(game)).toEqual([]);
+    game.mission.loading = BOARD.hold;
+    expect(checkInvariants(game).join('\n')).toMatch(/the loading reads 3, and runs from 0 to short of 3/);
+    game.mission.loading = 1;
+    beside(game, 16);
+    expect(checkInvariants(game).join('\n')).toMatch(/the loading runs while the helicopter is not landed within 15/);
+    beside(game, 5, 8);
+    expect(checkInvariants(game).join('\n')).toMatch(/the loading runs while the helicopter is not landed within 15/);
+  });
+});
+
+describe('what must hold of the water under the helicopter', () => {
+  const { lake } = waterSpots();
+  /** The helicopter at rest in a lake's hover. */
+  const hovering = () => {
+    const { game } = newGame();
+    game.helicopter.place(lake.x, lake.y, lake.level + HOVER_OVER_WATER, 0);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    return game;
+  };
+
+  it('holds of a helicopter hovering over a lake, and one let down onto it', () => {
+    expect(checkInvariants(hovering())).toEqual([]);
+    const { game } = newGame();
+    game.helicopter.placeAbove(lake.x, lake.y, 30, 0);
+    for (let f = 0; f < 60 * 8; f++) {
+      game.step(DT, { forward: 0, turn: 0, lift: -1 });
+      expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+    }
+  });
+
+  it('reports a helicopter landed over water, at the surface, which is the rule broken', () => {
+    const game = hovering();
+    const h = game.helicopter as unknown as { wet: boolean; floor: number; z: number };
+    // the helicopter's own word for it undone, and its floor put at the water's surface
+    h.wet = false;
+    h.floor = lake.level;
+    h.z = lake.level;
+    expect(checkInvariants(game).join('\n')).toMatch(/landed on water/);
+  });
+
+  it('reports a helicopter over water below the hover, 1.5 m over its surface', () => {
+    const game = hovering();
+    const h = game.helicopter;
+    h.z = lake.level + HOVER_OVER_WATER - 0.2;
+    expect(checkInvariants(game).join('\n')).toMatch(/below the hover over water/);
+    h.z = lake.level + HOVER_OVER_WATER + 0.2;
+    expect(checkInvariants(game).join('\n')).not.toMatch(/below the hover/);
+  });
+
+  it('holds of a helicopter on a beach beside the water, which it lands on', () => {
+    const { beach } = waterSpots();
+    const { game } = newGame();
+    game.helicopter.placeAbove(beach.x, beach.y, 0, 0);
+    expect(game.helicopter.landed).toBe(true);
+    expect(checkInvariants(game)).toEqual([]);
+  });
+});
+
+describe('what must hold of the tank', () => {
+  const { lake } = waterSpots();
+  /** The helicopter hovering over a lake with the bucket out, `seconds` into the fill. */
+  const dipping = (seconds: number, out = true) => {
+    const { game } = newGame();
+    game.setBucket(out);
+    game.helicopter.place(lake.x, lake.y, lake.level + HOVER_OVER_WATER, 0);
+    for (let f = 0; f < Math.round(seconds / DT); f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
     return game;
   };
 
   it('holds of a new game, of a tank half filled, and of one full', () => {
     expect(checkTank(newGame().game)).toEqual([]);
-    const half = skimming(1.5);
+    const half = dipping(1.5);
     expect(half.tank.filling).toBeGreaterThan(0.5);
     expect(checkTank(half)).toEqual([]);
     expect(checkInvariants(half)).toEqual([]);
-    const full = skimming(4);
+    const full = dipping(4);
     expect(full.tank.full).toBe(true);
     expect(checkTank(full)).toEqual([]);
   });
 
-  it('reports a filling that is not a number, under nothing, or not short of a full scoop', () => {
+  it('reports a filling that is not a number, under nothing, or not short of a full fill', () => {
     for (const bad of [NaN, -0.1, SCOOP.time, SCOOP.time + 1]) {
-      const game = skimming(1);
+      const game = dipping(1);
       game.tank.filling = bad;
       expect(checkTank(game).join('\n'), String(bad)).toMatch(
         /the tank's filling reads .*, and runs from 0 to short of 2/,
@@ -552,29 +656,32 @@ describe('what must hold of the tank', () => {
   });
 
   it('reports a tank filling that is full', () => {
-    const game = skimming(4);
+    const game = dipping(4);
     game.tank.filling = 0.5;
     expect(checkTank(game).join('\n')).toMatch(/the tank is full and filling/);
   });
 
-  it('reports a tank filling off the water, too high, too slow, and landed', () => {
+  it('reports a tank filling with the bucket in', () => {
+    const game = dipping(1);
+    game.setBucket(false);
+    expect(game.tank.filling).toBeGreaterThan(0);
+    expect(checkTank(game).join('\n')).toMatch(/the tank is filling with the bucket in/);
+  });
+
+  it('reports a tank filling with the bucket out of the water: lifted out, over land, or over a river', () => {
+    const { river } = waterSpots();
     const { game: onLand } = newGame();
+    onLand.setBucket(true);
     onLand.tank.filling = 0.5;
-    expect(checkTank(onLand).join('\n')).toMatch(
-      /the tank is filling, and the helicopter is not in the scoop's window/,
-    );
+    expect(checkTank(onLand).join('\n')).toMatch(/the tank is filling, and the bucket is not in open water/);
     for (const mend of [
-      (g: Game) => g.helicopter.place(g.helicopter.x, g.helicopter.y, west.run.z + 2, g.helicopter.yaw),
-      (g: Game) => {
-        g.helicopter.vx = 3;
-        g.helicopter.vy = 0;
-      },
-      (g: Game) => g.helicopter.place(g.helicopter.x, g.helicopter.y, west.run.z, g.helicopter.yaw),
+      (g: Game) => g.helicopter.place(lake.x, lake.y, lake.level + 20, 0),
+      (g: Game) => g.helicopter.place(river.x, river.y, river.level + HOVER_OVER_WATER, 0),
     ]) {
-      const game = skimming(1);
+      const game = dipping(1);
       expect(game.tank.filling).toBeGreaterThan(0);
       mend(game);
-      expect(checkTank(game).join('\n')).toMatch(/not in the scoop's window/);
+      expect(checkTank(game).join('\n')).toMatch(/not in open water/);
     }
   });
 });

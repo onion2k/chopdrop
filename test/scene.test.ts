@@ -21,6 +21,7 @@ import {
   treeSize,
 } from '../src/meshes';
 import { Scene, type HelicopterPose } from '../src/scene';
+import { openWaterOf } from '../src/water';
 import { DT, islandSway, thickestWood } from './helpers';
 
 const pose = (over: Partial<HelicopterPose> = {}): HelicopterPose => ({
@@ -51,6 +52,7 @@ const TAIL = [
   'package straps',
   'people',
   'winch',
+  'boat',
   'burning ground',
   'burnt ground',
   'bucket line',
@@ -1357,7 +1359,7 @@ describe('the hidden packages', () => {
 describe('the rescues', () => {
   const rescueScene = new Scene();
   const rescueGroups = rescueScene.dynamic(island);
-  const rescues = LEVELS.filter((l) => l.steps[0].kind === 'winch');
+  const rescues = LEVELS.filter((l) => l.steps[0].kind === 'winch' || l.steps[0].kind === 'board');
   const spots = rescues.map((l) => l.steps[0] as { x: number; y: number; z: number });
   const at = (name: string) => rescueScene.movers.indexOf(name);
   const poolOf = (name: string) => rescueScene.pools[at(name)];
@@ -1395,7 +1397,11 @@ describe('the rescues', () => {
 
   it('stands a person at each spot, about 1.8 tall, in dark legs and an orange jacket, one arm up', () => {
     show();
-    spots.forEach((s, k) => {
+    spots.forEach((spot, k) => {
+      // the sailor stands on the floor of the boat, a little aft of the spot's middle and over the sea
+      const boat = rescues[k].id === 'boat-rescue';
+      const yaw = (spot as { yaw?: number }).yaw ?? 0;
+      const s = boat ? { x: spot.x + Math.cos(yaw) * 0.4, y: spot.y + Math.sin(yaw) * 0.4, z: spot.z + 0.15 } : spot;
       const [left, right, torso, head, arm] = [0, 1, 2, 3, 4].map((b) => boxOf(poolOf('people'), 5 * k + b));
       expect(left.z).toBeCloseTo(s.z, 4);
       expect(right.z).toBeCloseTo(s.z, 4);
@@ -1425,6 +1431,16 @@ describe('the rescues', () => {
     // a level that is not a rescue takes none away
     show(LEVELS[0]);
     expect(rescueScene.peopleDrawn).toBe(3);
+  });
+
+  it('winches the sailor up from the floor of the boat', () => {
+    const boat = rescues.findIndex((l) => l.id === 'boat-rescue');
+    const spot = spots[boat] as { x: number; y: number; z: number; yaw: number };
+    show(null, { spot: rescues[boat].id, share: 0 });
+    const [foot, torso] = [0, 2].map((b) => boxOf(poolOf('winch'), b));
+    expect(foot.z).toBeCloseTo(spot.z + 0.15, 3);
+    expect(torso.x).toBeCloseTo(spot.x + Math.cos(spot.yaw) * 0.4, 3);
+    expect(torso.y).toBeCloseTo(spot.y + Math.sin(spot.yaw) * 0.4, 3);
   });
 
   it('takes the person off the ground at the spot being winched, and no other', () => {
@@ -1522,6 +1538,128 @@ describe('the rescues', () => {
     expect(bare.movers).not.toContain('winch');
     bare.write(hover, undefined, nothing, [], [], { spot: null, share: 0 });
     expect(bare.peopleDrawn).toBe(0);
+  });
+});
+
+describe('the boat', () => {
+  const boatScene = new Scene();
+  const groups = boatScene.dynamic(island);
+  const rescues = LEVELS.filter((l) => l.steps[0].kind === 'winch' || l.steps[0].kind === 'board');
+  const level = rescues.find((l) => l.id === 'boat-rescue')!;
+  const spot = level.steps[0] as { x: number; y: number; z: number; yaw: number };
+  const at = (name: string) => boatScene.movers.indexOf(name);
+  const pool = () => boatScene.pools[at('boat')];
+  const hover = pose({ x: spot.x + 2, y: spot.y - 1, z: spot.z + 10 });
+  const going = (l: Level | null) => ({ level: l, next: l ? 1 : 0, carrying: false, waiting: -1, target: -1 });
+  const show = (l: Level | null = null, winching = { spot: null as string | null, share: 0 }) =>
+    boatScene.write(hover, undefined, going(l), [], [], winching);
+  const linear = (hex: number) => [hex >> 16, (hex >> 8) & 255, hex & 255].map((c) => +((c / 255) ** 2.2).toFixed(5));
+  const colourOf = (k: number) =>
+    Array.from(groups[at('boat')].materials!.subarray(k * 4, k * 4 + 3)).map((v) => +v.toFixed(5));
+  const box = (k: number) => {
+    const m = pool().subarray(16 * k, 16 * k + 16);
+    return {
+      x: m[12],
+      y: m[13],
+      z: m[14],
+      w: Math.hypot(m[0], m[1]),
+      d: Math.hypot(m[4], m[5]),
+      h: m[10],
+      yaw: Math.atan2(m[1], m[0]),
+    };
+  };
+
+  it('is one boat of five boxes, in a pool of its own sized once, the same whatever is written', () => {
+    expect(groups[at('boat')].count).toBe(5);
+    expect(pool()).toHaveLength(5 * 16);
+    const before = pool();
+    show();
+    show(level);
+    show(LEVELS[0]);
+    expect(pool()).toBe(before);
+    expect(boatScene.pools.filter((p) => p === before)).toHaveLength(1);
+    const again = new Scene();
+    again.dynamic(island);
+    again.dynamic(island);
+    expect(again.movers.filter((m) => m === 'boat')).toHaveLength(1);
+  });
+
+  it('is an orange inflatable: two side tubes and a bow tube 0.7 across, a dark floor and a dark outboard', () => {
+    show();
+    const [port, starboard, bow, floor, outboard] = [0, 1, 2, 3, 4].map(box);
+    for (const tube of [port, starboard]) {
+      expect(tube.d).toBeCloseTo(0.7, 4);
+      expect(tube.w).toBeGreaterThan(3);
+    }
+    expect(bow.w).toBeCloseTo(0.7, 4);
+    expect(bow.d).toBeGreaterThan(2);
+    [0, 1, 2].forEach((k) => expect(colourOf(k)).toEqual(linear(0xff6a1a)));
+    expect(colourOf(3)).toEqual(linear(0x3b3f46));
+    expect(colourOf(4)).toEqual(linear(0x2b3440));
+    // the tubes are either side of the floor, which lies between them, and the outboard is aft of it
+    const turn = (b: { x: number; y: number }) => {
+      const [c, s] = [Math.cos(spot.yaw), Math.sin(spot.yaw)];
+      return { forward: (b.x - spot.x) * c + (b.y - spot.y) * s, across: -(b.x - spot.x) * s + (b.y - spot.y) * c };
+    };
+    expect(turn(port).across).toBeGreaterThan(0.5);
+    expect(turn(starboard).across).toBeLessThan(-0.5);
+    expect(Math.abs(turn(floor).across)).toBeLessThan(1e-3);
+    expect(turn(bow).forward).toBeGreaterThan(1.5);
+    expect(turn(outboard).forward).toBeLessThan(-1.5);
+  });
+
+  it('sits on the sea at the spot, turned as the spot says, the floor over the water and the tubes standing out of it', () => {
+    show();
+    for (let k = 0; k < 5; k++) expect(box(k).yaw, `box ${k}`).toBeCloseTo(spot.yaw, 4);
+    const [port, , , floor] = [0, 1, 2, 3].map(box);
+    expect(floor.x).toBeCloseTo(spot.x, 4);
+    expect(floor.y).toBeCloseTo(spot.y, 4);
+    // the foot of the hull is just under the surface and the top of a tube well over it
+    expect(port.z).toBeLessThan(spot.z);
+    expect(port.z).toBeGreaterThan(spot.z - 0.3);
+    expect(port.z + port.h).toBeGreaterThan(spot.z + 0.4);
+    // the surface is where the island puts the sea
+    expect(openWaterOf(island).surfaceAt(spot.x, spot.y)).toBeCloseTo(spot.z, 3);
+  });
+
+  it('is drawn while its rescue waits, while its sailor is on the rope, and stays, empty, once the sailor is winched', () => {
+    show();
+    expect(boatScene.boatsDrawn).toBe(1);
+    show(null, { spot: level.id, share: 0.5 });
+    expect(boatScene.boatsDrawn).toBe(1);
+    // winched: the level is going, the sailor is aboard the helicopter, and the boat they left is still on the sea
+    show(level);
+    expect(boatScene.boatsDrawn).toBe(1);
+    for (let k = 0; k < 5; k++) expect(noSize(pool(), k), `box ${k}`).toBe(false);
+    // whatever else is going, and once its level ends
+    show(LEVELS[0]);
+    expect(boatScene.boatsDrawn).toBe(1);
+    show();
+    expect(boatScene.boatsDrawn).toBe(1);
+  });
+
+  it('is written only when what is going changes', () => {
+    const boat = at('boat');
+    show();
+    show();
+    expect(boatScene.changed[boat]).toBe(0);
+    show(level);
+    expect(boatScene.changed[boat]).toBe(1);
+    show(level);
+    expect(boatScene.changed[boat]).toBe(0);
+    // the winch's share is the people's and the rope's business, not the boat's
+    show(null, { spot: level.id, share: 0.3 });
+    show(null, { spot: level.id, share: 0.6 });
+    expect(boatScene.changed[boat]).toBe(0);
+  });
+
+  it('is drawn for the rescue with a boat and for no other, and none where there is none', () => {
+    expect(boatScene.boatsDrawn).toBeLessThanOrEqual(1);
+    const bare = new Scene(LEVELS.filter((l) => l.id !== 'boat-rescue'));
+    bare.dynamic(island);
+    expect(bare.movers).not.toContain('boat');
+    expect(bare.boatsDrawn).toBe(0);
+    expect(new Scene().boatsDrawn).toBe(0);
   });
 });
 
@@ -1668,7 +1806,7 @@ describe('the bucket', () => {
   const poolOf = (name: string) => bucketScene.pools[at(name)];
   const heli = pose({ x: 100, y: -50, z: 60, yaw: 0.7 });
   const hang = (over: Partial<BucketPose> = {}): BucketPose => ({
-    wanted: true,
+    out: true,
     hung: true,
     full: false,
     line: BUCKET.line,
@@ -1749,12 +1887,12 @@ describe('the bucket', () => {
 
   it('is stowed when it does not hang: drawn at no size, written once to put it away and then not again', () => {
     show(hang());
-    show(hang({ hung: false, wanted: false, line: 0, bottom: heli.z }));
+    show(hang({ hung: false, line: 0, bottom: heli.z }));
     for (const name of ['bucket line', 'bucket', 'bucket water']) {
       expect(noSize(poolOf(name), 0), name).toBe(true);
       expect(bucketScene.changed[at(name)], name).toBe(1);
     }
-    show(hang({ hung: false, wanted: false, line: 0, bottom: heli.z }));
+    show(hang({ hung: false, line: 0, bottom: heli.z }));
     for (const name of ['bucket line', 'bucket', 'bucket water']) expect(bucketScene.changed[at(name)], name).toBe(0);
     // a read with none handed leaves it be
     bucketScene.write(heli);

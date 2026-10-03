@@ -26,6 +26,7 @@ import type { Ring } from '../src/mission';
 import { COLLECTIBLES, PACKAGES } from '../src/arena';
 import { SLOW_CLIMB, WOOD, standardView, start, watch } from './game';
 import { DROP_HEIGHT, EDGE, WEST, hoverOver, sceneSpray, scoop, settle } from './fire';
+import { windYaw } from '../src/wind';
 import { moved as hasMoved, type Figures } from './judging';
 
 const BASELINE = 'smoke/perf-baseline.json';
@@ -229,7 +230,7 @@ test('a view over a wood with a package in it, and the radar badge pulsing: the 
   expect(problems).toEqual([]);
 });
 
-test('a view over the western wood with a person and smoke in it, and the winch out: the frames told, not held', async ({
+test('a view over the western wood with a person and smoke in it, the boat waiting on the sea, and the winch out over it: the frames told, not held', async ({
   page,
 }, info) => {
   test.setTimeout(120_000);
@@ -252,27 +253,45 @@ test('a view over the western wood with a person and smoke in it, and the winch 
     [HOVER_LIFT] as const,
   );
   expect([waiting.people, waiting.smoke, waiting.rope]).toEqual([3, 3, false]);
-  // the winch part way: the rope written every frame, the person on it, and the smoke out
+  // the boat waiting on the sea, its sailor in it, from 60 m out at the height of a chase: the boat's pool in the frame
+  const boat = await page.evaluate(
+    async ([hover]) => {
+      const g = window.game!;
+      const w = g.content().rescues.find((r) => r.id === 'boat-rescue')!;
+      g.chase();
+      g.teleport(w.x - 60, w.y, 22, 0);
+      g.fly(0, 0, hover);
+      g.step(40);
+      g.release();
+      const s = g.state();
+      return { boats: s.boats, people: s.people, ms: await g.measureFrame(50) };
+    },
+    [HOVER_LIFT] as const,
+  );
+  expect([boat.boats, boat.people]).toEqual([1, 3]);
+  // the winch part way over the boat: the rope written every frame, the sailor on it, and the smoke out
   const winching = await page.evaluate(
     async ([hover]) => {
       const g = window.game!;
-      const w = g.content().rescues.find((r) => r.id === 'wood-rescue')!;
+      const w = g.content().rescues.find((r) => r.id === 'boat-rescue')!;
       g.teleport(w.x, w.y, 10, 0.9);
       g.fly(0, 0, hover);
       g.step(90);
       g.release();
       const s = g.state();
-      return { rope: s.rope, smoke: s.smoke, share: s.winch.share, ms: await g.measureFrame(50) };
+      return { rope: s.rope, smoke: s.smoke, boats: s.boats, share: s.winch.share, ms: await g.measureFrame(50) };
     },
     [HOVER_LIFT] as const,
   );
-  expect([winching.rope, winching.smoke]).toEqual([true, 2]);
-  const [waitMs, winchMs] = [waiting.ms, winching.ms].map((v) => Math.round(v * 1000) / 1000);
+  expect([winching.rope, winching.smoke, winching.boats]).toEqual([true, 2, 1]);
+  const [waitMs, boatMs, winchMs] = [waiting.ms, boat.ms, winching.ms].map((v) => Math.round(v * 1000) / 1000);
   info.annotations.push({
     type: 'perf-rescue',
-    description: `${waitMs} ms waiting, ${winchMs} ms winching, not held to the baseline or the budget`,
+    description: `${waitMs} ms waiting, ${boatMs} ms with the boat waiting, ${winchMs} ms winching, not held to the baseline or the budget`,
   });
-  console.log(`perf: rescue view frame ${waitMs} ms waiting, ${winchMs} ms winching (not held)`);
+  console.log(
+    `perf: rescue view frame ${waitMs} ms waiting, ${boatMs} ms with the boat waiting, ${winchMs} ms winching (not held)`,
+  );
   expect(problems).toEqual([]);
 });
 
@@ -344,9 +363,15 @@ test('a view hovering 3 m over the west lake with the rotor’s spray thrown up,
   await sceneSpray(page, 3, 120);
   const sprayed = await page.evaluate(async () => {
     const g = window.game!;
+    // what the rotor threw over eight more frames drawn: its emitters are in step, so a frame in eight throws none
+    let wash = 0;
+    for (let f = 0; f < 8; f++) {
+      g.stepDrawn(1);
+      wash += g.state().particles.wash;
+    }
     const s = g.state();
     return {
-      wash: s.particles.wash,
+      wash,
       live: s.particles.live,
       refused: s.particles.refused,
       ms: await g.measureFrame(50),
@@ -378,6 +403,53 @@ test('a view hovering 3 m over the west lake with the rotor’s spray thrown up,
   });
   console.log(
     `perf: spray view frame ${sprayMs} ms (${sprayed.live} live), wood view frame ${woodMs} ms with ${bowed.moving} trees bowed (not held)`,
+  );
+  expect(problems).toEqual([]);
+});
+
+test('a view of the smoke in the wind, the west fire’s column leaning and a flare beside it, side-on, and the bucket dipped over the lake: the frames told, not held', async ({
+  page,
+}, info) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  // the smoke let tower and lean for ten seconds drawn, the camera a quarter turn from the wind: the column's sprites, the
+  // particles riding the wind and the flares, in one frame
+  await settle(page, 600);
+  const azimuth = windYaw(await page.evaluate(() => window.game!.state().t)) + Math.PI / 2;
+  const column = await page.evaluate(
+    async ([azimuth]) => {
+      const g = window.game!;
+      const f = g.content().fires[0];
+      g.look(f.x, f.y, { azimuth, polar: 1.32, radius: 330 });
+      g.stepDrawn(1);
+      const s = g.state();
+      return {
+        sprites: s.particles.sprites,
+        live: s.particles.live,
+        refused: s.particles.refused,
+        ms: await g.measureFrame(50),
+      };
+    },
+    [azimuth] as const,
+  );
+  expect(column.sprites, 'the column drawn').toBeGreaterThan(0);
+  expect(column.refused).toBe(0);
+  // the bucket dipped: out, hung over the lake with the loader filling and the rotor's spray thrown up
+  await scoop(page, WEST.id, 0.5, true);
+  const dipped = await page.evaluate(async () => {
+    const g = window.game!;
+    const s = g.state();
+    return { hung: s.bucket.hung, wash: s.particles.wash, live: s.particles.live, ms: await g.measureFrame(50) };
+  });
+  expect(dipped.hung, 'the bucket dipped').toBe(true);
+  const [windMs, dipMs] = [column.ms, dipped.ms].map((v) => Math.round(v * 1000) / 1000);
+  info.annotations.push({
+    type: 'perf-wind',
+    description: `${windMs} ms with the smoke in the wind (${column.live} live, ${column.sprites} sprites), ${dipMs} ms with the bucket dipped (${dipped.live} live); not held to the baseline or the budget`,
+  });
+  console.log(
+    `perf: smoke in the wind view frame ${windMs} ms (${column.live} live, ${column.sprites} sprites), bucket dipped view frame ${dipMs} ms (${dipped.live} live) (not held)`,
   );
   expect(problems).toEqual([]);
 });

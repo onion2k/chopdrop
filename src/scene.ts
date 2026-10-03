@@ -33,7 +33,7 @@ import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
 import { lean, place, placeFrame, placePart } from './matrix';
-import { RING, RINGS, type Level, type Ring, type Winch } from './mission';
+import { RING, RINGS, type Board, type Level, type Ring, type Winch } from './mission';
 import type { Block } from './solids';
 import {
   beacon,
@@ -284,6 +284,22 @@ const PERSON_BOXES: readonly (readonly number[])[] = [
   [0.38, 1.35, 0.14, 0.14, 0.75],
 ];
 const PERSON_COLOURS = [0x2b3440, 0x2b3440, 0xff6a1a, 0xe0b08a, 0xff6a1a];
+/**
+ * The boat a sailor waits in, an orange rescue inflatable sat on the sea at the spot's `yaw`: two side tubes and a bow
+ * tube 0.7 across, a dark floor and a dark outboard, six boxes in all. A box is `[forward, across, up, along, wide, tall]`
+ * from the spot, `forward` along the way the boat points and `across` to its left, `up` from the sea's surface to the
+ * box's foot. The sailor stands in it, on the floor `sailor.forward` aft of the middle and `sailor.up` over the sea, as
+ * the people on the land are, and is winched up from there.
+ */
+const BOAT = { tube: 0xff6a1a, floor: 0x3b3f46, outboard: 0x2b3440, sailor: { forward: 0.4, up: 0.15 } };
+const BOAT_BOXES: readonly (readonly number[])[] = [
+  [0, 0.85, -0.1, 4.4, 0.7, 0.7],
+  [0, -0.85, -0.1, 4.4, 0.7, 0.7],
+  [2.2, 0, -0.1, 0.7, 2.4, 0.7],
+  [0, 0, -0.15, 4.2, 1.2, 0.3],
+  [-2.1, 0, 0.1, 0.5, 0.4, 0.7],
+];
+const BOAT_COLOURS = [BOAT.tube, BOAT.tube, BOAT.tube, BOAT.floor, BOAT.outboard];
 /** What the rescues' boxes are painted: matte, since a jacket is not shiny. */
 const RESCUE_ROUGHNESS = 0.9;
 /**
@@ -669,8 +685,14 @@ export class Scene {
    * the winch (the rope and the person on it) are among the pools; and what the people and smoke were last written for,
    * the level going and the spot winched (−1 for none), and whether the rope is out. Built once, and sized once.
    */
-  private readonly rescuing: { level: Level; winch: Winch }[] = [];
+  private readonly rescuing: { level: Level; winch: Winch | Board }[] = [];
   private peopleAt = -1;
+  /** Where the boat group is among the pools (−1 for none), which rescues have a boat, and what the boats were last written for. */
+  private boatAt = -1;
+  private readonly boats: number[] = [];
+  private boatsFor: Level | null | undefined;
+  /** Where a person on the ground or in a boat has their feet, written in place by `feetOf`, so that placing them makes nothing. */
+  private readonly feet = { x: 0, y: 0, z: 0 };
   private rescuesFor: Level | null | undefined;
   private rescuesWinch = -2;
   private ropeOut = false;
@@ -723,7 +745,7 @@ export class Scene {
       const first = level.steps[0];
       if (first.kind === 'pickup') this.crates.push({ level, pad: first.pad });
       else if (first.kind === 'ring') this.startRings.push({ level, ring: first });
-      else if (first.kind === 'winch') this.rescuing.push({ level, winch: first });
+      else if (first.kind === 'winch' || first.kind === 'board') this.rescuing.push({ level, winch: first });
       const spots = startFlags(level);
       if (spots.length > 0) this.flags.push({ level, spots });
     }
@@ -918,6 +940,8 @@ export class Scene {
    */
   private rescueGroups(add: Add, unit: Mesh): void {
     this.peopleAt = -1;
+    this.boatAt = -1;
+    this.boatsFor = undefined;
     this.rescuesFor = undefined;
     this.rescuesWinch = -2;
     this.ropeOut = false;
@@ -935,6 +959,43 @@ export class Scene {
     const base: Paint = { albedo: seen(PERSON_COLOURS[2]), roughness: RESCUE_ROUGHNESS };
     add('people', unit, base, new Float32Array(people * 16), people, paint(PERSON_COLOURS, n));
     add('winch', unit, base, new Float32Array(winch * 16), winch, paint(PERSON_COLOURS, 1, [ROPE.paint]));
+    // the boats, one for each rescue that has one, in a pool of their own
+    this.boats.length = 0;
+    this.rescuing.forEach(({ winch: w }, k) => {
+      if ('yaw' in w && w.yaw !== undefined) this.boats.push(k);
+    });
+    if (this.boats.length === 0) return;
+    this.boatAt = this.pools.length;
+    const boxes = this.boats.length * BOAT_BOXES.length;
+    const materials = new Float32Array(boxes * MATERIAL_STRIDE);
+    for (let k = 0; k < boxes; k++)
+      materials.set([...seen(BOAT_COLOURS[k % BOAT_BOXES.length]), RESCUE_ROUGHNESS], k * MATERIAL_STRIDE);
+    add(
+      'boat',
+      unit,
+      { albedo: seen(BOAT.tube), roughness: RESCUE_ROUGHNESS },
+      new Float32Array(boxes * 16),
+      boxes,
+      materials,
+    );
+  }
+
+  /**
+   * Where the feet of the person at rescue `k` are, written into `feet`: on the ground at their spot, or on the floor of the
+   * boat they wait in, which is aft of the spot's middle and a little over the sea.
+   */
+  private feetOf(k: number): { x: number; y: number; z: number } {
+    const { winch } = this.rescuing[k];
+    const f = this.feet;
+    f.x = winch.x;
+    f.y = winch.y;
+    f.z = winch.z;
+    if ('yaw' in winch && winch.yaw !== undefined) {
+      f.x += Math.cos(winch.yaw) * BOAT.sailor.forward;
+      f.y += Math.sin(winch.yaw) * BOAT.sailor.forward;
+      f.z += BOAT.sailor.up;
+    }
+    return f;
   }
 
   /**
@@ -1236,12 +1297,13 @@ export class Scene {
       const people = this.pools[peopleAt];
       people.fill(0);
       for (let k = 0; k < rescuing.length; k++) {
-        const { level, winch } = rescuing[k];
-        if (level === going || k === winched) continue;
-        placePerson(people, k * PERSON_BOXES.length, winch.x, winch.y, winch.z);
+        if (rescuing[k].level === going || k === winched) continue;
+        const f = this.feetOf(k);
+        placePerson(people, k * PERSON_BOXES.length, f.x, f.y, f.z);
       }
       this.changed[peopleAt] = 1;
     }
+    if (this.boatAt >= 0 && going !== this.boatsFor) this.setBoats(going);
     const rope = this.pools[peopleAt + 1];
     if (winched < 0) {
       if (this.ropeOut) {
@@ -1253,16 +1315,47 @@ export class Scene {
     }
     // the person on the rope rises from the ground at their spot to the helicopter's belly, drawn toward its middle as they go
     const share = Math.max(0, Math.min(1, winching!.share));
-    const { winch } = rescuing[winched];
+    const feet = this.feetOf(winched);
     const belly = pose.z + ROPE.belly;
-    const x = winch.x + (pose.x - winch.x) * share;
-    const y = winch.y + (pose.y - winch.y) * share;
-    const base = winch.z + share * (belly - ROPE.height - winch.z);
+    const x = feet.x + (pose.x - feet.x) * share;
+    const y = feet.y + (pose.y - feet.y) * share;
+    const base = feet.z + share * (belly - ROPE.height - feet.z);
     placePerson(rope, 0, x, y, base);
     const hand = base + ROPE.grip;
     place(rope, PERSON_BOXES.length, pose.x, pose.y, hand, 0, ROPE.width, ROPE.width, Math.max(0, belly - hand));
     this.ropeOut = true;
     this.changed[peopleAt + 1] = 1;
+  }
+
+  /**
+   * The boats, one at each rescue that has one, sat on the sea where its sailor waits. A boat stays when its sailor has
+   * been winched up out of it, left empty on the sea, since a boat does not go with the person taken off it. Written
+   * when what is going changes, which is when the scene looks again; nothing moves them.
+   */
+  private setBoats(going: Level | null): void {
+    this.boatsFor = going;
+    const boats = this.pools[this.boatAt];
+    boats.fill(0);
+    this.boats.forEach((k, n) => {
+      const { winch } = this.rescuing[k];
+      const yaw = (winch as Winch).yaw ?? 0;
+      const [c, s] = [Math.cos(yaw), Math.sin(yaw)];
+      BOAT_BOXES.forEach(([forward, across, up, along, wide, tall], b) => {
+        const i = n * BOAT_BOXES.length + b;
+        place(
+          boats,
+          i,
+          winch.x + c * forward - s * across,
+          winch.y + s * forward + c * across,
+          winch.z + up,
+          yaw,
+          along,
+          wide,
+          tall,
+        );
+      });
+    });
+    this.changed[this.boatAt] = 1;
   }
 
   /**
@@ -1338,6 +1431,16 @@ export class Scene {
     const line = this.pools[this.bucketAtPool][10];
     if (line === 0 && this.pools[this.bucketAtPool + 1][10] === 0) return none;
     return { hung: true, full: this.pools[this.bucketAtPool + 2][10] !== 0, line };
+  }
+
+  /** How many boats are drawn now, sat on the sea with their sailors winched up or not: what the test API says, and nothing the frame uses. */
+  get boatsDrawn(): number {
+    if (this.boatAt < 0) return 0;
+    const m = this.pools[this.boatAt];
+    let drawn = 0;
+    // the floor is the box a boat is counted by
+    for (let k = 0; k < this.boats.length; k++) if (m[(k * BOAT_BOXES.length + 3) * 16 + 10] !== 0) drawn++;
+    return drawn;
   }
 
   /** How many people are standing waiting now, not aboard and not on the rope: what the test API says, and nothing the frame uses. */

@@ -174,7 +174,8 @@ export function leverTravel(page: Page): Promise<number> {
 
 /**
  * The level going, finished as a player finishes it: each step still to do, in turn, landed on its pad and waited on,
- * or lined up a short way before its ring or its opening at its height and flown through. The game must be paused.
+ * or lined up a short way before its ring or its opening at its height and flown through, a winch held over, a person
+ * boarded by being set down beside them. The game must be paused.
  */
 export async function finish(page: Page) {
   await page.evaluate(
@@ -196,6 +197,10 @@ export async function finish(page: Page) {
           g.fly(0, 0, hover);
           g.step(240);
           g.release();
+        } else if (step.kind === 'board') {
+          // set down a few metres from the person and left there for longer than the boarding
+          g.teleport(step.x + 6, step.y, 0);
+          g.step(240);
         } else if ('pad' in step) {
           g.teleport(pads[step.pad].x, pads[step.pad].y, 0);
           g.step(100);

@@ -141,6 +141,16 @@ describe('the determinism check', () => {
     expect(hashGame(clocked), 'the clock').not.toBe(was);
   });
 
+  it('sees whether the bucket is out, which the pilot puts out for a fire and leaves out', () => {
+    const game = () => new Game({ random: seeded(1) });
+    const was = hashGame(game());
+    const out = game();
+    out.setBucket(true);
+    expect(hashGame(out), 'out').not.toBe(was);
+    out.setBucket(false);
+    expect(hashGame(out), 'in again').toBe(was);
+  });
+
   it("sees the tank, full and how far it is filled, and the state of each fire's patches", () => {
     const game = () => new Game({ random: seeded(1) });
     const was = hashGame(game());

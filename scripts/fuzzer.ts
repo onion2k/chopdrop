@@ -8,8 +8,9 @@
  * pad the parcel is wanted at and waiting there, down onto a level's start or
  * through it, being shown the way to one, giving up the level going, flying
  * at a ring from any side and through one in its turn, hovering over a person waiting to be winched up, in the
- * window and high, low or aside of it, skimming over a lake or the sea at the edges of the scoop and flying over a fire at
- * the edges of the drop — with the
+ * window and high, low or aside of it, landing beside the walker within and just past the reach of the boarding, being let down onto a
+ * lake, the sea or a river, putting the bucket out and taking it in, dipping it into open water, skimming low over water
+ * and flying over a fire at the edges of the drop — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
@@ -26,8 +27,8 @@
  * --seed N` does, and prints what was done before it went wrong.
  */
 import { Game } from '../src/game';
-import { WINCH, type Step } from '../src/mission';
-import { HELICOPTER, HOVER_LIFT, IDLE, type Controls } from '../src/helicopter';
+import { BOARD, WINCH, type Step } from '../src/mission';
+import { HELICOPTER, HOVER_LIFT, HOVER_OVER_WATER, IDLE, type Controls } from '../src/helicopter';
 import { ChaseCamera } from '../src/chase';
 import { checkCamera, checkInvariants } from '../src/invariants';
 import { TREE_STRIDE } from '../src/island';
@@ -35,7 +36,7 @@ import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, TREE_KINDS } from 
 import { treeSize } from '../src/meshes';
 import { Progress, memoryStore } from '../src/progress';
 import { PATCH } from '../src/fire';
-import { SCOOP } from '../src/water';
+import { NO_WATER, SCOOP } from '../src/water';
 import { seeded } from '../src/random';
 
 const DT = 1 / 60;
@@ -118,6 +119,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
         winched: () => count(happened, 'winched'),
+        boarded: () => count(happened, 'boarded'),
         scooped: () => count(happened, 'scooped'),
         dropped: () => count(happened, 'dropped'),
         fireOut: () => count(happened, 'fire out'),
@@ -145,8 +147,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
     let controls: Controls = { ...IDLE };
     // how many frames the current thing is still held for, whether it is a landing, which ends when the skids touch,
     // the rhythm the lift is tapped at, frames on and frames in all, if it is a hover, and whether it is a run of
-    // openings, each lined up on as the last is passed, and the step it is at
-    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 }, wander: false, run: false, at: 0 };
+    // openings, each lined up on as the last is passed, and the step it is at; and the action it goes on to when this one is done,
+    // as a player fighting a fire dips and then drops, and dips again
+    const hold = { busy: 0, landing: false, tap: { on: 0, every: 0 }, wander: false, run: false, at: 0, follow: '' };
     const between = (a: number, b: number) => a + random() * (b - a);
     const timesDone = (what: string) => done[what] ?? 0;
     const did = (what: string) => {
@@ -167,6 +170,38 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         x = between(bounds.minX, bounds.maxX);
         y = between(bounds.minY, bounds.maxY);
         if (ground.heightAt(x, y) > 2) break;
+      }
+      return [x, y];
+    };
+    /**
+     * Somewhere over water of the kind asked for, a lake, the sea, a river or any of them: a square of a lake or the
+     * sea, or a point of a river's run, each as likely as the other, over the island's own maps. A river is found by
+     * its points, which are over it by the same map as any water; open water is tried a few times for a square that
+     * is, and a point on a beach is left to chance.
+     */
+    const somewhereWet = (kind: 'open' | 'any'): [number, number] => {
+      const { lakes, sea, terrain, rivers } = game.island;
+      const across = terrain.cols - 1;
+      const pick = random();
+      if (kind === 'any' && pick < 0.3 && rivers.length > 0) {
+        const { points } = rivers[Math.floor(random() * rivers.length)];
+        const k = Math.floor(random() * (points.length / 4)) * 4;
+        return [points[k], points[k + 1]];
+      }
+      let x = 0,
+        y = 0;
+      for (let tries = 0; tries < 12; tries++) {
+        let sq: number;
+        if (random() < 0.5 && lakes.length > 0) {
+          const lake = lakes[Math.floor(random() * lakes.length)];
+          sq = lake.squares[Math.floor(random() * lake.squares.length)];
+        } else {
+          sq = Math.floor(random() * sea.length);
+          for (let k = 0; k < 40 && sea[sq] === 0; k++) sq = Math.floor(random() * sea.length);
+        }
+        x = terrain.originX + ((sq % across) + random()) * terrain.cell;
+        y = terrain.originY + (Math.floor(sq / across) + random()) * terrain.cell;
+        if (game.waters.surfaceAt(x, y) !== NO_WATER) break;
       }
       return [x, y];
     };
@@ -265,9 +300,27 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       hold.busy = 240;
     };
     /**
+     * Landed `away` from the walker at any bearing, and left sitting for as long as the boarding takes and a second more:
+     * within the reach it begins the level, and just past it, or hovering over them, it does not. `hover` has it come
+     * down from a few metres up instead, as a player lands.
+     */
+    const beside = (away: number, hover: boolean): void => {
+      const walker = RESCUE_SPOTS.find((r) => r.by === 'land')!;
+      const round = between(-Math.PI, Math.PI);
+      heli.placeAbove(
+        walker.x + Math.cos(round) * away,
+        walker.y + Math.sin(round) * away,
+        hover ? between(2, 12) : 0,
+        between(-Math.PI, Math.PI),
+      );
+      controls = hover ? { forward: 0, turn: 0, lift: -1 } : { ...IDLE };
+      hold.busy = Math.round((BOARD.hold + 1) * 60) + (hover ? framesToLand() : 0);
+    };
+    /**
      * Skimming over open water: a lake, or the sea, chosen from the island's water, `up` over it, at `speed`, along a
      * straight line from the square chosen, held for three seconds. The line is tried a few times for one that stays over
-     * the water, which a player skimming a lake would fly, and left to chance if none does.
+     * the water, which a player skimming a lake would fly, and left to chance if none does. Over the water it is held at
+     * the hover, whatever it is put at.
      */
     const skimOver = (up: number, speed: number, run = 3): void => {
       const { lakes, sea, terrain } = game.island;
@@ -626,15 +679,19 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
             const spot = RESCUE_SPOTS.find((r) => r.x === start.x && r.y === start.y)!;
             overRescue(spot, between(WINCH.low + 1, WINCH.high - 1), between(0, WINCH.reach - 2));
           } else if (start.kind === 'douse') {
-            // the water first, along the fire's run at the scoop's own pace, and then a drop from the middle of the window
-            // on the first of its patches, which is what begins it
+            // the bucket out, the water first, hovered over at the end of the fire's run long enough to fill, and then a
+            // drop from the middle of the window on the first of its patches, which is what begins it
             const fire = FIRES.find((f) => f.id === start.fire)!;
+            game.setBucket(true);
             if (!game.tank.full) {
               const { from, to, z } = fire.run;
-              heli.place(from.x, from.y, z + SCOOP.low / 2, Math.atan2(to.y - from.y, to.x - from.x));
-              controls = { forward: 1, turn: 0, lift: HOVER_LIFT };
+              heli.place(from.x, from.y, z + HOVER_OVER_WATER, Math.atan2(to.y - from.y, to.x - from.x));
+              controls = { forward: 0, turn: 0, lift: HOVER_LIFT };
               hold.busy = Math.round((SCOOP.time + 1.5) * 60);
             } else overFire(fire, 0, between(12, 22));
+          } else if (start.kind === 'board') {
+            // landed beside the person, well inside the reach, and held for longer than the hold
+            beside(between(4, BOARD.reach - 3), false);
           } else {
             lineUpOn(start);
             hold.run = random() < 0.5;
@@ -646,9 +703,69 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         places: true,
         weight: 3,
         go() {
-          // low over a lake or the sea at any height up to 3 m and any speed from 4 to 14 m/s, along a line held for three
-          // seconds: some of them fill the tank, and some are too high, too slow, or landed on the water
+          // low over a lake or the sea at any height up to 3 m over it, which is under the hover, and any speed from 4 to
+          // 14 m/s, along a line held for three seconds: it is held at the hover and never landed on the water, with the
+          // bucket in or out as it was
           skimOver(between(0, 3), between(4, 14));
+        },
+      },
+      {
+        name: 'let down onto water',
+        places: true,
+        weight: 3,
+        go() {
+          // over a lake, the sea or a river, high or low, and let down by the lift held down, or held low a little: it is
+          // eased onto the hover over the surface and is never landed, and flown on it may skim at the hover
+          const [x, y] = somewhereWet('any');
+          heli.placeAbove(x, y, between(2, 60), between(-Math.PI, Math.PI));
+          controls = {
+            forward: random() < 0.3 ? between(0.2, 1) : 0,
+            turn: 0,
+            lift: random() < 0.6 ? -1 : -between(0.1, 1),
+          };
+          hold.busy = framesToLand() + Math.floor(between(30, 150));
+        },
+      },
+      {
+        name: 'the bucket',
+        weight: 2,
+        go() {
+          // the key or the badge, put out or taken in, at random and held for a while, with whatever is going
+          game.setBucket(random() < 0.5);
+          controls = { ...IDLE };
+          hold.busy = Math.floor(between(30, 180));
+        },
+      },
+      {
+        name: 'dip',
+        places: true,
+        weight: 3,
+        go() {
+          // the bucket out, over a lake or the sea, and let down onto it: the bucket goes in at the line's length, and held
+          // there for two seconds fills it, and one held there a moment less, or over a river, does not. A player fighting a
+          // fire goes to the water of its run, so with a fire level going, or half the time, it is there
+          game.setBucket(true);
+          let x: number, y: number;
+          if (game.mission.level?.kind === 'fire' || random() < 0.3) {
+            const { from, to } = aFire().run;
+            const along = between(0.15, 0.85);
+            [x, y] = [from.x + (to.x - from.x) * along, from.y + (to.y - from.y) * along];
+          } else [x, y] = somewhereWet(random() < 0.8 ? 'open' : 'any');
+          heli.placeAbove(x, y, between(3, 12), between(-Math.PI, Math.PI));
+          controls = { forward: 0, turn: 0, lift: -1 };
+          hold.busy = framesToLand() + Math.round(between(SCOOP.time - 0.5, SCOOP.time + 1.5) * 60);
+          if (game.mission.level?.kind === 'fire') hold.follow = 'over a fire';
+        },
+      },
+      {
+        name: 'beside a person',
+        places: true,
+        weight: 3,
+        go() {
+          // landed or coming down within the reach of the walker or just past it, at a bearing of any kind: within it, the
+          // skids down, and held for three seconds, the person climbs aboard; past it, or over them, nothing happens
+          const away = random() < 0.2 ? 0 : between(BOARD.reach - 7, BOARD.reach + 5);
+          beside(away, random() < 0.4);
         },
       },
       {
@@ -656,7 +773,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         places: true,
         weight: 3,
         go() {
-          // over a patch of a fire, 12 to 35 m up, drifting: with a full tank some drop, and some are too high
+          // over a patch of a fire, 12 to 35 m up, drifting: with a full tank and the bucket out some drop, and some are too
+          // high, or have the bucket in, which a player who has come to a fire has mostly put out
+          game.setBucket(random() < 0.85);
           const fire = aFire();
           const states = game.fire(fire.id).states;
           // a player flies at the flames: a patch that burns, if a few tries find one, and any if not
@@ -664,6 +783,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
           for (let tries = 0; tries < 6 && states[k] !== PATCH.burning; tries++)
             k = Math.floor(random() * fire.patches.length);
           overFire(fire, k, between(12, 35));
+          if (game.mission.level?.kind === 'fire') hold.follow = 'dip';
         },
       },
       {
@@ -738,7 +858,10 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       // short run does everything there is
       const untried = actions.filter((a) => timesDone(a.name) === 0);
       let chosen = actions[0];
-      if (owed()) chosen = actions.find((a) => a.name === 'to a start')!;
+      const follow = hold.follow;
+      hold.follow = '';
+      if (follow) chosen = actions.find((a) => a.name === follow)!;
+      else if (owed()) chosen = actions.find((a) => a.name === 'to a start')!;
       else if (untried.length) chosen = untried[Math.floor(random() * untried.length)];
       else {
         let pick = random() * total;

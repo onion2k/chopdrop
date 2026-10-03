@@ -1,6 +1,6 @@
 /**
- * What the fire tests and pictures share: the tank filled as a player fills it, by skimming along the fire's run over
- * the water, a hover over a patch at a height a drop reaches from, and the scenes the pictures are taken of, each one
+ * What the fire tests and pictures share: the bucket put out and the tank filled as a player fills it, by letting the
+ * bucket down into the water over the fire's run, a hover over a patch at a height a drop reaches from, and the scenes the pictures are taken of, each one
  * set up through the test API so that the browser tests, the pictures and the check that a picture is the same on every
  * page just booted all draw the same thing. Every move is flown through `fly`, so the game does what it does for keys,
  * and nothing is set that a player could not do. The particles move only as a frame is drawn, so each is stepped with
@@ -25,7 +25,7 @@ export const EDGE = WEST.patches[12];
 /** A height over the ground at which a drop reaches and the bucket's line clears the treetops. */
 export const DROP_HEIGHT = DROP.high - 3;
 
-/** The way the smoke drifts, as `effects.ts` has it: the helicopter upwind of the fire is on the other side of it. */
+/** The way the chase scene looks from: the helicopter hovers this far round from the fire, whichever way the wind is blowing. */
 const DRIFT = 0.9 + Math.PI / 2;
 
 /** `frames` frames played and drawn, so the particles move with the game. */
@@ -46,19 +46,20 @@ export function lookAt(page: Page, p: { x: number; y: number }, radius: number, 
 }
 
 /**
- * The tank filled, flown as a player does it: put at the start of the fire's run low over the water, facing along it,
- * and flown at full speed along the run until the scoop has filled it (the most frames it is given are ten seconds), and
- * then let go. Says how many frames it took, or −1 if it never filled, and leaves the helicopter where the scoop was
- * done. With `share`, it stops when the scoop is that share of the way, with the lever still held; with `begin`, the
- * fire's level is begun first, as a drop would have begun it.
+ * The tank filled, done as a player does it: the bucket put out (by the key B, as a player puts it), the helicopter put
+ * at the start of the fire's run hovering over the water, which it holds, the bucket dipped in it, until the fill has
+ * filled the tank (the most frames it is given are ten seconds), and then let go. Says how many frames it took, or −1 if
+ * it never filled, and leaves the helicopter where it filled and the bucket out. With `share`, it stops when the fill is
+ * that share of the way; with `begin`, the fire's level is begun first, as a drop would have begun it.
  */
 export async function scoop(page: Page, id = WEST.id, share = 1, begin = false): Promise<number> {
+  await page.evaluate(() => window.game!.bucket(true));
   return page.evaluate(
     ([id, hover, share, time, begin]) => {
       const g = window.game!;
       g.play(id);
       if (begin) g.begin(id);
-      g.fly(1, 0, hover);
+      g.fly(0, 0, hover);
       let frames = 0;
       const done = () => (share < 1 ? g.state().tank.filling >= share * time : g.state().tank.full);
       while (!done() && frames < 600) {
@@ -132,8 +133,8 @@ export async function sceneDrop(page: Page) {
   await lookAt(page, EDGE, 75, 1.2, -0.8);
 }
 
-/** The helicopter skimming the lake with the fire level begun and the tank half filled: the bucket dipped, the loader and the badge. */
-export async function sceneScooping(page: Page) {
+/** The helicopter hovering over the lake with the fire level begun and the bucket half filled: the bucket dipped in the water, the loader and the badge. */
+export async function sceneFilling(page: Page) {
   await settle(page, 600);
   await scoop(page, WEST.id, 0.5, true);
   await settle(page, 1);

@@ -7,11 +7,11 @@
     "up-the-valley": 0.63,
     "mountain-drop": 0.49,
     "under-and-between": 0.79,
-    "wood-rescue": 0.44,
-    "beach-rescue": 0.62,
+    "wood-rescue": 0.45,
+    "boat-rescue": 0.56,
     "ledge-rescue": 0.32,
-    "west-lake-fire": 1.47,
-    "south-lake-fire": 1.72,
-    "north-wood-fire": 5.47
+    "west-lake-fire": 0.85,
+    "south-lake-fire": 1.55,
+    "north-wood-fire": 4.35
   }
 }

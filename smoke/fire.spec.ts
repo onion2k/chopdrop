@@ -1,11 +1,12 @@
 /**
- * Water bombing in the page: the tank filled by skimming the west lake along its run, with the loader "Scooping"
- * filling in blue, the badge going from an outline to full and the bucket hanging with water in it; the fire flown to and
- * the water dropped on a burning patch at a height a drop reaches, which begins the level, pours as spray and leaves
- * burnt ground, with the bar saying "Put out the fire · n burning" with the tank full and "Scoop water" with it empty;
- * then the autopilot putting it out, the toast "Fire out!", its time on the panel and the fire lit again after; and a
- * scoop by touch on a phone. The renderer refuses none of the bursts the effects ask of it, throughout. The helicopter is
- * flown through `fly` and by real fingers, and the particles move as frames are drawn: stepped with `stepDrawn`, never waited on.
+ * Water bombing in the page: the bucket put out by its key and let down onto the west lake, with the loader "Filling the
+ * bucket" filling in blue, the badge going from an orange ring to full and the bucket hanging dipped, then with water in it;
+ * the fire flown to and the water dropped on a burning patch at a height a drop reaches, which begins the level, pours as
+ * spray and leaves burnt ground, with the bar saying "Fly low over the flames to drop · n burning" with the bucket full
+ * and "Hover low over the water to fill the bucket" with it empty; then the autopilot putting it out, the toast "Fire
+ * out!", its time on the panel and the fire lit again after; and the bucket put out and filled by touch on a phone. The
+ * renderer refuses none of the bursts the effects ask of it, throughout. The helicopter is flown through `fly` and by real
+ * fingers, and the particles move as frames are drawn: stepped with `stepDrawn`, never waited on.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { HOVER_LIFT } from '../src/helicopter';
@@ -23,25 +24,26 @@ const filled = (page: Page) =>
     .locator('#hud .loader .fill')
     .evaluate((el: SVGElement) => parseFloat(el.style.strokeDasharray) / (2 * Math.PI * 11));
 
-test('skimming the lake along its run fills the tank: the loader "Scooping" in blue, the badge full, the bucket hung with water', async ({
+test('the bucket put out and let down onto the lake fills the tank: the loader "Filling the bucket" in blue, the badge full, the bucket hung with water', async ({
   page,
 }) => {
   test.setTimeout(120_000);
   const problems = watch(page);
   await start(page, { seed: 11, paused: true, save: { best: {} } });
   await settle(page, 1);
-  // nothing to do with water: no badge, no bucket, no loader
+  // nothing to do with the bucket: it is in, stowed, the badge grey, and no loader
   const before = await state(page);
-  expect([before.badge, before.bucket.hung, before.tank.full]).toEqual(['none', false, false]);
+  expect([before.badge, before.bucket.out, before.bucket.hung, before.tank.full]).toEqual(['in', false, false, false]);
   await expect(page.locator('#hud .loader')).toBeHidden();
-  await expect(page.locator('#hud .tank')).toBeHidden();
+  await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'in');
 
-  // put at the start of the run, low over the water, and flown along it
+  // the key B puts it out, and the helicopter is put hovering over the water, which it holds
+  await page.keyboard.press('b');
   await page.evaluate(
     ([id, hover]) => {
       const g = window.game!;
       g.play(id);
-      g.fly(1, 0, hover);
+      g.fly(0, 0, hover);
     },
     [WEST.id, HOVER_LIFT] as const,
   );
@@ -52,22 +54,23 @@ test('skimming the lake along its run fills the tank: the loader "Scooping" in b
     if (s.tank.filling > 0 && f % 20 === 0) fills.push(await filled(page));
     if (s.tank.filling > 0.9 && fills.length > 1) break;
   }
-  // part way: the loader names the scoop, in blue and filling; the badge an outline; the bucket hangs, dipped in the water
+  // part way: the loader names the fill, in blue and filling; the badge an orange ring; the bucket hangs, dipped in the water
   const part = await state(page);
   expect(part.tank.filling).toBeGreaterThan(0.5);
   expect(part.tank.full).toBe(false);
   const loader = page.locator('#hud .loader');
   await expect(loader).toBeVisible();
-  await expect(loader.locator('.what')).toHaveText('Scooping');
-  await expect(loader).toHaveAttribute('data-kind', 'scoop');
+  await expect(loader.locator('.what')).toHaveText('Filling the bucket');
+  await expect(loader).toHaveAttribute('data-kind', 'fill');
   expect(await filled(page)).toBeCloseTo(part.tank.filling / SCOOP.time, 1);
   expect(fills.length).toBeGreaterThan(1);
   expect(fills).toEqual([...fills].sort((a, b) => a - b));
-  expect(part.badge).toBe('empty');
-  await expect(page.locator('#hud .tank')).toHaveAttribute('data-state', 'empty');
-  expect(part.bucket).toMatchObject({ hung: true, full: false });
+  expect(part.badge).toBe('out');
+  await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'out');
+  expect(part.bucket).toMatchObject({ out: true, hung: true, full: false });
   // dipped: the line is short, the bucket under the skids and in the water
   expect(part.bucket.line).toBeLessThan(2.5);
+  expect(part.helicopter).toMatchObject({ overWater: true, landed: false });
 
   // on to full: told scooped, the loader gone, the badge full and the bucket's water at its rim
   for (let f = 0; f < 300 && !(await state(page)).tank.full; f++) await settle(page, 1);
@@ -76,9 +79,9 @@ test('skimming the lake along its run fills the tank: the loader "Scooping" in b
   expect(await events(page)).toEqual(['scooped']);
   const full = await state(page);
   expect([full.tank.full, full.badge]).toEqual([true, 'full']);
-  expect(full.bucket).toMatchObject({ hung: true, full: true });
+  expect(full.bucket).toMatchObject({ out: true, hung: true, full: true });
   await expect(loader).toBeHidden();
-  await expect(page.locator('#hud .tank')).toHaveAttribute('data-state', 'full');
+  await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'full');
   expect(full.particles.refused).toBe(0);
   expect(await page.evaluate(() => window.game!.invariants())).toEqual([]);
   expect(problems).toEqual([]);
@@ -114,12 +117,12 @@ test('flown to the fire and dropped on: it begins the level, pours as spray, lea
   expect(lit.fires.map((f) => f.burning)).toEqual([10, 10, 10]);
   expect(lit.particles.live).toBeGreaterThan(900);
 
-  // with the tank full and the fire shown the way: "To the fire", the arrow, and the bucket hung with water
+  // with the bucket full and the fire shown the way: the words for the drop, the arrow, and the bucket hung with water
   expect(await scoop(page)).toBeGreaterThan(0);
   await events(page);
   await page.evaluate((id) => window.game!.guide(id), WEST.id);
   await settle(page, 1);
-  await expect(goal(page)).toHaveText('To the fire');
+  await expect(goal(page)).toHaveText('Fly low over the flames to drop · 10 burning');
   await expect(page.locator('#hud .arrow')).toBeVisible();
   expect((await state(page)).bucket).toMatchObject({ hung: true, full: true });
 
@@ -157,14 +160,14 @@ test('flown to the fire and dropped on: it begins the level, pours as spray, lea
   expect(after.ground).toEqual({ burning: 21, burnt: 9 });
   expect(after.particles.refused).toBe(0);
 
-  // the bar, the tank empty: "Scoop water", with the way to the nearest water
-  await expect(goal(page)).toHaveText('Scoop water');
+  // the bar, the bucket out and empty: how to fill it, with the way to the nearest water
+  await expect(goal(page)).toHaveText('Hover low over the water to fill the bucket');
   await expect(page.locator('#hud .far')).toHaveText(/^\d+ m$/);
-  await expect(page.locator('#hud .tank')).toHaveAttribute('data-state', 'empty');
+  await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'out');
   expect(problems).toEqual([]);
 });
 
-test('with the level begun and the tank full, the bar names the fire to put out and how many burn, and the arrow is to the nearest patch', async ({
+test('with the level begun and the bucket full, the bar says to fly low over the flames and how many burn, and the arrow is to the nearest patch', async ({
   page,
 }) => {
   const problems = watch(page);
@@ -173,10 +176,10 @@ test('with the level begun and the tank full, the bar names the fire to put out 
   await scoop(page);
   await page.evaluate((id) => window.game!.begin(id), WEST.id);
   await settle(page, 1);
-  await expect(goal(page)).toHaveText('Put out the fire · 10 burning');
-  await expect(page.locator('#hud .tank')).toHaveAttribute('data-state', 'full');
+  await expect(goal(page)).toHaveText('Fly low over the flames to drop · 10 burning');
+  await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'full');
   await hoverOver(page, WEST.x - 60, WEST.y, 26, 0, 2);
-  // the arrow's distance is to the nearest burning patch while the tank is full
+  // the arrow's distance is to the nearest burning patch while the bucket is full
   const far = parseInt((await page.locator('#hud .far').textContent()) ?? '0');
   const { x, y } = (await state(page)).helicopter;
   const nearest = Math.min(...WEST.patches.slice(0, 10).map((p) => Math.hypot(p.x - x, p.y - y)));
@@ -239,7 +242,7 @@ test('then the autopilot puts it out: the toast "Fire out!", the time on the pan
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('a scoop by touch: the lever holds the skim, the stick runs the lake, and the badge and the loader are clear of the bar', async ({
+  test('the bucket put out by a tap and filled over the lake: the loader and the badge are clear of the bar', async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -249,12 +252,16 @@ test.describe('on a phone', () => {
     await settle(page, 1);
     const travel = await leverTravel(page);
     const hand = await fingers(page);
-    // the right thumb sets the lever at its stop and stays; the left pushes the stick straight forward
+    // the right thumb sets the lever at its stop and stays: the hover over the water is held
     await hand.down(2, 330, 680);
     await hand.move(2, 330, 680 - (HOVER_LIFT * travel) / 2);
     expect((await state(page)).input.lever).toBe(HOVER_LIFT);
-    await hand.down(1, 120, 680);
-    await hand.move(1, 120, 600);
+    // the badge tapped, which puts the bucket out
+    const badge = page.locator('#hud .bucket');
+    expect((await state(page)).badge).toBe('in');
+    await badge.tap();
+    await settle(page, 1);
+    expect((await state(page)).badge).toBe('out');
     let seen = false;
     for (let f = 0; f < 400 && !(await state(page)).tank.full; f += 5) {
       await settle(page, 5);
@@ -262,24 +269,23 @@ test.describe('on a phone', () => {
       if (s.tank.filling > 0.5 && !seen) {
         seen = true;
         const loader = page.locator('#hud .loader');
-        await expect(loader.locator('.what')).toHaveText('Scooping');
+        await expect(loader.locator('.what')).toHaveText('Filling the bucket');
         const box = (await loader.boundingBox())!;
         expect(box.x).toBeGreaterThanOrEqual(0);
         expect(box.x + box.width).toBeLessThanOrEqual(390);
       }
     }
-    expect(seen, 'seen scooping').toBe(true);
-    await hand.up(1);
+    expect(seen, 'seen filling').toBe(true);
     await hand.up(2);
     await settle(page, 1);
     const s = await state(page);
     expect([s.tank.full, s.badge, s.input.by]).toEqual([true, 'full', 'touch']);
-    // the tank's badge is in the corner, under the radar's and clear of the bar and the touch controls
-    const tank = (await page.locator('#hud .tank').boundingBox())!;
+    // the badge is in the corner, under the radar's and clear of the bar and the touch controls
+    const box = (await badge.boundingBox())!;
     const radar = (await page.locator('#hud .radar').boundingBox())!;
-    expect(tank.x + tank.width).toBeLessThanOrEqual(390);
-    expect(tank.y).toBeGreaterThanOrEqual(radar.y + radar.height);
-    expect([tank.width, tank.height]).toEqual([44, 44]);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    expect(box.y).toBeGreaterThanOrEqual(radar.y + radar.height);
+    expect([box.width, box.height]).toEqual([44, 44]);
     expect(s.particles.refused).toBe(0);
     expect(problems).toEqual([]);
   });

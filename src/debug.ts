@@ -73,6 +73,8 @@ export interface GameState {
     speed: number;
     vz: number;
     landed: boolean;
+    /** Over water, a lake, the sea or a river, held at the hover and never landed. */
+    overWater: boolean;
     rotorSpeed: number;
   };
   /** The camera's mode and its two points, copied: the rig's own arrays move every frame. */
@@ -119,8 +121,12 @@ export interface GameState {
   crates: number;
   /** Who is being winched up (the rescue level whose person it is, null for nobody) and how far up they are, 0 to 1: the loader's share. */
   winch: { spot: string | null; share: number };
+  /** Who is climbing aboard (the rescue level whose person it is, null for nobody) and how far, 0 to 1: the loader's share. */
+  board: { spot: string | null; share: number };
   /** How many people the scene has standing waiting on the ground: not those aboard, nor the one on the rope. */
   people: number;
+  /** How many boats the scene has sat on the sea: one while its rescue waits or its sailor is on the rope, none once the sailor is winched. */
+  boats: number;
   /** How many flares are lit: one for each person waiting, and none for the one being winched or whose level is going. */
   smoke: number;
   /** Whether the rope is drawn, with the person on it: while one is being winched. */
@@ -150,10 +156,10 @@ export interface GameState {
   };
   /** How many patches of every fire the scene draws glowing, and how many burnt: what the pictures show of the fires' ground. */
   ground: { burning: number; burnt: number };
-  /** The bucket as the scene draws it: whether it hangs, whether it holds water, and how long its line is. */
-  bucket: { hung: boolean; full: boolean; line: number };
-  /** The tank's badge as the HUD last drew it: nothing while the bucket is stowed, then an outline or filled. */
-  badge: 'none' | 'empty' | 'full';
+  /** The bucket: whether the player has it out, and as the scene draws it, whether it hangs, whether it holds water, and how long its line is. */
+  bucket: { out: boolean; hung: boolean; full: boolean; line: number };
+  /** The bucket's button as the HUD last drew it: grey in, an orange ring out, and with water in it blue when it is full. */
+  badge: 'in' | 'out' | 'full';
 }
 
 /** A landing pad: where, the height of its top, its radius and which way its H faces. */
@@ -253,7 +259,7 @@ export interface GameApi {
     collectibles: Collectible[];
     /** The hidden packages, each where it lies, with `z` the ground under it. */
     packages: PackagePlace[];
-    /** Where each person waits to be winched up, with `z` the ground under them; copies. */
+    /** Where each person waits to be rescued, with `z` the ground under them, how they are (`by` landing or the winch), and the boat's `yaw` for the one in a boat; copies. */
     rescues: RescueSpot[];
     /** The fires: where each burns, its patches (with `z` the ground under each), how many are lit and its run to skim; copies. */
     fires: FirePlace[];
@@ -273,7 +279,7 @@ export interface GameApi {
 
   /**
    * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
-   * `delivered 1`, `winched wood-rescue`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
+   * `delivered 1`, `winched ledge-rescue`, `boarded wood-rescue`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
    * `abandoned first-delivery`, `collected gorge-bridge 1 7`, `found east-wood 1 10`, `scooped`,
    * `dropped west-lake-fire 4` and `fire out west-lake-fire`.
    */
@@ -290,6 +296,8 @@ export interface GameApi {
   begin(id: string): void;
   /** The level going given up, told, with no time kept; nothing happens with none going. */
   abandon(): void;
+  /** The bucket put out with true, taken in with false, or with no argument put out if it is in and taken in if it is out; whether it is out now. */
+  bucket(out?: boolean): boolean;
   /** The HUD shown the way to the start of the level named `id`, or to none with null; a name the game does not have throws. */
   guide(id: string | null): void;
   /** Every level as the panel shows it: its name, its kind and the best time on it. Nothing is locked. */
@@ -356,6 +364,8 @@ export interface DebugHost {
   crates(): number;
   /** How many people the scene has written standing waiting. */
   people(): number;
+  /** How many boats the scene has written sat on the sea. */
+  boats(): number;
   /** How many flares are lit: the people waiting at the last frame drawn. */
   smoke(): number;
   /** The particles as the page counts them: see `GameState.particles`. */
@@ -363,8 +373,8 @@ export interface DebugHost {
   /** The fires' ground as the scene last drew it. */
   ground(): GameState['ground'];
   /** The bucket as the scene last drew it. */
-  bucket(): GameState['bucket'];
-  /** The tank's badge as the HUD last drew it. */
+  bucket(): Omit<GameState['bucket'], 'out'>;
+  /** The bucket's button as the HUD last drew it. */
   badge(): GameState['badge'];
   /** Whether the scene has written the rope. */
   rope(): boolean;
@@ -429,6 +439,7 @@ export function createApi(host: DebugHost): GameApi {
           speed: helicopter.speed,
           vz: helicopter.vz,
           landed: helicopter.landed,
+          overWater: helicopter.overWater,
           rotorSpeed: helicopter.rotorSpeed,
         },
         camera: { mode: rig.mode, position: [...rig.position], target: [...rig.target] },
@@ -453,14 +464,16 @@ export function createApi(host: DebugHost): GameApi {
         gold: host.gold(),
         crates: host.crates(),
         winch: { spot: game.winch.spot, share: game.winch.share },
+        board: { spot: game.board.spot, share: game.board.share },
         people: host.people(),
+        boats: host.boats(),
         smoke: host.smoke(),
         rope: host.rope(),
         tank: { full: game.tank.full, filling: game.tank.filling },
         fires: game.fires.map((f) => ({ id: f.id, burning: f.burning, patches: [...f.states] })),
         particles: host.particles(),
         ground: host.ground(),
-        bucket: host.bucket(),
+        bucket: { out: game.bucket.out, ...host.bucket() },
         badge: host.badge(),
       };
     },
@@ -479,10 +492,22 @@ export function createApi(host: DebugHost): GameApi {
         blocks: blocks.map((block) => ({ ...block })),
       })),
       packages: game.finds.places.map(({ id, x, y, z }) => ({ id, x, y, z })),
-      // read from the levels that begin with a winch, whose names are the spots' own
+      // read from the levels that begin with a person, whose names are the spots' own
       rescues: game.levels.flatMap(({ id, name, steps: [first] }) =>
-        first.kind === 'winch'
-          ? [{ id, name, who: first.who, where: first.where, x: first.x, y: first.y, z: first.z }]
+        first.kind === 'winch' || first.kind === 'board'
+          ? [
+              {
+                id,
+                name,
+                who: first.who,
+                where: first.where,
+                by: first.kind === 'board' ? ('land' as const) : ('winch' as const),
+                x: first.x,
+                y: first.y,
+                z: first.z,
+                ...(first.kind === 'winch' && first.yaw !== undefined && { yaw: first.yaw }),
+              },
+            ]
           : [],
       ),
       fires: game.fires.map(({ place }) => ({
@@ -536,6 +561,11 @@ export function createApi(host: DebugHost): GameApi {
     play: (id) => host.play(id),
     begin: (id) => game.begin(id),
     abandon: () => game.abandon(),
+    bucket(out) {
+      if (out === undefined) game.toggleBucket();
+      else game.setBucket(out);
+      return game.bucket.out;
+    },
     guide: (id) => game.guide(id),
     levels: () => levelRows(game),
     save: () => ({ ...game.progress.toJSON(), refused: game.progress.refused }),

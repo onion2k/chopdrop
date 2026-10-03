@@ -6,9 +6,11 @@
 import { describe, expect, it } from 'vitest';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES } from '../src/arena';
 import { Autopilot, FIGHT, PILOT } from '../src/autopilot';
+import { BUCKET } from '../src/bucket';
 import { FIND } from '../src/finds';
 import { Game } from '../src/game';
-import { HELICOPTER } from '../src/helicopter';
+import { HELICOPTER, HOVER_OVER_WATER } from '../src/helicopter';
+import { BOARD, WINCH } from '../src/mission';
 import { checkInvariants } from '../src/invariants';
 import { Progress, memoryStore } from '../src/progress';
 import { seeded } from '../src/random';
@@ -515,31 +517,97 @@ describe('the autopilot and the packages', () => {
 
 describe('the autopilot and the rescues', () => {
   const ids = RESCUE_SPOTS.map((s) => s.id);
+  const spotOf = (id: string) => RESCUE_SPOTS.find((s) => s.id === id)!;
 
-  it.each(ids)(
-    'flies %s from home, touching nothing, and winches in the window and does not land on the spot',
-    (id) => {
-      const { game, pilot } = told(id);
-      const spot = RESCUE_SPOTS.find((s) => s.id === id)!;
-      const knocks = { count: 0 };
-      let landedOnSpot = false;
-      let began = -1;
-      const before = game.last;
-      for (let f = 0; f < 150 * 60 && game.last === before; f++) {
-        pilot.step(DT);
-        if (game.mission.level && began < 0) began = game.t;
-        const h = game.helicopter;
-        if (h.landed && Math.hypot(h.x - spot.x, h.y - spot.y) < 20) landedOnSpot = true;
-        if (game.solids.touched) knocks.count++;
+  it.each(ids)('flies %s from home, touching nothing, done the way its spot says, in time', (id) => {
+    const { game, pilot } = told(id);
+    const spot = spotOf(id);
+    const knocks = { count: 0 };
+    let landedOnSpot = false;
+    let landedBeside = false;
+    let began: { landed: boolean; overWater: boolean; up: number } | null = null;
+    const before = game.last;
+    for (let f = 0; f < 150 * 60 && game.last === before; f++) {
+      pilot.step(DT);
+      const h = game.helicopter;
+      if (game.mission.level && !began)
+        began = { landed: h.landed, overWater: h.overWater, up: h.z - game.island.ground.heightAt(h.x, h.y) };
+      const near = Math.hypot(h.x - spot.x, h.y - spot.y);
+      if (h.landed && near < 3) landedOnSpot = true;
+      if (h.landed && near <= BOARD.reach && game.mission.level === null) landedBeside = true;
+      if (game.solids.touched) knocks.count++;
+    }
+    expect(game.last?.id).toBe(id);
+    expect(began).not.toBeNull();
+    expect(landedOnSpot, 'never on them').toBe(false);
+    expect(knocks.count).toBe(0);
+    if (spot.by === 'land') {
+      // begun by landing beside them, and not by a hover
+      expect(began!.landed).toBe(true);
+      expect(landedBeside).toBe(true);
+    } else {
+      // begun in the air, in the window
+      expect(began!.landed).toBe(false);
+      expect(began!.up).toBeGreaterThanOrEqual(WINCH.low);
+      expect(began!.up).toBeLessThanOrEqual(WINCH.high);
+    }
+    // under a limit: the longest takes about a minute and a half
+    expect(game.t).toBeLessThan(150);
+  });
+
+  it('lands the walker beside them, within the reach and a few metres off, on ground that is level with theirs, and holds still until they are aboard', () => {
+    const { game, pilot } = told('wood-rescue');
+    const spot = spotOf('wood-rescue');
+    let held = 0;
+    let at: { x: number; y: number; z: number } | null = null;
+    for (let f = 0; f < 150 * 60 && game.mission.level === null; f++) {
+      pilot.step(DT);
+      const h = game.helicopter;
+      if (h.landed && Math.hypot(h.x - spot.x, h.y - spot.y) <= BOARD.reach) {
+        at ??= { x: h.x, y: h.y, z: h.z };
+        // still while the loader fills
+        expect(h.speed).toBeLessThan(0.5);
+        if (game.starts.loading > 0) held += DT;
       }
-      expect(game.last?.id).toBe(id);
-      expect(began).toBeGreaterThan(0);
-      expect(landedOnSpot).toBe(false);
-      expect(knocks.count).toBe(0);
-      // under a limit: the longest takes about a minute and a half
-      expect(game.t).toBeLessThan(150);
-    },
-  );
+    }
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(at).not.toBeNull();
+    const away = Math.hypot(at!.x - spot.x, at!.y - spot.y);
+    expect(away).toBeGreaterThan(3);
+    expect(away).toBeLessThanOrEqual(BOARD.reach);
+    expect(Math.abs(at!.z - spot.z)).toBeLessThan(2);
+    expect(held).toBeGreaterThan(BOARD.hold - 0.5);
+  });
+
+  it('lands beside the walker rather than hovering: from over them it comes down and lands, and the level begins landed', () => {
+    const { game, pilot } = told('wood-rescue');
+    const spot = spotOf('wood-rescue');
+    game.helicopter.placeAbove(spot.x, spot.y, 10, 0);
+    for (let f = 0; f < 60 * 12 && game.mission.level === null; f++) {
+      pilot.step(DT);
+      expect(game.starts.loading === 0 || game.helicopter.landed, `frame ${f}`).toBe(true);
+    }
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(game.helicopter.landed).toBe(true);
+  });
+
+  it('winches the sailor from the air over the sea, held at the hover height or over it, never landed', () => {
+    const { game, pilot } = told('boat-rescue');
+    const spot = spotOf('boat-rescue');
+    let loaded = 0;
+    for (let f = 0; f < 150 * 60 && game.mission.level === null; f++) {
+      pilot.step(DT);
+      const h = game.helicopter;
+      expect(h.landed).toBe(false);
+      if (game.starts.loading > 0) {
+        loaded++;
+        expect(Math.hypot(h.x - spot.x, h.y - spot.y)).toBeLessThanOrEqual(WINCH.reach);
+        expect(h.z - game.island.ground.heightAt(h.x, h.y)).toBeGreaterThanOrEqual(WINCH.low);
+      }
+    }
+    expect(loaded).toBeGreaterThan(60 * (WINCH.hold - 0.5));
+    expect(game.mission.level?.id).toBe('boat-rescue');
+  });
 
   it.each(sweep(ids))(
     'flies %s from three awkward places: high over the sea, low in the west, and in the far corner',
@@ -558,7 +626,7 @@ describe('the autopilot and the rescues', () => {
     },
   );
 
-  it.each(sweep(ids))('finishes %s begun, from where a player might leave it after the winch', (id) => {
+  it.each(sweep(ids))('finishes %s begun, from where a player might leave it after the rescue', (id) => {
     for (const [x, y, height] of [
       [0, 0, 150],
       [-300, 200, 3],
@@ -570,15 +638,17 @@ describe('the autopilot and the rescues', () => {
     }
   });
 
-  it('holds still in the window while the loader fills, ten metres over the ground', () => {
-    const { game, pilot } = told('wood-rescue');
-    const spot = RESCUE_SPOTS[0];
-    game.helicopter.placeAbove(spot.x, spot.y, 10, 0);
-    for (let f = 0; f < 60; f++) pilot.step(DT);
-    expect(game.starts.loading).toBeGreaterThan(0.9);
-    expect(game.mission.level).toBeNull();
-    for (let f = 0; f < 180; f++) pilot.step(DT);
-    expect(game.mission.level?.id).toBe('wood-rescue');
+  it('holds still in the window while the loader fills, ten metres over the ground, for the ledge and the boat', () => {
+    for (const id of ['ledge-rescue', 'boat-rescue']) {
+      const { game, pilot } = told(id);
+      const spot = spotOf(id);
+      game.helicopter.placeAbove(spot.x, spot.y, 10, 0);
+      for (let f = 0; f < 60; f++) pilot.step(DT);
+      expect(game.starts.loading, id).toBeGreaterThan(0.9);
+      expect(game.mission.level, id).toBeNull();
+      for (let f = 0; f < 180; f++) pilot.step(DT);
+      expect(game.mission.level?.id, id).toBe(id);
+    }
   });
 });
 
@@ -638,34 +708,52 @@ describe('the autopilot and the fires', () => {
     expect(game.mission.level).toBeNull();
   });
 
-  it.each(ids)('skims %s with the speed and the height held for the whole scoop, along its run', (id) => {
-    const { game, pilot } = bombing(id);
-    const place = FIRES.find((f) => f.id === id)!;
-    const { from, to, z } = place.run;
-    const length = Math.hypot(to.x - from.x, to.y - from.y);
-    const [ux, uy] = [(to.x - from.x) / length, (to.y - from.y) / length];
-    let scoops = 0;
-    let wasFilling = false;
-    for (let f = 0; f < 200 * 60 && scoops === 0; f++) {
-      pilot.step(DT);
-      const h = game.helicopter;
-      if (game.tank.filling > 0) {
-        wasFilling = true;
-        // along the run, within the water and low and fast
-        const along = (h.x - from.x) * ux + (h.y - from.y) * uy;
-        const off = Math.abs(-(h.x - from.x) * uy + (h.y - from.y) * ux);
-        expect(off, 'off the run').toBeLessThan(6);
-        expect(along, 'on the run').toBeGreaterThan(-FIGHT.lead - 5);
-        expect(along, 'on the run').toBeLessThan(length + FIGHT.lead);
-        expect(h.z - z).toBeLessThanOrEqual(SCOOP.low);
-      }
-      if (game.tank.full) scoops++;
-    }
-    expect(wasFilling).toBe(true);
-    expect(game.tank.full).toBe(true);
-    // never lower than the water: it is skimming and not landed on it
-    expect(game.helicopter.landed).toBe(false);
+  it('puts the bucket out for a fire, and leaves it out', () => {
+    const { game, pilot } = bombing('west-lake-fire');
+    expect(game.bucket.out).toBe(false);
+    for (let f = 0; f < 5; f++) pilot.step(DT);
+    expect(game.bucket.out).toBe(true);
+    expect(flown(game, LIMIT, undefined, pilot)).not.toBeNull();
+    expect(game.bucket.out).toBe(true);
   });
+
+  it.each(ids)(
+    'dips at %s: hovers still over the water at the run near end, the bucket in it, until the tank is full',
+    (id) => {
+      const { game, pilot } = bombing(id);
+      const place = FIRES.find((f) => f.id === id)!;
+      const { from, to, z } = place.run;
+      let filled = false;
+      let dipping = 0;
+      let lastUp = Infinity;
+      for (let f = 0; f < 200 * 60 && !game.tank.full; f++) {
+        pilot.step(DT);
+        const h = game.helicopter;
+        if (game.tank.filling > 0) {
+          dipping++;
+          // over the water at the hover, still, within the run's end and over its water
+          expect(h.speed, 'still').toBeLessThan(2);
+          expect(h.z - z, 'with the bucket in the water').toBeLessThanOrEqual(BUCKET.line + BUCKET.height + 1e-9);
+          lastUp = h.z - z;
+          expect(h.overWater).toBe(true);
+          expect(h.landed).toBe(false);
+          expect(game.bucket.out).toBe(true);
+          expect(game.bucket.bottom).toBeLessThan(z);
+          const end = Math.min(Math.hypot(h.x - from.x, h.y - from.y), Math.hypot(h.x - to.x, h.y - to.y));
+          expect(end, 'at the near end of the run, over its water and not its shore').toBeLessThan(
+            FIGHT.in + PILOT.over,
+          );
+          expect(end, 'inside it').toBeGreaterThan(FIGHT.in - PILOT.over);
+          filled = true;
+        }
+      }
+      expect(filled).toBe(true);
+      expect(dipping).toBeGreaterThan(60 * (SCOOP.time - 0.5));
+      // it came down to the hover as the bucket filled, and held there
+      expect(lastUp).toBeLessThan(HOVER_OVER_WATER + 0.1);
+      expect(game.tank.full).toBe(true);
+    },
+  );
 
   it('comes round again for more water until the fire is out: some fire takes more than one scoop', () => {
     let most = 0;
@@ -678,7 +766,7 @@ describe('the autopilot and the fires', () => {
     expect(most).toBeGreaterThan(1);
   });
 
-  it('goes to the nearer end of the run and turns along it: from beyond either end it skims toward the other', () => {
+  it('goes to the nearer end of the run: from beyond either end it dips at that end', () => {
     const place = FIRES[0];
     const { from, to } = place.run;
     const length = Math.hypot(to.x - from.x, to.y - from.y);
@@ -687,11 +775,10 @@ describe('the autopilot and the fires', () => {
       const { game, pilot } = bombing(place.id);
       const end = side > 0 ? to : from;
       game.helicopter.placeAbove(end.x + ux * side * 50, end.y + uy * side * 50, 60, 0);
-      let along = 0;
       for (let f = 0; f < 90 * 60 && !(game.tank.filling > 0.5); f++) pilot.step(DT);
       expect(game.tank.filling, `from the ${side > 0 ? 'far' : 'near'} end`).toBeGreaterThan(0.5);
-      along = game.helicopter.vx * ux + game.helicopter.vy * uy;
-      expect(Math.sign(along), `skimming ${side > 0 ? 'back' : 'on'} along the run`).toBe(-side);
+      const h = game.helicopter;
+      expect(Math.hypot(h.x - end.x, h.y - end.y), `dipping at the end it came to`).toBeLessThan(FIGHT.in + PILOT.over);
     }
   });
 

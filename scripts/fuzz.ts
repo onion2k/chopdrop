@@ -1,7 +1,7 @@
 /**
  * The monkey, over many seeds side by side: see `fuzzer.ts`.
  *
- *   npm run fuzz                         seeds 1-12, 4000 frames each
+ *   npm run fuzz                         seeds 1-13, 4000 frames each: one for each level to go to first
  *   npm run fuzz -- --seeds 1-50 --frames 10000
  *   npm run fuzz -- --seed 17            one seed again, with what was done before it went wrong
  *   npm run fuzz -- --level under-and-between
@@ -29,7 +29,7 @@ async function main() {
     return i >= 0 ? args[i + 1] : undefined;
   };
   const one = value('seed');
-  const range = (value('seeds') ?? '1-12').split('-').map(Number);
+  const range = (value('seeds') ?? '1-13').split('-').map(Number);
   const seeds = one !== undefined ? [+one] : Array.from({ length: range[1] - range[0] + 1 }, (_, k) => range[0] + k);
   const frames = +(value('frames') ?? 4000);
   const level = value('level');

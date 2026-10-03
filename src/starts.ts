@@ -3,7 +3,8 @@
  * begins when it is landed on its pickup pad for as long as the parcel takes to load, and a trial or a course when
  * the helicopter's middle flies through its first ring or opening the way it faces, by the same rule a mission passes
  * the rest of its rings by, and a rescue when it has hovered in the window over its person for as long as the winch
- * takes, by the same rule a mission winches by, and a fire when a drop has put a patch of it out (told by the game, which
+ * takes, by the same rule a mission winches by, or a rescue by landing when it has stayed landed within reach of its
+ * person for as long as the boarding takes, by the same rule a mission boards by, and a fire when a drop has put a patch of it out (told by the game, which
  * knows where the water fell). A level that has just ended on a pad begins nothing from it until the helicopter has
  * lifted off, or one delivery would begin the next from the pad it ended on. Without it the game would have to be
  * told a level, and a player could not find one by flying.
@@ -14,7 +15,9 @@ import {
   crossed,
   inWindow,
   loadFor,
+  onBoard,
   onPad,
+  type Board,
   type GroundAt,
   type Gate,
   type Lander,
@@ -25,10 +28,12 @@ import {
 } from './mission';
 
 export class Starts {
-  /** The seconds it has stood on a pickup pad not blocked, the parcel loading, or hovered in a rescue's window, the winch running; 0 otherwise. */
+  /** The seconds it has stood on a pickup pad not blocked, the parcel loading, hovered in a rescue's window, the winch running, or stayed landed beside a person, the boarding running; 0 otherwise. */
   loading = 0;
   /** The level whose person the winch is running for, while it runs (`loading` is then its seconds); null otherwise, and for a pad's load. */
   winching: Level | null = null;
+  /** The level whose person is climbing aboard, while they do (`loading` is then its seconds); null otherwise. */
+  boarding: Level | null = null;
   /** The pad a level ended on (by its place in the island's list), where nothing starts until it lifts off; −1 for none. */
   blocked = -1;
   /**
@@ -40,6 +45,8 @@ export class Starts {
   private readonly openings: { level: Level; opening: Ring | Gate }[] = [];
   /** The levels that begin with a person winched up, each with the person: those whose first step is a winch. Built once. */
   private readonly winches: { level: Level; winch: Winch }[] = [];
+  /** The levels that begin with a person boarding, each with the person: those whose first step is a board. Built once. */
+  private readonly boards: { level: Level; person: Board }[] = [];
   /** The level that begins with a drop on each fire, by the fire's id: the first level, in order, whose first step is a douse of it. Built once. */
   private readonly douses = new Map<string, Level>();
   /** Where the helicopter's middle was at the last step, which an opening is passed by moving from; none until it has been seen. */
@@ -58,6 +65,7 @@ export class Starts {
       const first = level.steps[0];
       if (first.kind === 'pickup') this.byPad[first.pad] ??= level;
       else if (first.kind === 'winch') this.winches.push({ level, winch: first });
+      else if (first.kind === 'board') this.boards.push({ level, person: first });
       else if (first.kind === 'douse' && !this.douses.has(first.fire)) this.douses.set(first.fire, level);
       else if (first.kind === 'ring' || first.kind === 'gate') this.openings.push({ level, opening: first });
     }
@@ -68,6 +76,7 @@ export class Starts {
     // lifting off clears the pad a level ended on
     if (!h.landed) this.blocked = -1;
     this.winching = null;
+    this.boarding = null;
     const now = this.here;
     now.x = h.x;
     now.y = h.y;
@@ -90,6 +99,17 @@ export class Starts {
         this.loading += dt;
         if (this.loading < loadFor(winch)) {
           this.winching = level;
+          return null;
+        }
+        this.loading = 0;
+        return level;
+      }
+    // a person to board: landed beside them for a full hold, and never hovered over
+    for (const { level, person } of this.boards)
+      if (onBoard(h, person)) {
+        this.loading += dt;
+        if (this.loading < loadFor(person)) {
+          this.boarding = level;
           return null;
         }
         this.loading = 0;
@@ -124,6 +144,7 @@ export class Starts {
   reset(): void {
     this.loading = 0;
     this.winching = null;
+    this.boarding = null;
     this.blocked = -1;
     this.seen = false;
   }

@@ -266,8 +266,8 @@
     border: 2px solid #ffc23a;
     border-radius: 50%;
   }
-  /* the tank's badge, beside the radar's and the same size: a water drop, an outline while the tank is empty and filled blue when it is full, shown only while the bucket is in use */
-  #hud .tank {
+  /* the bucket's button, beside the radar's and the same size, and the tank's badge as well: grey while the bucket is in, with the key's tag; an orange ring on a dark orange ground while it is out; and the same with its water drawn in blue when it is full. A click or a tap puts it out or takes it in */
+  #hud .bucket {
     position: fixed;
     top: calc(14px + env(safe-area-inset-top));
     right: calc(14px + 44px + 8px + env(safe-area-inset-right));
@@ -275,31 +275,56 @@
     height: 44px;
     display: grid;
     place-items: center;
+    padding: 0;
     border-radius: 12px;
-    background: rgba(14, 12, 20, 0.62);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(22, 26, 32, 0.72);
+    border: 1.5px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
     backdrop-filter: blur(8px);
-    pointer-events: none;
+    color: rgba(255, 255, 255, 0.55);
+    cursor: pointer;
   }
-  #hud .tank[hidden] {
-    display: none;
-  }
-  #hud .tank svg {
+  #hud .bucket svg {
     width: 22px;
     height: 22px;
     fill: none;
-    stroke: rgba(255, 255, 255, 0.55);
-    stroke-width: 1.6;
+    stroke: currentColor;
+    stroke-width: 1.8;
     stroke-linejoin: round;
   }
-  #hud .tank[data-state='full'] svg {
-    fill: #3f8fe0;
-    stroke: #8cc4ff;
-    filter: drop-shadow(0 0 4px #3f8fe0);
+  #hud .bucket .handle {
+    stroke-width: 1.6;
   }
-  /* the loader fills in blue while the tank is scooped, as it fills in gold for a parcel and a person */
-  #hud .loader[data-kind='scoop'] .fill {
-    stroke: #3f8fe0;
+  #hud .bucket .water {
+    fill: #4aa3ff;
+    stroke: none;
+    opacity: 0;
+  }
+  #hud .bucket[data-state='out'],
+  #hud .bucket[data-state='full'] {
+    color: #fff;
+    border-color: #ff8a3d;
+    background: rgba(60, 32, 16, 0.78);
+  }
+  #hud .bucket[data-state='full'] .water {
+    opacity: 1;
+  }
+  #hud .bucket .key {
+    position: absolute;
+    right: -7px;
+    bottom: -7px;
+    padding: 2px 4px;
+    border-radius: 5px;
+    background: rgba(22, 26, 32, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.7);
+    font:
+      600 10px/1 system-ui,
+      sans-serif;
+  }
+  /* the loader fills in blue while the bucket fills, as it fills in gold for a parcel, a person winched and one climbing aboard */
+  #hud .loader[data-kind='fill'] .fill {
+    stroke: #4aa3ff;
   }
   #hud.away {
     display: none;
@@ -315,10 +340,13 @@
     #hud .toast h2 {
       font-size: 20px;
     }
-    /* under the radar, since the bar takes the room beside it, and the frame time under that */
-    #hud .tank {
+    /* under the radar, since the bar takes the room beside it, clear of the lever, and the frame time under that; a finger has no key, so no tag */
+    #hud .bucket {
       right: calc(14px + env(safe-area-inset-right));
       top: calc(14px + 44px + 8px + env(safe-area-inset-top));
+    }
+    #hud .bucket .key {
+      display: none;
     }
     #stats {
       top: calc(14px + 2 * (44px + 8px) + env(safe-area-inset-top));
@@ -669,7 +697,7 @@
 <div id="stage"><canvas id="view"></canvas></div>
 <div class="panel" id="stats" hidden></div>
 <div class="panel" id="help" hidden>
-  <span>W S</span> fly · <span>A D</span> turn · <span>Space Shift</span> up, down
+  <span>W S</span> fly · <span>A D</span> turn · <span>Space Shift</span> up, down · <span>B</span> bucket
 </div>
 <div id="boot">
   <p id="bootMsg">starting WebGPU…</p>

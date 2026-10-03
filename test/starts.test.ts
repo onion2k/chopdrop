@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { FIRES, LEVELS, RESCUE_SPOTS, theIsland } from '../src/arena';
 import { HELICOPTER } from '../src/helicopter';
-import { DELIVERY, WINCH, type Gate, type Lander, type Level, type Ring } from '../src/mission';
+import { BOARD, DELIVERY, WINCH, type Gate, type Lander, type Level, type Ring } from '../src/mission';
 import { Starts } from '../src/starts';
 import { DT } from './helpers';
 
@@ -215,8 +215,8 @@ describe('starting a ring trial or a course', () => {
   });
 });
 
-describe('starting a rescue', () => {
-  const spot = RESCUE_SPOTS[0];
+describe('starting a rescue by the winch', () => {
+  const spot = RESCUE_SPOTS.find((s) => s.id === 'ledge-rescue')!;
   const ground = theIsland().ground;
   const groundAt = (x: number, y: number) => ground.heightAt(x, y);
   /** A set of starts over the arena's levels, with the helicopter hovering `up` over the ground at `across` from the first spot. */
@@ -238,12 +238,14 @@ describe('starting a rescue', () => {
     const { s, hover } = rescues();
     expect(hover(WINCH.hold - 0.2)).toBeNull();
     expect(s.loading).toBeCloseTo(WINCH.hold - 0.2, 1);
-    expect(hover(0.4)).toBe(level('wood-rescue'));
+    expect(hover(0.4)).toBe(level('ledge-rescue'));
     expect(s.loading).toBe(0);
   });
 
-  it('begins each rescue from its own spot', () => {
-    for (const r of RESCUE_SPOTS) {
+  it('begins each winched rescue from its own spot: the ledge, and the boat over the sea', () => {
+    const winched = RESCUE_SPOTS.filter((s) => s.by === 'winch');
+    expect(winched.map((r) => r.id)).toEqual(['boat-rescue', 'ledge-rescue']);
+    for (const r of winched) {
       const s = new Starts(pads, LEVELS, groundAt);
       const h: Lander = { x: r.x, y: r.y, z: groundAt(r.x, r.y) + 10, landed: false };
       let began: Level | null = null;
@@ -272,13 +274,13 @@ describe('starting a rescue', () => {
     expect(hover(DT, 16.5)).toBeNull();
     expect(s.loading).toBe(0);
     expect(hover(WINCH.hold - 0.5)).toBeNull();
-    expect(hover(0.7)).toBe(level('wood-rescue'));
+    expect(hover(0.7)).toBe(level('ledge-rescue'));
   });
 
   it('is not held by a pad that is blocked: a level ended on home does not stop a rescue', () => {
     const { s, hover } = rescues();
     s.blocked = 0;
-    expect(hover(WINCH.hold + 0.2)).toBe(level('wood-rescue'));
+    expect(hover(WINCH.hold + 0.2)).toBe(level('ledge-rescue'));
   });
 
   it('is reset with the rest, and begins nothing from a level that has no winch first', () => {
@@ -294,6 +296,66 @@ describe('starting a rescue', () => {
     const h: Lander = { x: spot.x, y: spot.y, z: groundAt(spot.x, spot.y) + 10, landed: false };
     for (let f = 0; f < 400; f++) expect(none.step(DT, h)).toBeNull();
     expect(none.loading).toBe(0);
+  });
+});
+
+describe('starting a rescue by landing', () => {
+  const walker = RESCUE_SPOTS.find((s) => s.id === 'wood-rescue')!;
+  /** A set of starts, with the helicopter `across` from the walker, landed or `up` in the air, for `seconds`; which level it began. */
+  function beside(seconds: number, across = 6, landed = true, up = 0) {
+    const s = new Starts(pads, LEVELS);
+    const h: Lander = { x: walker.x + across, y: walker.y, z: walker.z + up, landed };
+    let began: Level | null = null;
+    for (let f = 0, n = Math.round(seconds / DT); f < n && !began; f++) began = s.step(DT, h);
+    return { s, began };
+  }
+
+  it("begins the walker's level after a full hold landed within the reach, which a winch does not", () => {
+    const early = beside(BOARD.hold - 0.2);
+    expect(early.began).toBeNull();
+    expect(early.s.loading).toBeCloseTo(BOARD.hold - 0.2, 1);
+    expect(early.s.boarding).toBe(level('wood-rescue'));
+    expect(beside(BOARD.hold + 0.2).began).toBe(level('wood-rescue'));
+    expect(beside(BOARD.hold + 0.2, 14.9).began).toBe(level('wood-rescue'));
+  });
+
+  it('begins nothing landed 16 m off, or hovering over them at any height, however long', () => {
+    for (const [across, landed, up] of [
+      [16, true, 0],
+      [0, false, 0.5],
+      [0, false, 10],
+      [0, false, 12],
+    ] as const) {
+      const { s, began } = beside(BOARD.hold + 3, across, landed, up);
+      expect(began, `${across} ${landed} ${up}`).toBeNull();
+      expect(s.loading).toBe(0);
+    }
+  });
+
+  it('starts the hold again when the helicopter lifts off', () => {
+    const s = new Starts(pads, LEVELS);
+    const down: Lander = { x: walker.x + 5, y: walker.y, z: walker.z, landed: true };
+    for (let f = 0; f < 120; f++) s.step(DT, down);
+    expect(s.loading).toBeGreaterThan(1.9);
+    s.step(DT, { ...down, z: walker.z + 1, landed: false });
+    expect(s.loading).toBe(0);
+    expect(s.boarding).toBeNull();
+  });
+
+  it('is not begun by a winch, and the ledge and the boat are not begun by landing near them', () => {
+    const winched = RESCUE_SPOTS.filter((x) => x.by === 'winch');
+    expect(winched).toHaveLength(2);
+    for (const r of winched) {
+      const s = new Starts(pads, LEVELS);
+      const h: Lander = { x: r.x + 5, y: r.y, z: r.z, landed: true };
+      for (let f = 0; f < 600; f++) expect(s.step(DT, h), r.id).toBeNull();
+    }
+  });
+
+  it('is reset with the rest', () => {
+    const { s } = beside(1);
+    s.reset();
+    expect([s.loading, s.boarding]).toEqual([0, null]);
   });
 });
 

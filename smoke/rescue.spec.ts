@@ -1,25 +1,28 @@
 /**
- * The rescues in the page: the walker in the western wood winched up by holding the window over them with the keys, the
- * loader filling and the rope drawn and the smoke out, then told started and winched, the person gone from the ground
- * and the bar saying where they are to be flown; the winch broken off by climbing out of the window, which empties the
- * loader and puts the smoke back; the end on the home pad, with the toast and the best kept; a person held over while
- * another level goes, which does nothing; and a rescue winched by touch on a phone, the loader in view. The helicopter is
- * put over the person through the test API, and what it does from there is the controls'. Stepped, never waited on.
+ * The rescues in the page: the walker in the western wood rescued by landing beside them, the loader "The walker climbs
+ * aboard" filling while the helicopter stays down, then told started and boarded, the person gone from the ground and
+ * the bar saying where they are to be flown; hovering over them, which does nothing; a boarding broken off by lifting
+ * off, which empties the loader; the end on the home pad, with the toast and the best kept; the sailor in the boat off the
+ * east beach winched up by holding the window over the sea, the boat there until they are aboard and the rope drawn; a
+ * person left alone while another level goes; and a boarding by touch on a phone, the loader in view. The helicopter is
+ * put beside or over the person through the test API, and what it does from there is the controls'. Stepped, never waited on.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { HOVER_LIFT } from '../src/helicopter';
-import { WINCH } from '../src/mission';
+import { BOARD, WINCH } from '../src/mission';
 import { fingers, finish, leverTravel, start, watch } from './game';
 
 const state = (page: Page) => page.evaluate(() => window.game!.state());
 const step = (page: Page, frames: number) => page.evaluate((n) => window.game!.step(n), frames);
 const events = (page: Page) => page.evaluate(() => window.game!.events());
 const WOOD = 'wood-rescue';
-const WORDS = 'Winching up the walker';
+const BOAT = 'boat-rescue';
+const BOARDING = 'The walker climbs aboard';
 
-/** The walker's place, as the game says it. */
-const walker = async (page: Page) =>
-  (await page.evaluate(() => window.game!.content().rescues)).find((r) => r.id === WOOD)!;
+/** A person's place, as the game says it. */
+const person = async (page: Page, id: string) =>
+  (await page.evaluate(() => window.game!.content().rescues)).find((r) => r.id === id)!;
+const walker = (page: Page) => person(page, WOOD);
 
 /**
  * The window held by the keys for `frames` frames: a helicopter with nothing held hangs where it is, so Space and Shift
@@ -45,9 +48,9 @@ async function holdByKeys(page: Page, frames: number, beat = 6) {
   return { lowest, highest };
 }
 
-/** The helicopter over the walker, `up` over the ground there, nothing held, the camera behind it. */
-async function over(page: Page, up = 10) {
-  const w = await walker(page);
+/** The helicopter over the person of `id`, `up` over the ground there, nothing held, the camera behind it. */
+async function over(page: Page, id = WOOD, up = 10) {
+  const w = await person(page, id);
   await page.evaluate(
     ([x, y, up]) => {
       const g = window.game!;
@@ -58,113 +61,128 @@ async function over(page: Page, up = 10) {
   );
 }
 
-test('the walker winched up by the keys: the loader fills, the rope is out and the smoke gone, then the level begins', async ({
+test('the walker rescued by landing beside them: the loader fills while it stays down, the smoke goes, then the level begins', async ({
   page,
 }) => {
   test.setTimeout(120_000);
   const problems = watch(page);
   await start(page, { seed: 11, paused: true, save: { best: {} } });
   await step(page, 1);
-  // nothing going: three people waiting, each with their smoke, no rope and no loader
+  // nothing going: three people waiting, each with their smoke, no rope and no loader, and the walker is landed beside, not winched
   const before = await state(page);
-  expect([before.people, before.smoke, before.rope]).toEqual([3, 3, false]);
-  expect(before.winch).toEqual({ spot: null, share: 0 });
+  expect([before.people, before.smoke, before.rope, before.boats]).toEqual([3, 3, false, 1]);
+  expect(before.board).toEqual({ spot: null, share: 0 });
+  expect((await walker(page)).by).toBe('land');
   await expect(page.locator('#hud .loader')).toBeHidden();
   await expect(page.locator('#hud .hint')).toBeVisible();
 
-  // brought over the walker, hovering in the middle of the window, and held there a while
-  await over(page);
-  const kept = await holdByKeys(page, 84);
-  expect(kept.lowest, 'held above the window\u2019s foot').toBeGreaterThanOrEqual(WINCH.low);
-  expect(kept.highest, 'and under its top').toBeLessThanOrEqual(WINCH.high);
+  // put down beside the walker, which staying begins
+  await page.evaluate((id) => window.game!.play(id), WOOD);
+  await step(page, 1);
+  expect((await state(page)).helicopter.landed).toBe(true);
+  await step(page, Math.round((BOARD.hold / 2) * 60));
   const mid = await state(page);
   expect(mid.mission.level, 'not begun yet').toBeNull();
-  expect(mid.winch.spot).toBe(WOOD);
-  expect(mid.winch.share).toBeGreaterThan(0.3);
-  expect(mid.winch.share).toBeLessThan(0.7);
-  expect(mid.winch.share).toBeCloseTo(mid.mission.loading / WINCH.hold, 6);
-  // the loader, filling, with who it is for; the rope drawn, the smoke out and the person off the ground
+  expect(mid.board.spot).toBe(WOOD);
+  expect(mid.board.share).toBeGreaterThan(0.3);
+  expect(mid.board.share).toBeLessThan(0.7);
+  expect(mid.winch).toEqual({ spot: null, share: 0 });
+  // the loader, filling, with who it is for; no rope, the person still on the ground
   const loader = page.locator('#hud .loader');
   await expect(loader).toBeVisible();
-  await expect(loader.locator('.what')).toHaveText(WORDS);
+  await expect(loader.locator('.what')).toHaveText(BOARDING);
+  await expect(loader).toHaveAttribute('data-kind', 'board');
   const filled = await loader.locator('.fill').evaluate((el: SVGElement) => parseFloat(el.style.strokeDasharray));
-  expect(filled / (2 * Math.PI * 11)).toBeCloseTo(mid.winch.share, 1);
-  expect([mid.rope, mid.smoke, mid.people]).toEqual([true, 2, 2]);
+  expect(filled / (2 * Math.PI * 11)).toBeCloseTo(mid.board.share, 1);
+  expect([mid.rope, mid.smoke, mid.people]).toEqual([false, 3, 3]);
 
-  // held to the end of the hold: begun and winched, told in that order, and the person aboard
-  await holdByKeys(page, 120);
-  expect(await events(page)).toEqual([`started ${WOOD}`, `winched ${WOOD}`]);
+  // stayed to the end of the hold: begun and boarded, told in that order, and the person aboard
+  await step(page, Math.round(BOARD.hold * 60));
+  expect(await events(page)).toEqual([`started ${WOOD}`, `boarded ${WOOD}`]);
   await step(page, 1);
   const going = await state(page);
   expect(going.mission.level).toBe(WOOD);
   expect(going.mission.next).toBe(1);
-  expect([going.rope, going.smoke, going.people], 'the person gone from the ground, and the rope away').toEqual([
-    false,
-    2,
-    2,
-  ]);
-  expect(going.winch).toEqual({ spot: null, share: 0 });
+  expect([going.rope, going.smoke, going.people], 'the person gone from the ground').toEqual([false, 2, 2]);
+  expect(going.board).toEqual({ spot: null, share: 0 });
   await expect(loader).toBeHidden();
   await expect(page.locator('#hud .goal')).toHaveText('Fly the walker to the home pad');
   await expect(page.locator('#hud .hint')).toBeHidden();
-  // the clock runs from the lift-off, in game time
+  // the clock runs from the boarding, in game time
   const t0 = going.mission.time;
-  await holdByKeys(page, 60);
+  await step(page, 60);
   expect((await state(page)).mission.time).toBeGreaterThan(t0 + 0.9);
   await expect(page.locator('#hud .clock')).toHaveText(/^0:0\d$/);
   expect(problems).toEqual([]);
 });
 
-test('the winch broken off part way, by climbing out of the window: the loader empty, the smoke back, and it starts again', async ({
+test('hovering over the walker, low or high, does nothing: only landing beside them is a rescue', async ({ page }) => {
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  // held in the middle of the winch's old window over them, for far longer than a boarding or a winch takes
+  await over(page);
+  const kept = await holdByKeys(page, 300);
+  expect(kept.lowest).toBeGreaterThanOrEqual(WINCH.low);
+  const held = await state(page);
+  expect(held.mission.level).toBeNull();
+  expect([held.board, held.winch]).toEqual([
+    { spot: null, share: 0 },
+    { spot: null, share: 0 },
+  ]);
+  expect([held.rope, held.smoke, held.people]).toEqual([false, 3, 3]);
+  expect(await events(page)).toEqual([]);
+  await expect(page.locator('#hud .loader')).toBeHidden();
+  // and low, a few metres up, held still
+  await over(page, WOOD, 4);
+  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
+  await step(page, Math.ceil((BOARD.hold + 2) * 60));
+  expect((await state(page)).mission.level).toBeNull();
+  expect(await events(page)).toEqual([]);
+  await page.evaluate(() => window.game!.release());
+  expect(problems).toEqual([]);
+});
+
+test('the boarding broken off part way, by lifting off: the loader empty, the person still waiting, and it starts again', async ({
   page,
 }) => {
   const problems = watch(page);
   await start(page, { seed: 11, paused: true });
-  await over(page);
-  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
-  await step(page, 90);
+  await page.evaluate((id) => window.game!.play(id), WOOD);
+  await step(page, Math.round(BOARD.hold * 0.6 * 60));
   const part = await state(page);
-  expect(part.winch.spot).toBe(WOOD);
-  expect(part.winch.share).toBeGreaterThan(0.4);
-  expect([part.rope, part.smoke, part.people]).toEqual([true, 2, 2]);
+  expect(part.board.spot).toBe(WOOD);
+  expect(part.board.share).toBeGreaterThan(0.4);
   await expect(page.locator('#hud .loader')).toBeVisible();
 
-  // climbed out of the top of the window: the rope runs back
-  await over(page, WINCH.high + 3);
-  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
-  await step(page, 2);
+  // lifted off: the boarding runs back
+  await page.evaluate(() => window.game!.fly(0, 0, 1));
+  await step(page, 40);
+  await page.evaluate(() => window.game!.release());
   const broken = await state(page);
-  expect(broken.winch).toEqual({ spot: null, share: 0 });
-  expect(broken.mission.loading).toBe(0);
-  expect([broken.rope, broken.smoke, broken.people], 'the smoke is back, the person on the ground').toEqual([
-    false,
-    3,
-    3,
-  ]);
+  expect(broken.helicopter.landed).toBe(false);
+  expect(broken.board).toEqual({ spot: null, share: 0 });
+  expect(broken.mission.level).toBeNull();
+  expect([broken.smoke, broken.people], 'the person is still waiting').toEqual([3, 3]);
   await expect(page.locator('#hud .loader')).toBeHidden();
   expect(await events(page)).toEqual([]);
 
-  // back in the window: it starts from nothing, not from where it was
-  await over(page);
-  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
+  // set down beside them again: it starts from nothing, not from where it was
+  await page.evaluate((id) => window.game!.play(id), WOOD);
   await step(page, 30);
   const again = await state(page);
-  expect(again.winch.spot).toBe(WOOD);
-  expect(again.winch.share).toBeLessThan(0.25);
-  await page.evaluate(() => window.game!.release());
+  expect(again.board.spot).toBe(WOOD);
+  expect(again.board.share).toBeLessThan(0.25);
   expect(problems).toEqual([]);
 });
 
 test('the end on the home pad: the toast "Rescued!" with the time, and the best kept', async ({ page }) => {
   const problems = watch(page);
   await start(page, { seed: 11, paused: true, save: { best: {} } });
-  // begun in the air over the walker: begun on the home pad it would end on the first step
-  await over(page);
-  await page.evaluate(() => window.game!.begin('wood-rescue'));
+  // begun beside the walker: begun on the home pad it would end on the first step
+  await page.evaluate((id) => window.game!.play(id), WOOD);
+  await step(page, Math.round((BOARD.hold + 1) * 60));
   await events(page);
-  await step(page, 1);
   await expect(page.locator('#hud .goal')).toHaveText('Fly the walker to the home pad');
-  await step(page, 120);
   await finish(page);
   const end = await state(page);
   expect([end.screen, end.mission.level]).toEqual(['flying', null]);
@@ -185,12 +203,78 @@ test('the end on the home pad: the toast "Rescued!" with the time, and the best 
   await expect(row.locator('.label')).toHaveText('Wood rescue');
   await expect(row.locator('.kind')).toHaveText('Rescue');
   await expect(row.locator('.kind svg')).toBeVisible();
-  await expect(row.locator('.where')).toHaveText('Winch up the walker in the western wood');
+  await expect(row.locator('.where')).toHaveText('Land beside the walker in the western wood');
   await expect(row.locator('.best')).toHaveText(/^\d:\d\d$/);
   expect(problems).toEqual([]);
 });
 
-test('the flare is particles: they rise while the person waits and stop when the winch begins, and come back if it is broken off', async ({
+test('the sailor winched up from the boat by holding the window over the sea: the boat there, the rope out, the loader in the winch’s words', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true, save: { best: {} } });
+  await step(page, 1);
+  const sailor = await person(page, BOAT);
+  expect([sailor.by, sailor.who, sailor.where]).toEqual(['winch', 'the sailor', 'off the east beach']);
+  expect(sailor.yaw).toBe(3);
+  expect((await state(page)).boats).toBe(1);
+
+  // brought over the boat, hovering in the window over the sea, and held there a while
+  await over(page, BOAT);
+  const kept = await holdByKeys(page, 84);
+  expect(kept.lowest, 'held above the window’s foot').toBeGreaterThanOrEqual(WINCH.low);
+  expect(kept.highest, 'and under its top').toBeLessThanOrEqual(WINCH.high);
+  const mid = await state(page);
+  expect(mid.mission.level, 'not begun yet').toBeNull();
+  expect(mid.winch.spot).toBe(BOAT);
+  expect(mid.winch.share).toBeGreaterThan(0.3);
+  expect(mid.winch.share).toBeLessThan(0.7);
+  const loader = page.locator('#hud .loader');
+  await expect(loader).toBeVisible();
+  await expect(loader.locator('.what')).toHaveText('Winching up the sailor');
+  // the rope out, the sailor off the boat and the boat still there under the rope
+  expect([mid.rope, mid.smoke, mid.people, mid.boats]).toEqual([true, 2, 2, 1]);
+
+  // held to the end of the hold: begun and winched, the sailor aboard, and the boat left on the sea empty
+  await holdByKeys(page, 120);
+  expect(await events(page)).toEqual([`started ${BOAT}`, `winched ${BOAT}`]);
+  await step(page, 1);
+  const going = await state(page);
+  expect(going.mission.level).toBe(BOAT);
+  expect([going.rope, going.smoke, going.people, going.boats]).toEqual([false, 2, 2, 1]);
+  await expect(loader).toBeHidden();
+  await expect(page.locator('#hud .goal')).toHaveText('Fly the sailor to the home pad');
+  await page.evaluate(() => window.game!.release());
+  expect(problems).toEqual([]);
+});
+
+test('landing near the boat does nothing: the sailor is winched, and there is no ground to land on', async ({
+  page,
+}) => {
+  const problems = watch(page);
+  await start(page, { seed: 11, paused: true });
+  const sailor = await person(page, BOAT);
+  // let down onto the sea beside the boat: it hovers over the water and is never landed, so nothing boards
+  await page.evaluate(
+    ([x, y]) => {
+      const g = window.game!;
+      g.release();
+      g.teleport(x + 6, y, 20, 0);
+    },
+    [sailor.x, sailor.y] as const,
+  );
+  await page.evaluate(() => window.game!.fly(0, 0, 0));
+  await step(page, Math.ceil((BOARD.hold + 3) * 60));
+  const now = await state(page);
+  expect(now.helicopter).toMatchObject({ overWater: true, landed: false });
+  expect([now.mission.level, now.board.spot]).toEqual([null, null]);
+  expect(await events(page)).toEqual([]);
+  await page.evaluate(() => window.game!.release());
+  expect(problems).toEqual([]);
+});
+
+test('the flare is particles: they rise while the person waits and stop when the boarding is done, and are lit again after the level ends', async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -216,55 +300,84 @@ test('the flare is particles: they rise while the person waits and stop when the
   const waiting = await flares(120);
   expect(waiting.lit).toBe(3);
   expect(waiting.born, 'the flare rises while they wait').toBeGreaterThan(30);
-  // winched: held in the window, the loader part way; the flare is out
-  await over(page);
-  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
-  await page.evaluate(() => window.game!.stepDrawn(60));
-  const rope = await state(page);
-  expect([rope.winch.spot, rope.smoke]).toEqual([WOOD, 2]);
-  // from the first frame of the winch on, none is born; the particles already in the air fade on their own
-  const winching = await flares(60);
-  expect(winching.born, 'none is born while the person is on the rope').toBe(0);
-  expect(winching.lit).toBe(2);
-  // broken off by climbing out of the window: the flare is lit again
-  await page.evaluate(() =>
-    window.game!.teleport(window.game!.state().helicopter.x, window.game!.state().helicopter.y, 40),
-  );
+  // boarded: the level begins and the person is aboard, so their flare is out
+  await page.evaluate((id) => window.game!.play(id), WOOD);
+  await page.evaluate(() => window.game!.stepDrawn(Math.round((3 + 1) * 60)));
+  expect((await state(page)).mission.level).toBe(WOOD);
+  await page.evaluate(([x, y]) => window.game!.look(x, y, { azimuth: -2.2, polar: 1.15, radius: 120 }), [
+    w.x,
+    w.y,
+  ] as const);
+  const aboard = await flares(60);
+  expect(aboard.lit).toBe(2);
+  expect(aboard.born, 'none is born for a person aboard').toBe(0);
+  // given up: they are back on the ground, and the flare is lit again
+  await page.evaluate(() => window.game!.abandon());
   const back = await flares(120);
   expect(back.lit).toBe(3);
   expect(back.born).toBeGreaterThan(30);
-  await page.evaluate(() => window.game!.release());
   expect((await state(page)).particles.refused).toBe(0);
   expect(problems).toEqual([]);
 });
 
-test('holding the window over a person while another level goes does nothing', async ({ page }) => {
+test('landing beside a person while another level goes does nothing', async ({ page }) => {
   const problems = watch(page);
   await start(page, { seed: 11, paused: true });
   await page.evaluate(() => window.game!.begin('first-delivery'));
   await events(page);
-  await over(page);
-  await page.evaluate((hover) => window.game!.fly(0, 0, hover), HOVER_LIFT);
-  await step(page, Math.ceil((WINCH.hold + 1) * 60));
+  const w = await walker(page);
+  // put down beside the walker, and left there for far longer than the boarding takes
+  await page.evaluate(
+    ([x, y]) => {
+      const g = window.game!;
+      g.release();
+      g.teleport(x + 6, y, 0, 0);
+    },
+    [w.x, w.y] as const,
+  );
+  await step(page, Math.ceil((BOARD.hold + 1) * 60));
   const held = await state(page);
   expect(held.mission.level).toBe('first-delivery');
-  expect(held.winch).toEqual({ spot: null, share: 0 });
+  expect(held.board).toEqual({ spot: null, share: 0 });
   expect([held.rope, held.smoke, held.people], 'nobody is lifted, and the smoke still rises').toEqual([false, 3, 3]);
   expect(await events(page)).toEqual([]);
   await expect(page.locator('#hud .loader')).toBeHidden();
-  await page.evaluate(() => window.game!.release());
   expect(problems).toEqual([]);
 });
 
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('the walker winched up by touch: the lever at its stop holds the window, and the loader is in view', async ({
+  test('the walker boarded by touch: set down beside them, the loader is in view, and nothing is held', async ({
     page,
   }) => {
     const problems = watch(page);
     await start(page, { seed: 11, paused: true });
     await page.evaluate((id) => window.game!.play(id), WOOD);
+    await step(page, 80);
+    const mid = await state(page);
+    expect(mid.board.spot).toBe(WOOD);
+    expect(mid.board.share).toBeGreaterThan(0.3);
+    const loader = page.locator('#hud .loader');
+    await expect(loader).toBeVisible();
+    await expect(loader.locator('.what')).toHaveText(BOARDING);
+    const box = (await loader.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    await step(page, 120);
+    expect(await events(page)).toEqual([`started ${WOOD}`, `boarded ${WOOD}`]);
+    await step(page, 1);
+    await expect(page.locator('#hud .goal')).toHaveText('Fly the walker to the home pad');
+    expect(problems).toEqual([]);
+  });
+
+  test('the sailor winched by touch: the lever at its stop holds the window over the sea, and the loader is in view', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true });
+    await page.evaluate((id) => window.game!.play(id), BOAT);
     await step(page, 1);
     const travel = await leverTravel(page);
     const hand = await fingers(page);
@@ -273,20 +386,16 @@ test.describe('on a phone', () => {
     expect((await state(page)).input.lever).toBe(HOVER_LIFT);
     await step(page, 80);
     const mid = await state(page);
-    expect(mid.winch.spot).toBe(WOOD);
-    expect(mid.winch.share).toBeGreaterThan(0.3);
+    expect(mid.winch.spot).toBe(BOAT);
     const loader = page.locator('#hud .loader');
     await expect(loader).toBeVisible();
-    await expect(loader.locator('.what')).toHaveText(WORDS);
+    await expect(loader.locator('.what')).toHaveText('Winching up the sailor');
     const box = (await loader.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
-    expect(box.y).toBeGreaterThanOrEqual(0);
     await step(page, 120);
     await hand.up(2);
-    expect(await events(page)).toEqual([`started ${WOOD}`, `winched ${WOOD}`]);
-    await step(page, 1);
-    await expect(page.locator('#hud .goal')).toHaveText('Fly the walker to the home pad');
+    expect(await events(page)).toEqual([`started ${BOAT}`, `winched ${BOAT}`]);
     expect(problems).toEqual([]);
   });
 });

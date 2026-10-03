@@ -15,13 +15,17 @@ are collected by flying through them, and thirteen levels: four
 deliveries, two ring trials, a course, three rescues and three fires. The
 game opens flying free from home, nothing locked: a level begins where its
 first step is done, on a pad with a crate waiting, through a start ring or
-the towers, by holding a hover over a person waiting to be winched up, or
-by the first drop of water that hits a fire, one at a time, and the best
+the towers, by landing beside a person waiting or holding a hover over one
+who waits where nothing can land, to be winched up, or by the first drop of
+water that hits a fire, one at a time, and the best
 time on each is kept in a save, with the structures collected and the ten
 hidden packages found, a radar in the corner pinging faster as one is
-neared. The water is scooped by skimming a lake or the sea, into a bucket
-hung only while it is in use; the fires burn in flames and smoke drawn by
-the renderer's particles. Every part of the plan
+neared. Nothing lands on water: over a lake, the sea or a river the
+helicopter hangs 1.5 m over the surface. The bucket is put out and taken in
+by the player (B, or the badge beside the radar), filled by being let down
+into a lake or the sea, and emptied by itself over a fire; the fires burn
+in flames and smoke drawn by the renderer's particles, blown by a wind that
+gusts and turns once round in six minutes. Every part of the plan
 (`~/.claude/plans/glimmering-shimmying-wigderson.md`) has landed, and there
 is no physics. The template's stub, a sled
 shoving balls into a hole, was taken out in the second commit. The first commit, `eda26d8`, has the
@@ -119,12 +123,15 @@ says why. Look at every picture.
   told through the `GameEvents` handed in. With nothing going,
   `src/starts.ts` says when the helicopter has done a level's first step:
   a full load on a crate's pad, a start ring or opening flown through, a
-  hover held over a person, or a drop that puts out some of a fire; a pad a
+  landing held beside a person or a hover held over one, or a drop that
+  puts out some of a fire; a pad a
   level ended on starts nothing until the helicopter lifts off.
-  `src/water.ts` is the tank, the helicopter's and no level's: filled by a
-  skim over open water (`SCOOP`, the island's lakes and sea mapped once an
-  island by `openWaterOf`, never a river) and emptied by a drop on a fire
-  (`DROP`). `src/fire.ts` is a fire's patches, unburnt, burning or out:
+  `src/water.ts` is the water: `watersOf` says where any water is, a lake,
+  the sea or a river, which the helicopter hangs `HOVER_OVER_WATER` over
+  and never lands on; `openWaterOf` the lakes and the sea alone, which a
+  bucket fills in. The tank is the helicopter's and no level's: with the
+  bucket out (`game.setBucket`), its bottom under open water for
+  `SCOOP.time` fills it, and a drop on a fire (`DROP`) empties it. `src/fire.ts` is a fire's patches, unburnt, burning or out:
   spread on a fixed beat while its level is going (`SPREAD`), put out by a
   drop's splash, and lit again at its start `FIRE.relight` after its level
   stops or its last change; the places are `FIRES` in `arena.ts`, each lit
@@ -318,34 +325,45 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   key and touch in `smoke/find.spec.ts`, all ten by the play-through;
   pictured (`package-near.png`, `package-chase.png`, `radar-quiet.png`,
   `radar-heard.png`, `found-toast.png`, `panel-packages.png`).
-- **The rescue**, for a level begun by holding a hover: a `winch` step in
-  `mission.ts`, its window (`WINCH`, `inWindow`) said once, filled by the
-  mission's loading or, to begin one, by `starts.ts`; the spots in
-  `RESCUE_SPOTS` (`arena.ts`), found by script and pinned in
-  `test/levels.test.ts`, each level ending on the home pad; the person, the
-  smoke and the rope drawn by `scene.ts`, the words by `hud.ts`; held still
-  in the window by the autopilot; hovered high, low and aside by the
-  fuzzer's "to a rescue"; flown by key and touch in `smoke/rescue.spec.ts`
-  and by the play-through; pictured (`rescue-far.png`, `rescue-waiting.png`,
-  `rescue-winch.png`, `rescue-going.png`, `rescue-toast.png`).
+- **The rescue**, for a level begun by landing or by holding a hover: a
+  `board` step in `mission.ts` (landed within `BOARD.reach` for
+  `BOARD.hold`) where the helicopter can land, a `winch` step (`WINCH`,
+  `inWindow`) where it cannot, each said once and filled by the mission's
+  loading or, to begin one, by `starts.ts`; the spots in `RESCUE_SPOTS`
+  (`arena.ts`), each saying `by` which, found by script and pinned in
+  `test/levels.test.ts`, each level ending on the home pad; the walker in
+  the wood, the sailor in an inflatable off the east beach and the climber
+  on the ledge, `beach-rescue` retired and kept in saves; the person, the
+  flare, the boat and the rope drawn by `scene.ts`, the words by `hud.ts`;
+  landed beside or held still in the window by the autopilot; landed
+  beside and hovered over by the fuzzer's "beside a person" and "to a
+  rescue"; flown by key and touch in `smoke/rescue.spec.ts` and by the
+  play-through; pictured (`rescue-far.png`, `rescue-waiting.png`,
+  `rescue-boarding.png`, `rescue-winch.png`, `boat-far.png`,
+  `rescue-going.png`, `rescue-toast.png`).
 - **The fire**, for a level begun by what it is done with, and for
   anything drawn in particles: `douse` and `fire` steps in `mission.ts`,
   the patches in `fire.ts` and the tank in `water.ts`, stepped by
   `game.ts` and begun by `starts.ts`; the places in `FIRES` (`arena.ts`),
   found by script and pinned in `test/levels.test.ts` (dry, in a wood, a
-  run of open water to skim, no drop reaching every lit patch); flown by
-  the autopilot, skimming the fire's run and diving on the patch a drop
-  puts out the most of; ruled by `checkTank` and `checkFires`; skimmed and
-  flown over by the fuzzer's "skim" and "over a fire"; the ground and the
-  bucket drawn by `scene.ts`, the flames and smoke by `effects.ts`, the
-  words, the loader and the tank badge by `hud.ts`; read through
+  run of open water by it, no drop reaching every lit patch); flown by the
+  autopilot, the bucket put out, dipped at the hover inside the fire's run
+  and dropped on the patch a drop puts out the most of; ruled by
+  `checkTank` and `checkFires`; dipped, let down and flown over by the
+  fuzzer's "dip", "the bucket", "let down onto water" and "over a fire";
+  the ground and the bucket drawn by `scene.ts`, the flames and smoke by
+  `effects.ts` and `column.ts`, blown by `src/wind.ts`, the words, the
+  loader and the bucket's badge by `hud.ts`, worked by B (`input.ts`) or
+  the badge; read through
   `debug.ts` (`state().tank`, `fires`, `particles`, `bucket`, `badge`,
   `ground`, and `content().fires`); flown by key and touch in
   `smoke/fire.spec.ts` and put out by the play-through, its column held to
   be seen from 450 m; its frame told by the perf gate over the west fire;
   pictured with `stepDrawn` (`fire-from-afar.png`, `fire-far.png`,
-  `fire-near.png`, `fire-chase.png`, `fire-drop.png`, `scooping.png`,
-  `fire-going.png`, `fire-phone.png`).
+  `fire-near.png`, `fire-chase.png`, `fire-drop.png`, `bucket-dipped.png`,
+  `fire-going.png`, `fire-phone.png`, the badge in `bucket-in.png`,
+  `bucket-out.png` and `bucket-full.png`, and the wind in `wind-fire.png`
+  and `wind-flare.png`).
 - **The course**, for a level of more than one kind of step: `gate` and
   `land` steps in `mission.ts`, a gate passed by the ring's rule with a
   rectangle for its opening; put into words by `hud.ts`; flown by the

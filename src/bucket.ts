@@ -1,15 +1,13 @@
 /**
- * The bucket under the helicopter: when it hangs and where. It is hung only while it is in use, a fire level going or
- * shown the way or water in the tank, so that every picture of a game with no fire is as it was; and it hangs on a line
- * of `BUCKET.line` from the skids, never with its bottom below the ground under it, shortening its line as the helicopter
- * comes down, sinking into open water as the scoop skims it, and stowed where there is no room for it under the skids.
- * The scene draws what this says, the badge shows the tank by it and a drop falls from the bucket's bottom; without it
- * each would work out for itself where the bucket is, and they would not agree.
+ * The bucket under the helicopter: when it hangs and where. It is hung only while the player has put it out, so that
+ * every picture of a game with it in is as it was; and it hangs on a line of `BUCKET.line` from the skids, never with
+ * its bottom below the ground under it, shortening its line as the helicopter comes down, sinking into open water as
+ * it is let down onto it, and stowed where there is no room for it under the skids. Its bottom under the surface of open
+ * water is what fills it. The scene draws what this says, the badge shows the tank by it and a drop falls from the
+ * bucket's bottom; without it each would work out for itself where the bucket is, and they would not agree.
  *
  * It knows nothing of the helicopter or the game: it is handed the numbers, and writes its answer in place.
  */
-import type { LevelKind } from './mission';
-
 /**
  * The bucket's measure, each said once: the line it hangs on at most, how wide and how tall the bucket is, how thick the
  * line is, how far under the surface its top goes as it dips (a hair, so that it is not level with the water, whose
@@ -27,9 +25,9 @@ export const BUCKET = {
 
 /** Where the bucket is, as the scene draws it and the words read it. */
 export interface BucketPose {
-  /** Whether it is in use: a fire level going or shown the way, or the tank filling or full. */
-  wanted: boolean;
-  /** Whether it is drawn: in use, and with room to hang. */
+  /** Whether the player has put it out, and not taken it in: a full bucket taken in is still full, and stowed. */
+  out: boolean;
+  /** Whether it is drawn: out, and with room to hang. */
   hung: boolean;
   /** Whether the tank is full, which shows as water in the bucket. */
   full: boolean;
@@ -39,13 +37,12 @@ export interface BucketPose {
   bottom: number;
 }
 
-/** Whether the bucket is in use: a fire level is going or shown the way, or the tank is filling or full. */
-export function bucketWanted(
-  going: LevelKind | null,
-  guided: LevelKind | null,
-  tank: Readonly<{ full: boolean; filling: number }>,
-): boolean {
-  return going === 'fire' || guided === 'fire' || tank.full || tank.filling > 0;
+/**
+ * Whether a bucket whose bottom is at `bottom` is in the water whose surface is at `surface` (`NO_WATER` for none): its
+ * bottom under it. The one rule, so that the fill, the rules and the scene say the same of a bucket that is just dipped.
+ */
+export function bucketInWater(bottom: number, surface: number): boolean {
+  return bottom < surface;
 }
 
 /**

@@ -4,11 +4,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { FIRES, LEVELS } from '../src/arena';
-import { BUCKET, bucketAt, bucketWanted, type BucketPose } from '../src/bucket';
-import { HOVER_LIFT } from '../src/helicopter';
+import { BUCKET, bucketAt, bucketInWater, type BucketPose } from '../src/bucket';
+import { HOVER_LIFT, HOVER_OVER_WATER } from '../src/helicopter';
+import { NO_WATER } from '../src/water';
 import { newGame } from './helpers';
 
-const fresh = (): BucketPose => ({ wanted: false, hung: true, full: false, line: -1, bottom: NaN });
+const fresh = (): BucketPose => ({ out: false, hung: true, full: false, line: -1, bottom: NaN });
 const at = (z: number, ground: number, overWater = false, landed = false) => {
   const out = fresh();
   bucketAt({ z, landed }, ground, overWater, out);
@@ -47,8 +48,8 @@ describe('where the bucket hangs', () => {
   });
 
   it('dips into open water, down to its top a hair under the surface, as the skids skim it', () => {
-    // the skids 1.5 over the water, as the scoop has them: the bucket's top is under the surface, which its line goes into
-    const skim = at(31.5, 30, true);
+    // the skids 1.5 over the water, as the hover over it has them: the bucket's top is under the surface, which its line goes into
+    const skim = at(30 + HOVER_OVER_WATER, 30, true);
     expect(skim.hung).toBe(true);
     expect(skim.bottom).toBeCloseTo(30 - BUCKET.height - BUCKET.dip, 9);
     expect(skim.line).toBeCloseTo(1.5 + BUCKET.dip, 9);
@@ -78,40 +79,36 @@ describe('where the bucket hangs', () => {
   });
 });
 
-describe('when it is in use', () => {
-  const idle = { full: false, filling: 0 };
-
-  it('is while a fire level is going or shown the way, or the tank is filling or full, and not otherwise', () => {
-    expect(bucketWanted(null, null, idle)).toBe(false);
-    expect(bucketWanted('fire', null, idle)).toBe(true);
-    expect(bucketWanted(null, 'fire', idle)).toBe(true);
-    expect(bucketWanted(null, null, { full: false, filling: 0.1 })).toBe(true);
-    expect(bucketWanted(null, null, { full: true, filling: 0 })).toBe(true);
+describe('when it is in the water', () => {
+  it('is its bottom under the surface, and not at it, and never in no water', () => {
+    expect(bucketInWater(29.99, 30)).toBe(true);
+    expect(bucketInWater(30, 30)).toBe(false);
+    expect(bucketInWater(30.01, 30)).toBe(false);
+    expect(bucketInWater(-1e9, NO_WATER)).toBe(false);
   });
 
-  it('is not for a level that is not a fire, with the tank empty', () => {
-    for (const kind of ['delivery', 'rings', 'course', 'rescue'] as const) {
-      expect(bucketWanted(kind, null, idle)).toBe(false);
-      expect(bucketWanted(null, kind, idle)).toBe(false);
-    }
-    // but a full tank carried through a delivery is still hung
-    expect(bucketWanted('delivery', null, { full: true, filling: 0 })).toBe(true);
+  it('is so at the hover over water, whose floor puts the 5 m line, shortened, into it', () => {
+    const b = at(30 + HOVER_OVER_WATER, 30, true);
+    expect(bucketInWater(b.bottom, 30)).toBe(true);
+    // and a hair over the line's own length it is out, where the bucket's bottom is at the surface
+    const line = BUCKET.line + BUCKET.height;
+    expect(bucketInWater(at(30 + line + 0.1, 30, true).bottom, 30)).toBe(false);
+    expect(bucketInWater(at(30 + line - 0.1, 30, true).bottom, 30)).toBe(true);
   });
 });
 
 describe("the game's read of it", () => {
-  it('is stowed with nothing to do with it, flying free', () => {
+  it('is in, and stowed, with nothing to do with it, flying free', () => {
     const { game } = newGame();
     game.step(1 / 60);
-    expect(game.bucket.wanted).toBe(false);
-    expect(game.bucket.hung).toBe(false);
+    expect([game.bucket.out, game.bucket.hung]).toEqual([false, false]);
   });
 
-  it('hangs once a fire is shown the way, high enough, and not while landed', () => {
+  it('hangs once it is put out, high enough, and not while landed: stowed under the skids on the ground', () => {
     const { game } = newGame();
-    game.guide(FIRES[0].id);
+    game.setBucket(true);
     game.step(1 / 60);
-    expect(game.bucket.wanted).toBe(true);
+    expect(game.bucket.out).toBe(true);
     // landed on the home pad: no room
     expect(game.bucket.hung).toBe(false);
     game.helicopter.placeAbove(game.helicopter.x, game.helicopter.y, 30, 0);
@@ -119,25 +116,41 @@ describe("the game's read of it", () => {
     expect(game.bucket.hung).toBe(true);
     expect(game.bucket.line).toBe(BUCKET.line);
     expect(game.bucket.bottom).toBeCloseTo(game.helicopter.z - BUCKET.line - BUCKET.height, 6);
-    game.guide(null);
+    game.setBucket(false);
     game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
     expect(game.bucket.hung).toBe(false);
-    // not in use, but where it would hang is still said, which a drop that has just emptied the tank falls from
-    expect(game.bucket.wanted).toBe(false);
+    // taken in, but where it would hang is still said, which a drop that has just emptied the tank falls from
     expect(game.bucket.bottom).toBeCloseTo(game.helicopter.z - BUCKET.line - BUCKET.height, 6);
+  });
+
+  it('is not hung by a fire level shown the way or going: only the player puts it out', () => {
+    const { game } = newGame();
+    game.guide(FIRES[0].id);
+    game.helicopter.placeAbove(game.helicopter.x, game.helicopter.y, 30, 0);
+    game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.bucket.hung).toBe(false);
+    game.begin(FIRES[0].id);
+    game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.bucket.out).toBe(false);
+    expect(game.bucket.hung).toBe(false);
+  });
+
+  it('is stowed with the water in it that a bucket taken in keeps, which the badge does not show', () => {
+    const { game } = newGame();
+    game.tank.full = true;
+    game.step(1 / 60);
+    expect([game.bucket.out, game.bucket.full, game.bucket.hung]).toEqual([false, true, false]);
   });
 
   it('hangs while the tank fills, dips in the lake, and holds the water when full', () => {
     const { game } = newGame();
     const { run } = FIRES[0];
+    game.setBucket(true);
     game.moveToStart(FIRES[0].id);
     const h = game.helicopter;
     let sawFull = false;
     let dipped = false;
     for (let f = 0; f < 600 && !sawFull; f++) {
-      // along the run, at the scoop's speed and height
-      h.vx = Math.cos(h.yaw) * 12;
-      h.vy = Math.sin(h.yaw) * 12;
       game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
       if (game.tank.filling > 0) {
         expect(game.bucket.hung).toBe(true);
@@ -145,10 +158,10 @@ describe("the game's read of it", () => {
       }
       sawFull = game.tank.full;
     }
+    expect(h.z).toBeCloseTo(run.z + HOVER_OVER_WATER, 3);
     expect(sawFull).toBe(true);
     expect(dipped).toBe(true);
     expect(game.bucket.full).toBe(true);
-    expect(game.bucket.wanted).toBe(true);
   });
 
   it('is in the list of levels that a fire is one of, so there is a level to guide to', () => {

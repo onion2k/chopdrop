@@ -9,16 +9,19 @@ import {
   TOAST,
   ToastQueue,
   barMode,
+  bucketBadge,
   clock,
   RADAR_RING,
   RADAR_RINGS,
   RADAR_STEPS,
   collectedWords,
   foundWords,
+  fireWords,
   guideWords,
   loaderKind,
   loaderSteps,
   loaderWords,
+  needsWater,
   pointer,
   radarBadge,
   radarRing,
@@ -26,7 +29,6 @@ import {
   wantsWater,
   startWords,
   stepWords,
-  tankBadge,
   toastShown,
   toastWords,
 } from '../src/hud';
@@ -114,6 +116,15 @@ describe('the bar', () => {
     expect(barMode(true, true, true)).toBe('going');
     // only the hint is hidden, and a guide is not the hint
     expect(barMode(false, true, true)).toBe('guided');
+  });
+
+  it('shows the way to a fire with the bucket out and nothing else going: the same bar as a guide, without the clock', () => {
+    expect(barMode(false, false, false, true)).toBe('guided');
+    // the toast still keeps the bar quiet, and a level or a guide outranks the bucket
+    expect(barMode(false, false, true, true)).toBe('quiet');
+    expect(barMode(true, false, false, true)).toBe('going');
+    expect(barMode(false, true, false, true)).toBe('guided');
+    expect(barMode(false, false, false, false)).toBe('free');
   });
 });
 
@@ -404,17 +415,18 @@ describe('the words of a rescue', () => {
   const words = (l: (typeof LEVELS)[number], k: number, ring = { n: 0, of: 0 }) => stepWords(l, l.steps[k], pads, ring);
 
   it('guides to a rescue with the arrow, "Hover over" and who, and to the home pad with who aboard', () => {
-    expect(words(wood, 0)).toBe('Hover over the walker');
-    expect(words(level('beach-rescue'), 0)).toBe('Hover over the stranded swimmer');
+    // the walker is landed beside, and the boat and the ledge are hovered over
+    expect(words(wood, 0)).toBe('Land beside the walker');
+    expect(words(level('boat-rescue'), 0)).toBe('Hover over the sailor');
     expect(words(level('ledge-rescue'), 0)).toBe('Hover over the climber');
     expect(pads[0].site).toBe('home');
     expect(words(wood, 1)).toBe('Fly the walker to the home pad');
-    expect(words(level('beach-rescue'), 1)).toBe('Fly the stranded swimmer to the home pad');
+    expect(words(level('boat-rescue'), 1)).toBe('Fly the sailor to the home pad');
     expect(words(level('ledge-rescue'), 1)).toBe('Fly the climber to the home pad');
   });
 
   it("does not say a pickup's or a landing's words for a rescue, nor a rescue's for a delivery", () => {
-    for (const id of ['wood-rescue', 'beach-rescue', 'ledge-rescue']) {
+    for (const id of ['wood-rescue', 'boat-rescue', 'ledge-rescue']) {
       const l = level(id);
       for (let k = 0; k < l.steps.length; k++) {
         expect(words(l, k)).not.toMatch(/^Land on|Deliver it|Pick up/);
@@ -431,8 +443,14 @@ describe('the words of a rescue', () => {
     expect(words(course, 0)).toMatch(/^Fly /);
   });
 
-  it('names the loader for the person being winched, and for a parcel otherwise', () => {
+  it('names the loader for the person being winched, for the one climbing aboard, and for a parcel otherwise', () => {
     expect(loaderWords('the walker', undefined)).toBe('Winching up the walker');
+    expect(loaderWords(null, undefined, false, 'the walker')).toBe('The walker climbs aboard');
+    expect(loaderWords(null, wood.steps[1], false, 'the walker')).toBe('The walker climbs aboard');
+    expect(loaderKind(null, 0, 'the walker')).toBe('board');
+    // the winch's words come before the boarding's, and the boarding's before the bucket's
+    expect(loaderKind('the climber', 0, 'the walker')).toBe('winch');
+    expect(loaderKind(null, 0.4, 'the walker')).toBe('board');
     expect(loaderWords('the climber', wood.steps[1])).toBe('Winching up the climber');
     expect(loaderWords(null, undefined)).toBe('Loading the parcel');
     expect(loaderWords(null, level('first-delivery').steps[0])).toBe('Loading the parcel');
@@ -457,8 +475,12 @@ describe('the words of a rescue', () => {
   });
 
   it('says the panel its rows in the words of the mock', () => {
-    expect(startWords(wood, pads)).toBe('Winch up the walker in the western wood');
-    expect(startWords(level('beach-rescue'), pads)).toBe('Winch up the stranded swimmer on the east beach');
+    expect(startWords(wood, pads)).toBe('Land beside the walker in the western wood');
+    expect(startWords(level('boat-rescue'), pads)).toBe('Winch up the sailor off the east beach');
+    // the boat's bar is the ledge's: hover over the person, and the home pad with them aboard
+    expect(stepWords(level('boat-rescue'), level('boat-rescue').steps[0], pads, { n: 0, of: 0 })).toBe(
+      'Hover over the sailor',
+    );
     expect(startWords(level('ledge-rescue'), pads)).toBe('Winch up the climber on the southern ledge');
   });
 });
@@ -469,56 +491,76 @@ describe('the words of a fire', () => {
   const west = fire('west-lake-fire');
   const going = west.steps[1];
 
-  it('guides to a fire with "To the fire", the way to its middle and not to a pad', () => {
-    expect(guideWords(west)).toBe('To the fire');
-    for (const f of FIRES) expect(guideWords(fire(f.id))).toBe('To the fire');
-    // the other kinds keep their own
-    expect(guideWords(fire('first-delivery'))).toBe('To the start · First delivery');
+  it('guides to a fire by the way to its middle and not to a pad, as the start of its level', () => {
     expect(startPoint(west, pads, FIRES)).toEqual({ x: FIRES[0].x, y: FIRES[0].y });
     expect(startPoint(fire('north-wood-fire'), pads, FIRES)).toEqual({ x: FIRES[2].x, y: FIRES[2].y });
+    // the other kinds keep their own words
+    expect(guideWords(fire('first-delivery'))).toBe('To the start · First delivery');
   });
 
-  it('says what a level going wants by the tank: put out the fire and how many burn with it full, scoop water empty', () => {
+  it('says what the bucket is to do, by the bucket: press B in, hover over water out and empty, fly over the flames full', () => {
+    expect(fireWords({ out: false, full: false }, 5, false)).toBe('Press B for the bucket');
+    expect(fireWords({ out: true, full: false }, 5, false)).toBe('Hover low over the water to fill the bucket');
+    expect(fireWords({ out: true, full: true }, 5, false)).toBe('Fly low over the flames to drop · 5 burning');
+    expect(fireWords({ out: true, full: true }, 1, false)).toBe('Fly low over the flames to drop · 1 burning');
+    // on touch there is no key: tap the badge
+    expect(fireWords({ out: false, full: false }, 5, true)).toBe('Tap the bucket');
+    expect(fireWords({ out: true, full: false }, 5, true)).toBe('Hover low over the water to fill the bucket');
+    expect(fireWords({ out: true, full: true }, 3, true)).toBe('Fly low over the flames to drop · 3 burning');
+    // a full bucket taken in keeps its water, and still has to be put out before it drops
+    expect(fireWords({ out: false, full: true }, 5, false)).toBe('Press B for the bucket');
+  });
+
+  it('says it for a level going by the bucket, whichever step of the fire it is on, and the other kinds as before', () => {
     const ring = { n: 0, of: 0 };
-    expect(stepWords(west, going, pads, ring, { burning: 5, full: true })).toBe('Put out the fire · 5 burning');
-    expect(stepWords(west, going, pads, ring, { burning: 1, full: true })).toBe('Put out the fire · 1 burning');
-    expect(stepWords(west, going, pads, ring, { burning: 5, full: false })).toBe('Scoop water');
+    const now = (out: boolean, full: boolean, burning = 5, touch = false) => ({ burning, out, full, touch });
+    expect(stepWords(west, going, pads, ring, now(true, true))).toBe('Fly low over the flames to drop · 5 burning');
+    expect(stepWords(west, going, pads, ring, now(true, false))).toBe('Hover low over the water to fill the bucket');
+    expect(stepWords(west, going, pads, ring, now(false, false))).toBe('Press B for the bucket');
+    expect(stepWords(west, going, pads, ring, now(false, false, 5, true))).toBe('Tap the bucket');
     // the douse that begins it says the same, and the fire alone is not words for the other kinds
-    expect(stepWords(west, west.steps[0], pads, ring, { burning: 12, full: true })).toBe(
-      'Put out the fire · 12 burning',
+    expect(stepWords(west, west.steps[0], pads, ring, now(true, true, 12))).toBe(
+      'Fly low over the flames to drop · 12 burning',
     );
-    expect(
-      stepWords(fire('first-delivery'), fire('first-delivery').steps[0], pads, ring, { burning: 5, full: true }),
-    ).toBe('Pick up the parcel at the meadow pad');
+    expect(stepWords(fire('first-delivery'), fire('first-delivery').steps[0], pads, ring, now(true, true))).toBe(
+      'Pick up the parcel at the meadow pad',
+    );
   });
 
-  it('aims the arrow at the nearest water with the tank empty, and at the fire with it full, and only for a fire', () => {
-    expect(wantsWater(going, false)).toBe(true);
-    expect(wantsWater(going, true)).toBe(false);
-    expect(wantsWater(west.steps[0], false)).toBe(true);
+  it('aims the arrow at the nearest water with the bucket out and empty, and at the fire otherwise, and only for a fire', () => {
+    const bucket = (out: boolean, full: boolean) => ({ out, full });
+    expect(needsWater(bucket(true, false))).toBe(true);
+    expect(needsWater(bucket(true, true))).toBe(false);
+    expect(needsWater(bucket(false, false))).toBe(false);
+    expect(needsWater(bucket(false, true))).toBe(false);
+    expect(wantsWater(going, bucket(true, false))).toBe(true);
+    expect(wantsWater(going, bucket(true, true))).toBe(false);
+    expect(wantsWater(going, bucket(false, false))).toBe(false);
+    expect(wantsWater(west.steps[0], bucket(true, false))).toBe(true);
     const delivery = fire('first-delivery');
-    expect(wantsWater(delivery.steps[0], false)).toBe(false);
-    expect(wantsWater(fire('wood-rescue').steps[0], false)).toBe(false);
-    expect(wantsWater(undefined, false)).toBe(false);
+    expect(wantsWater(delivery.steps[0], bucket(true, false))).toBe(false);
+    expect(wantsWater(fire('wood-rescue').steps[0], bucket(true, false))).toBe(false);
+    expect(wantsWater(undefined, bucket(true, false))).toBe(false);
   });
 
-  it('names the loader "Scooping" for the tank filling, and a winch or a parcel as before', () => {
-    expect(loaderWords(null, undefined, true)).toBe('Scooping');
-    expect(loaderWords(null, going, true)).toBe('Scooping');
+  it('names the loader "Filling the bucket" for the tank filling, and a winch or a parcel as before', () => {
+    expect(loaderWords(null, undefined, true)).toBe('Filling the bucket');
+    expect(loaderWords(null, going, true)).toBe('Filling the bucket');
     expect(loaderWords(null, undefined, false)).toBe('Loading the parcel');
-    // the winch's words are first: a person on the rope is the loader's whatever the tank does
+    // the winch's words are first: a person on the rope is the loader's whatever the bucket does
     expect(loaderWords('the walker', undefined, true)).toBe('Winching up the walker');
     expect(loaderKind(null, 0)).toBe('parcel');
-    expect(loaderKind(null, 0.3)).toBe('scoop');
+    expect(loaderKind(null, 0.3)).toBe('fill');
     expect(loaderKind('the walker', 0.3)).toBe('winch');
     expect(loaderKind('the walker', 0)).toBe('winch');
   });
 
-  it('shows the tank on the badge: none while the bucket is stowed, an outline empty and blue full', () => {
-    expect(tankBadge(false, false)).toBe('none');
-    expect(tankBadge(false, true)).toBe('none');
-    expect(tankBadge(true, false)).toBe('empty');
-    expect(tankBadge(true, true)).toBe('full');
+  it('shows the bucket on the badge in three looks: in, out, and out with water in it', () => {
+    expect(bucketBadge(false, false)).toBe('in');
+    expect(bucketBadge(true, false)).toBe('out');
+    expect(bucketBadge(true, true)).toBe('full');
+    // a full bucket taken in is in, and shows no water: it is stowed
+    expect(bucketBadge(false, true)).toBe('in');
   });
 
   it('tells the end with "Fire out!", the time and "New best" as the others do', () => {

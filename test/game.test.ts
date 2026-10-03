@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, theIsland, type Collectible } from '../src/arena';
 import { FIRE, PATCH, SPREAD } from '../src/fire';
 import { Game } from '../src/game';
-import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
+import { BUCKET } from '../src/bucket';
+import { HELICOPTER, HOVER_LIFT, HOVER_OVER_WATER } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
-import { DELIVERY, RING, RINGS, WINCH, type Gate, type Level, type Ring } from '../src/mission';
+import { BOARD, BOARD_BESIDE, DELIVERY, RING, RINGS, WINCH, type Gate, type Level, type Ring } from '../src/mission';
 import { Progress, memoryStore } from '../src/progress';
 import { DROP, SCOOP } from '../src/water';
 import { seeded } from '../src/random';
@@ -711,8 +712,8 @@ describe('the packages found, in the game', () => {
   });
 });
 
-describe('a rescue, in the game', () => {
-  const [spot] = RESCUE_SPOTS;
+describe('a rescue by the winch, in the game', () => {
+  const spot = RESCUE_SPOTS.find((r) => r.id === 'ledge-rescue')!;
   const played = () => {
     const told: string[] = [];
     const game = new Game({
@@ -740,8 +741,8 @@ describe('a rescue, in the game', () => {
     expect(game.mission.level).toBeNull();
     expect(told).toEqual([]);
     hoverOver(game, 0.6);
-    expect(game.mission.level?.id).toBe('wood-rescue');
-    expect(told).toEqual(['started wood-rescue', 'winched wood-rescue']);
+    expect(game.mission.level?.id).toBe('ledge-rescue');
+    expect(told).toEqual(['started ledge-rescue', 'winched ledge-rescue']);
     expect([game.mission.target, game.mission.next, game.starts.loading]).toEqual([0, 1, 0]);
     expect(checkInvariants(game)).toEqual([]);
   });
@@ -753,11 +754,11 @@ describe('a rescue, in the game', () => {
     game.helicopter.placeAbove(home.x, home.y, 20, 0);
     for (let f = 0; f < 600 && game.mission.level; f++) game.step(DT, { forward: 0, turn: 0, lift: -1 });
     expect(game.mission.level).toBeNull();
-    expect(game.last?.id).toBe('wood-rescue');
+    expect(game.last?.id).toBe('ledge-rescue');
     expect(game.last!.seconds).toBeGreaterThan(0);
-    expect(game.progress.best.get('wood-rescue')).toBe(game.last!.seconds);
-    expect(told.slice(0, 2)).toEqual(['started wood-rescue', 'winched wood-rescue']);
-    expect(told.at(-1)).toMatch(/^finished wood-rescue [\d.]+ best$/);
+    expect(game.progress.best.get('ledge-rescue')).toBe(game.last!.seconds);
+    expect(told.slice(0, 2)).toEqual(['started ledge-rescue', 'winched ledge-rescue']);
+    expect(told.at(-1)).toMatch(/^finished ledge-rescue [\d.]+ best$/);
     expect(told.at(-2)).toBe('landed 0');
   });
 
@@ -773,31 +774,31 @@ describe('a rescue, in the game', () => {
 
   it('puts the helicopter at the start, hovering 10 m over the person, where holding it begins the level', () => {
     const { game, told } = played();
-    game.moveToStart('wood-rescue');
+    game.moveToStart('ledge-rescue');
     expect([game.helicopter.x, game.helicopter.y]).toEqual([spot.x, spot.y]);
     expect(game.helicopter.landed).toBe(false);
     expect(game.mission.level).toBeNull();
     for (let f = 0; f < Math.round((WINCH.hold + 0.5) / DT); f++)
       game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
-    expect(game.mission.level?.id).toBe('wood-rescue');
-    expect(told[0]).toBe('started wood-rescue');
+    expect(game.mission.level?.id).toBe('ledge-rescue');
+    expect(told[0]).toBe('started ledge-rescue');
   });
 
   it('says which person is being winched and how far up they are, by the loader, and nobody otherwise', () => {
     const { game } = played();
     expect(game.winch).toEqual({ spot: null, who: '', share: 0 });
     hoverOver(game, 1.5);
-    expect(game.winch.spot).toBe('wood-rescue');
-    expect(game.winch.who).toBe('the walker');
+    expect(game.winch.spot).toBe('ledge-rescue');
+    expect(game.winch.who).toBe('the climber');
     expect(game.winch.share).toBeCloseTo(0.5, 1);
     expect(game.winch.share).toBeCloseTo(game.starts.loading / WINCH.hold, 6);
     // out of the window, the rope has run back
     hoverOver(game, 0.1, 20);
     expect(game.winch).toEqual({ spot: null, who: '', share: 0 });
     // the other spot, and a read that makes nothing
-    game.helicopter.placeAbove(RESCUE_SPOTS[2].x, RESCUE_SPOTS[2].y, 10, 0);
+    game.helicopter.placeAbove(RESCUE_SPOTS[1].x, RESCUE_SPOTS[1].y, 10, 0);
     for (let f = 0; f < 30; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
-    expect([game.winch.spot, game.winch.who]).toEqual(['ledge-rescue', 'the climber']);
+    expect([game.winch.spot, game.winch.who]).toEqual(['boat-rescue', 'the sailor']);
     expect(game.winch).toBe(game.winch);
     const first = game.winch;
     game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
@@ -817,7 +818,7 @@ describe('a rescue, in the game', () => {
     expect(game.winch.spot).toBeNull();
     const again = played().game;
     hoverOver(again, WINCH.hold + 0.5);
-    expect(again.mission.level?.id).toBe('wood-rescue');
+    expect(again.mission.level?.id).toBe('ledge-rescue');
     expect(again.winch).toEqual({ spot: null, who: '', share: 0 });
   });
 
@@ -825,6 +826,114 @@ describe('a rescue, in the game', () => {
     const { game, told } = played();
     game.begin('ledge-rescue');
     expect(told).toEqual(['started ledge-rescue', 'winched ledge-rescue']);
+    expect(game.mission.target).toBe(0);
+  });
+});
+
+describe('a rescue by landing, in the game', () => {
+  const spot = RESCUE_SPOTS.find((r) => r.id === 'wood-rescue')!;
+  const played = () => {
+    const told: string[] = [];
+    const game = new Game({
+      random: seeded(1),
+      events: {
+        started: (id) => told.push(`started ${id}`),
+        boarded: (id) => told.push(`boarded ${id}`),
+        winched: (id) => told.push(`winched ${id}`),
+        landed: (pad) => told.push(`landed ${pad}`),
+        finished: (id, seconds, best) => told.push(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`),
+      },
+    });
+    return { game, told };
+  };
+  /** The helicopter `across` from the walker, `up` over the ground there (0 is landed), then stepped `seconds` held. */
+  const beside = (game: Game, seconds: number, across = 6, up = 0) => {
+    game.helicopter.placeAbove(spot.x + across, spot.y, up, 0);
+    for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+  };
+
+  it('begins by staying landed within 15 m for 3 s, told started then boarded, and wants the home pad', () => {
+    const { game, told } = played();
+    beside(game, BOARD.hold - 0.3);
+    expect(game.mission.level).toBeNull();
+    expect(told).toEqual([]);
+    beside(game, 0.6);
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(told).toEqual(['started wood-rescue', 'boarded wood-rescue']);
+    expect([game.mission.target, game.mission.next, game.starts.loading]).toEqual([0, 1, 0]);
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
+  it('does nothing hovering over them, at any height, nor landed 16 m off', () => {
+    for (const [across, up] of [
+      [0, 10],
+      [0, 0.5],
+      [16, 0],
+    ]) {
+      const { game, told } = played();
+      beside(game, BOARD.hold + 2, across, up);
+      expect(told, `${across} ${up}`).toEqual([]);
+      expect(game.mission.level).toBeNull();
+    }
+  });
+
+  it('is flown through to the home pad, with its time kept as the best', () => {
+    const { game, told } = played();
+    beside(game, BOARD.hold + 0.5);
+    const home = game.island.pads[0];
+    game.helicopter.placeAbove(home.x, home.y, 20, 0);
+    for (let f = 0; f < 600 && game.mission.level; f++) game.step(DT, { forward: 0, turn: 0, lift: -1 });
+    expect(game.last?.id).toBe('wood-rescue');
+    expect(game.progress.best.get('wood-rescue')).toBe(game.last!.seconds);
+    expect(told.slice(0, 2)).toEqual(['started wood-rescue', 'boarded wood-rescue']);
+    expect(told.at(-2)).toBe('landed 0');
+  });
+
+  it('puts the helicopter at the start landed beside them, on the ground, within the reach and not on them, which staying begins the level from', () => {
+    const { game, told } = played();
+    game.moveToStart('wood-rescue');
+    const h = game.helicopter;
+    const away = Math.hypot(h.x - spot.x, h.y - spot.y);
+    expect(h.landed).toBe(true);
+    expect(away).toBeCloseTo(BOARD_BESIDE, 6);
+    expect(game.mission.level).toBeNull();
+    for (let f = 0; f < Math.round((BOARD.hold + 0.5) / DT); f++)
+      game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id).toBe('wood-rescue');
+    expect(told[0]).toBe('started wood-rescue');
+  });
+
+  it('says who is climbing aboard and how far by the loader, and nobody otherwise', () => {
+    const { game } = played();
+    expect(game.board).toEqual({ spot: null, who: '', share: 0 });
+    beside(game, 1.5);
+    expect(game.board.spot).toBe('wood-rescue');
+    expect(game.board.who).toBe('the walker');
+    expect(game.board.share).toBeCloseTo(game.starts.loading / BOARD.hold, 6);
+    expect(game.winch.spot).toBeNull();
+    // lifted off, the loader runs back
+    beside(game, 0.1, 6, 3);
+    expect(game.board).toEqual({ spot: null, who: '', share: 0 });
+    // read in place, and the same object each time
+    const first = game.board;
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.board).toBe(first);
+  });
+
+  it('chooses where to land beside a person: BOARD_BESIDE off, on the ground, level with theirs, the same each time and written in place', () => {
+    const { game } = played();
+    const out = { x: 0, y: 0, z: 0 };
+    const a = game.landingBeside(spot, out);
+    expect(a).toBe(out);
+    expect(Math.hypot(a.x - spot.x, a.y - spot.y)).toBeCloseTo(BOARD_BESIDE, 6);
+    expect(Math.abs(a.z - spot.z)).toBeLessThan(2);
+    expect(game.landingBeside(spot, { x: 0, y: 0, z: 0 })).toEqual(a);
+  });
+
+  it('is begun at once, wherever the helicopter is, past its boarding', () => {
+    const { game, told } = played();
+    game.begin('wood-rescue');
+    expect(told).toEqual(['started wood-rescue', 'boarded wood-rescue']);
     expect(game.mission.target).toBe(0);
   });
 });
@@ -851,12 +960,17 @@ describe('water bombing, in the game', () => {
   /** The lift that holds the skids `want` metres up, as a hand on the lever would: held in a band, not just at a point. */
   const holding = (game: Game, want: number) =>
     Math.max(-1, Math.min(1, HOVER_LIFT + (want - game.helicopter.z) * 0.8));
-  /** Flown along `fire`'s run from its start, 1 m over the water, until the tank is full or `seconds` have gone. */
-  function scoop(game: Game, fire = west, seconds = 8, height = 1, forward = 1): void {
+  /**
+   * The bucket put out and dipped at `fire`'s run, 10 m in from its start, hovering `height` over the water, until the
+   * tank is full or `seconds` have gone: the bucket in the water, as the autopilot dips it.
+   */
+  function scoop(game: Game, fire = west, seconds = 8, height = HOVER_OVER_WATER, out = true): void {
     const { from, to, z } = fire.run;
-    game.helicopter.place(from.x, from.y, z + height, Math.atan2(to.y - from.y, to.x - from.x));
+    const yaw = Math.atan2(to.y - from.y, to.x - from.x);
+    game.setBucket(out);
+    game.helicopter.place(from.x + Math.cos(yaw) * 10, from.y + Math.sin(yaw) * 10, z + height, yaw);
     for (let f = 0, n = Math.round(seconds / DT); f < n && !game.tank.full; f++)
-      game.step(DT, { forward, turn: 0, lift: holding(game, z + height) });
+      game.step(DT, { forward: 0, turn: 0, lift: holding(game, z + height) });
   }
   /**
    * Hovering `up` over the ground at patch `k` of `fire`, for `seconds`. The middle patch, 0, has every lit patch within
@@ -888,28 +1002,27 @@ describe('water bombing, in the game', () => {
     expect(game.fires.map((f) => f.id)).toEqual(['south-lake-fire']);
   });
 
-  it('fills the tank skimming the run, and tells scooped once', () => {
+  it('fills the tank with the bucket dipped at the run, and tells scooped once', () => {
     const { game, told } = played();
     scoop(game);
     expect(game.tank.full).toBe(true);
     expect(told).toEqual(['scooped']);
-    const h = game.helicopter;
-    expect(h.speed).toBeGreaterThanOrEqual(SCOOP.speed);
-    // 2 s of scoop, and the first half second of it to get to 8 m/s
-    expect(game.t).toBeGreaterThan(SCOOP.time);
-    expect(game.t).toBeLessThan(SCOOP.time + 1.5);
+    // 2 s in the water, at any speed
+    expect(game.t).toBeGreaterThanOrEqual(SCOOP.time);
+    expect(game.t).toBeLessThan(SCOOP.time + 0.5);
   });
 
-  it('does not fill the tank hovering 1 m over the water, nor skimming too high, nor in a river, nor on the land', () => {
-    for (const [forward, height] of [
-      [0, 1],
-      [1, 3],
-    ]) {
+  it('does not fill the tank with the bucket in, nor hung too high, nor in a river, nor on the land', () => {
+    for (const [out, height] of [
+      [false, HOVER_OVER_WATER],
+      [true, BUCKET.line + BUCKET.height + 1],
+    ] as const) {
       const { game } = played();
-      scoop(game, west, 6, height, forward);
-      expect(game.tank.full, `${forward} ${height}`).toBe(false);
+      scoop(game, west, 6, height, out);
+      expect(game.tank.full, `${out} ${height}`).toBe(false);
     }
     const { game } = played();
+    game.setBucket(true);
     const [river] = game.island.rivers;
     const k = Math.floor(river.points.length / 8) * 4;
     game.helicopter.placeAbove(river.points[k], river.points[k + 1], 1, 0);
@@ -918,14 +1031,15 @@ describe('water bombing, in the game', () => {
     expect(game.tank.full).toBe(false);
   });
 
-  it('does not fill the tank landed on the water, whatever the speed it slides at', () => {
+  it('is never landed on the water, whatever the speed it slides at: let down onto the run it holds the hover', () => {
     const { game } = played();
-    const { from, z } = west.run;
-    game.helicopter.place(from.x, from.y, z, 0);
+    const { from, to, z } = west.run;
+    const yaw = Math.atan2(to.y - from.y, to.x - from.x);
+    game.helicopter.place(from.x + Math.cos(yaw) * 10, from.y + Math.sin(yaw) * 10, z + 20, yaw);
     game.helicopter.vx = 12;
-    for (let f = 0; f < 10; f++) game.step(DT, { forward: 0, turn: 0, lift: -1 });
-    expect(game.helicopter.landed).toBe(true);
-    expect(game.tank.filling).toBe(0);
+    for (let f = 0; f < 600; f++) game.step(DT, { forward: 0, turn: 0, lift: -1 });
+    expect(game.helicopter.landed).toBe(false);
+    expect(game.helicopter.z).toBeCloseTo(z + HOVER_OVER_WATER, 3);
   });
 
   it('drops a full tank on a burning patch, and puts out the patches in reach and no others', () => {
@@ -1168,10 +1282,10 @@ describe('water bombing, in the game', () => {
     expect(game.mission.current?.kind).toBe('fire');
     game.abandon();
     game.moveToStart(west.id);
-    // over its run's start, low, ready to skim
+    // over its run's start, at the hover, ready to put the bucket into the water
     const { from, z } = west.run;
     expect(Math.hypot(game.helicopter.x - from.x, game.helicopter.y - from.y)).toBeLessThan(1);
-    expect(game.helicopter.z - z).toBeLessThan(SCOOP.low + 2);
+    expect(game.helicopter.z - z).toBeCloseTo(HOVER_OVER_WATER, 3);
     expect(game.mission.level).toBeNull();
   });
 
@@ -1185,5 +1299,21 @@ describe('water bombing, in the game', () => {
     game.helicopter.place(west.run.from.x, west.run.from.y, 60, 0);
     const b = game.nearestWater();
     expect(Math.hypot(b.x - west.run.from.x, b.y - west.run.from.y)).toBeLessThan(40);
+  });
+
+  it('says which fire burns nearest, from where the helicopter is, and none once every fire is out', () => {
+    const { game } = played();
+    const near = (place: (typeof FIRES)[number]) => {
+      game.helicopter.place(place.x, place.y, place.patches[0].z + 60, 0);
+      return game.nearestFire();
+    };
+    for (let k = 0; k < FIRES.length; k++) expect(near(FIRES[k])).toBe(game.fires[k]);
+    // out for good, a fire is passed over for the next
+    for (const patch of FIRES[1].patches) game.fires[1].douse(patch.x, patch.y);
+    expect(game.fires[1].burning).toBe(0);
+    expect(near(FIRES[1])).not.toBe(game.fires[1]);
+    expect(near(FIRES[1])).not.toBeNull();
+    for (const fire of game.fires) for (const patch of fire.place.patches) fire.douse(patch.x, patch.y);
+    expect(game.nearestFire()).toBeNull();
   });
 });

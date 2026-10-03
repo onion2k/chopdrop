@@ -9,11 +9,15 @@ import { describe, expect, it } from 'vitest';
 import { LEVELS, theIsland } from '../src/arena';
 import { HELICOPTER } from '../src/helicopter';
 import {
+  BOARD,
   crossed,
   DELIVERY,
   inWindow,
   Mission,
+  loadFor,
+  onBoard,
   onPad,
+  type Board,
   type FireWatch,
   RING as RING_RULES,
   WINCH,
@@ -43,6 +47,7 @@ function missioned(fires?: FireWatch) {
       through: (label) => told.push(`through ${label}`),
       landed: (pad) => told.push(`landed ${pad}`),
       winched: (id) => told.push(`winched ${id}`),
+      boarded: (id) => told.push(`boarded ${id}`),
       finished: (seconds) => {
         told.push(`finished ${seconds.toFixed(3)}`);
         during.push({ level: mission.level });
@@ -477,7 +482,9 @@ describe('the levels of the arena, begun', () => {
                 ? `passed 1 ${level.steps.filter((s) => s.kind === 'ring').length}`
                 : first.kind === 'winch'
                   ? `winched ${id}`
-                  : `through ${first.kind === 'gate' ? first.label : ''}`,
+                  : first.kind === 'board'
+                    ? `boarded ${id}`
+                    : `through ${first.kind === 'gate' ? first.label : ''}`,
           ]),
     ]);
     expect(mission.next).toBe(1);
@@ -669,6 +676,93 @@ describe('a winch step', () => {
     sit(0, 0.1);
     expect(told.at(-2)).toBe('landed 0');
     expect(mission.level).toBeNull();
+  });
+});
+
+/** A walker waiting 100 along x, on ground 20 up, who climbs aboard when the helicopter is landed beside them. */
+const WALKER: Board = { kind: 'board', x: 100, y: 50, z: 20, who: 'the walker', where: 'in the western wood' };
+const WALK: Level = { id: 'walk', name: 'Walk', kind: 'rescue', steps: [WALKER, { kind: 'land', pad: 0 }] };
+
+describe('boarding', () => {
+  /** A helicopter `across` from the person, landed or `up` in the air. */
+  const at = (across: number, landed = true, up = 0): Lander => ({
+    x: WALKER.x + across,
+    y: WALKER.y,
+    z: WALKER.z + up,
+    landed,
+  });
+  /** `seconds` of game with the helicopter as `h` is. */
+  const sit = (mission: Mission, seconds: number, h: Lander) => {
+    for (let f = 0, n = Math.round(seconds / DT); f < n; f++) mission.step(DT, h);
+  };
+
+  it('is said once: 15 m, held for 3 seconds, and the loader is the hold', () => {
+    expect(BOARD).toEqual({ reach: 15, hold: 3 });
+    expect(loadFor(WALKER)).toBe(3);
+  });
+
+  it('is the helicopter landed within 15 m across of them: 14.9 in, 15.1 out', () => {
+    expect(onBoard(at(14.9), WALKER)).toBe(true);
+    expect(onBoard(at(15.1), WALKER)).toBe(false);
+    expect(onBoard(at(0), WALKER)).toBe(true);
+  });
+
+  it('is nothing in the air, however low or near: hovering over them does nothing', () => {
+    expect(onBoard(at(0, false, 0.5), WALKER)).toBe(false);
+    expect(onBoard(at(0, false, 10), WALKER)).toBe(false);
+  });
+
+  it('is begun as the first step done, which tells boarded and not winched, and wants the next', () => {
+    const told: string[] = [];
+    const mission = new Mission(pads, {
+      started: (id) => told.push(`started ${id}`),
+      boarded: (id) => told.push(`boarded ${id}`),
+      winched: (id) => told.push(`winched ${id}`),
+    });
+    mission.begin(WALK);
+    expect(told).toEqual(['started walk', 'boarded walk']);
+    expect(mission.current).toEqual({ kind: 'land', pad: 0 });
+  });
+
+  it('wants no pad while it is the step, and the person is where it goes', () => {
+    const mission = new Mission(pads);
+    mission.begin({ ...WALK, steps: [{ kind: 'land', pad: 0 }, WALKER, { kind: 'land', pad: 0 }] });
+    expect(mission.current).toBe(WALKER);
+    expect(mission.target).toBe(-1);
+    expect(mission.goal).toEqual({ x: WALKER.x, y: WALKER.y, z: WALKER.z });
+  });
+
+  it('fills while the helicopter is landed within 15 m, and is done and told when it is full', () => {
+    const told: string[] = [];
+    const mission = new Mission(pads, { boarded: (id) => told.push(id) });
+    mission.begin({ ...WALK, steps: [{ kind: 'land', pad: 0 }, WALKER, { kind: 'land', pad: 0 }] });
+    sit(mission, BOARD.hold - 0.5, at(10));
+    expect(mission.loading).toBeCloseTo(BOARD.hold - 0.5, 1);
+    expect(told).toEqual([]);
+    sit(mission, 1, at(10));
+    expect(told).toEqual(['walk']);
+    expect(mission.next).toBe(2);
+    expect(mission.loading).toBe(0);
+  });
+
+  it('does not fill landed 16 m off, nor hovering over them', () => {
+    for (const h of [at(16), at(0, false, 0.5), at(0, false, 10)]) {
+      const mission = new Mission(pads);
+      mission.begin({ ...WALK, steps: [{ kind: 'land', pad: 0 }, WALKER, { kind: 'land', pad: 0 }] });
+      sit(mission, BOARD.hold + 2, h);
+      expect([mission.loading, mission.next], JSON.stringify(h)).toEqual([0, 1]);
+    }
+  });
+
+  it('runs back to nothing when the helicopter lifts off, and starts again', () => {
+    const mission = new Mission(pads);
+    mission.begin({ ...WALK, steps: [{ kind: 'land', pad: 0 }, WALKER, { kind: 'land', pad: 0 }] });
+    sit(mission, 2, at(5));
+    expect(mission.loading).toBeGreaterThan(1.9);
+    sit(mission, DT, at(5, false, 0.2));
+    expect(mission.loading).toBe(0);
+    sit(mission, BOARD.hold - 0.5, at(5));
+    expect(mission.next).toBe(1);
   });
 });
 
