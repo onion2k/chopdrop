@@ -10,8 +10,8 @@
     "wood-rescue": 0.45,
     "boat-rescue": 0.56,
     "ledge-rescue": 0.32,
-    "west-lake-fire": 0.85,
-    "south-lake-fire": 1.55,
-    "north-wood-fire": 4.35
+    "west-lake-fire": 0.09,
+    "south-lake-fire": 0.08,
+    "north-wood-fire": 0.93
   }
 }

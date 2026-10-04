@@ -472,8 +472,8 @@ describe('the levels of the arena, begun', () => {
     const first = level.steps[0];
     expect(told).toEqual([
       `started ${id}`,
-      // a douse is no event of the mission's: the drop that did it is the game's to tell
-      ...(first.kind === 'douse'
+      // an arrival is no event of the mission's: the helicopter coming to the fire is the game's to see
+      ...(first.kind === 'arrive'
         ? []
         : [
             first.kind === 'pickup'
@@ -795,7 +795,7 @@ describe('a fire step', () => {
     name: 'Test fire',
     kind: 'fire',
     steps: [
-      { kind: 'douse', fire: 'test-fire' },
+      { kind: 'arrive', fire: 'test-fire' },
       { kind: 'fire', fire: 'test-fire' },
     ],
   };
@@ -812,7 +812,7 @@ describe('a fire step', () => {
     };
   };
 
-  it('is begun with its douse done, told started and nothing more, and wants the fire put out', () => {
+  it('is begun with its arrival done, told started and nothing more, and wants the fire put out', () => {
     const { told, events: e } = events();
     const { watch } = watched();
     const mission = new Mission(pads, e, flat, watch);
@@ -829,7 +829,7 @@ describe('a fire step', () => {
     expect(mission.target).toBe(-1);
     mission.abandon();
     mission.begin({ ...FIRE_LEVEL, steps: [FIRE_LEVEL.steps[1], FIRE_LEVEL.steps[0], FIRE_LEVEL.steps[1]] });
-    expect(mission.current?.kind).toBe('douse');
+    expect(mission.current?.kind).toBe('arrive');
     expect(mission.target).toBe(-1);
   });
 
@@ -877,21 +877,15 @@ describe('a fire step', () => {
     expect(mission.level).toBeNull();
   });
 
-  it('does a douse step that is not the first when a drop that puts a patch of its fire out is told, and no other', () => {
+  it('wants nowhere on an arrival that is not the first step, and is not done by a drop: it has no way to be done but being begun', () => {
     const { told, events: e } = events();
     const { watch } = watched();
     const mission = new Mission(pads, e, flat, watch);
     mission.begin({ ...FIRE_LEVEL, steps: [FIRE_LEVEL.steps[1], FIRE_LEVEL.steps[0], FIRE_LEVEL.steps[1]] });
-    mission.dropped('test-fire', 0);
-    mission.dropped('another-fire', 4);
+    expect(mission.goal).toBeNull();
+    for (let f = 0; f < 600; f++) mission.step(DT, aloft);
     expect(mission.next).toBe(1);
-    mission.dropped('test-fire', 2);
-    expect(mission.next).toBe(2);
-    // and a drop is nothing to a level whose step is not a douse, or to nothing going
-    mission.dropped('test-fire', 2);
-    expect(mission.next).toBe(2);
-    mission.abandon();
-    mission.dropped('test-fire', 2);
+    expect((mission as unknown as Record<string, unknown>).dropped, 'a drop is not told to a mission').toBeUndefined();
     expect(told.filter((t) => t.startsWith('finished'))).toEqual([]);
   });
 });

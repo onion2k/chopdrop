@@ -1,15 +1,15 @@
 /**
  * The tank and the water it is filled from and emptied on, held to its edges on numbers: the bucket put out, its bottom
  * under the surface of open water, for 2 s fills it, at any speed; open water is a lake or the sea, and never a river;
- * every water, a river too, is one the helicopter holds a hover over and never lands on; and a drop is the
- * helicopter's middle within the splash across of a burning patch with the bucket out and full, its skids within 25 m
- * of the ground. Without these the player could fill a bucket on a river or with it stowed, land in a lake, or drop
- * from the clouds.
+ * every water, a river too, is one the helicopter holds a hover over and never lands on; and a drop starts with the
+ * bucket out and full, the helicopter's middle within 5 m across of a burning patch and its skids within 40 m of the
+ * ground, and pours for 0.9 s, putting out every burning patch within 16 m as it goes. Without these the player could
+ * fill a bucket on a river or with it stowed, land in a lake, or drop from the clouds.
  */
 import { describe, expect, it } from 'vitest';
-import { FIRES, LEVELS, theIsland } from '../src/arena';
+import { FIRES, LEVELS, theIsland, type FirePlace } from '../src/arena';
 import { BUCKET, bucketInWater } from '../src/bucket';
-import { Fire } from '../src/fire';
+import { Fire, PATCH } from '../src/fire';
 import { Game } from '../src/game';
 import { HOVER_LIFT, HOVER_OVER_WATER } from '../src/helicopter';
 import { seeded } from '../src/random';
@@ -293,22 +293,12 @@ describe('the bucket in the water, in the game', () => {
     const drops: string[] = [];
     const game = new Game({ random: seeded(1), events: { dropped: (fire) => drops.push(fire) } });
     game.tank.full = true;
-    game.helicopter.place(p.x, p.y, p.z + 15, 0);
+    game.helicopter.place(p.x, p.y, game.island.ground.heightAt(p.x, p.y) + 15, 0);
     hold(game, 0.5);
     expect([game.tank.full, drops]).toEqual([true, []]);
     game.setBucket(true);
     hold(game, 0.1);
     expect([game.tank.full, drops]).toEqual([false, [FIRES[0].id]]);
-  });
-
-  it('begins a fire level by the first drop that hits, with the bucket out', () => {
-    const [p] = FIRES[0].patches;
-    const game = new Game({ random: seeded(1) });
-    game.setBucket(true);
-    game.tank.full = true;
-    game.helicopter.place(p.x, p.y, p.z + 15, 0);
-    hold(game, 0.1);
-    expect(game.mission.level?.id).toBe(FIRES[0].id);
   });
 
   it('is read by the game as the bucket in the water, one rule for the fill and the scene: hung and bottom under the surface', () => {
@@ -405,26 +395,27 @@ describe('the drop window', () => {
   const flat = () => 40;
   const at = (across: number, up: number) => ({ x: patch.x + across, y: patch.y, z: 40 + up });
 
-  it('says its numbers once: 25 m and 12 m', () => {
-    expect(DROP).toEqual({ high: 25, splash: 12 });
+  it('says its numbers once: 40 m high, 5 m over, a splash of 16 m, and a pour of 0.9 s', () => {
+    expect(DROP).toEqual({ high: 40, over: 5, splash: 16, pour: 0.9 });
   });
 
-  it('is the skids within 25 m of the ground: 24.9 in, 25.1 out', () => {
-    expect(inDrop(at(0, 24.9), patch, flat)).toBe(true);
-    expect(inDrop(at(0, 25), patch, flat)).toBe(true);
-    expect(inDrop(at(0, 25.1), patch, flat)).toBe(false);
+  it('starts with the skids within 40 m of the ground: 39.9 in, 40.1 out', () => {
+    expect(inDrop(at(0, 39.9), patch, flat)).toBe(true);
+    expect(inDrop(at(0, 40), patch, flat)).toBe(true);
+    expect(inDrop(at(0, 40.1), patch, flat)).toBe(false);
   });
 
-  it('is the middle within the splash across of the patch: 11.9 in, 12.1 out', () => {
-    expect(inDrop(at(11.9, 10), patch, flat)).toBe(true);
-    expect(inDrop(at(12.1, 10), patch, flat)).toBe(false);
-    expect(inDrop({ x: patch.x + 8.5, y: patch.y + 8.5, z: 50 }, patch, flat)).toBe(false);
+  it('starts with the middle within 5 m across of the patch: 4.9 in, 5.1 out, and the splash does not start it', () => {
+    expect(inDrop(at(4.9, 10), patch, flat)).toBe(true);
+    expect(inDrop(at(5.1, 10), patch, flat)).toBe(false);
+    expect(inDrop(at(15.9, 10), patch, flat)).toBe(false);
+    expect(inDrop({ x: patch.x + 3.6, y: patch.y + 3.6, z: 50 }, patch, flat)).toBe(false);
   });
 
   it('measures the height over the ground under the helicopter, not under the patch', () => {
     const slope = (x: number) => 40 + (x - patch.x);
-    expect(inDrop({ x: patch.x + 10, y: patch.y, z: 40 + 10 + 24 }, patch, slope)).toBe(true);
-    expect(inDrop({ x: patch.x + 10, y: patch.y, z: 40 + 10 + 26 }, patch, slope)).toBe(false);
+    expect(inDrop({ x: patch.x + 4, y: patch.y, z: 40 + 4 + 39 }, patch, slope)).toBe(true);
+    expect(inDrop({ x: patch.x + 4, y: patch.y, z: 40 + 4 + 41 }, patch, slope)).toBe(false);
   });
 
   it('is a drop on a fire only where a patch is burning in reach: a burnt one, or none, keeps the water', () => {
@@ -437,5 +428,184 @@ describe('the drop window', () => {
     // over a patch that is out
     fire.douse(p.x, p.y);
     expect(fire.dropReaches(over, () => p.z)).toBe(false);
+  });
+});
+
+describe('the pour', () => {
+  const [west] = FIRES;
+  const [p] = west.patches;
+  const NONE = { forward: 0, turn: 0, lift: HOVER_LIFT };
+  const ground = (game: Game, x: number, y: number) => game.island.ground.heightAt(x, y);
+  /** A game, told what the water does, with the bucket out and the tank full and the helicopter `up` over (x, y). */
+  function ready(x: number, y: number, up: number, fires?: readonly FirePlace[]) {
+    const told: string[] = [];
+    const game = new Game({
+      random: seeded(1),
+      ...(fires && { fires }),
+      events: {
+        dropped: (fire) => told.push(`dropped ${fire}`),
+        doused: (fire, out) => told.push(`doused ${fire} ${out}`),
+      },
+    });
+    game.setBucket(true);
+    game.tank.full = true;
+    game.helicopter.place(x, y, ground(game, x, y) + up, 0);
+    return { game, told };
+  }
+  /** Steps with the helicopter held, until the pour is over, or `limit` steps; how many that took. */
+  const pourOut = (game: Game, limit = 200): number => {
+    let n = 0;
+    while (n < limit && (n === 0 || game.pour > 0)) {
+      game.step(DT, NONE);
+      n++;
+    }
+    return n;
+  };
+  // a point 4.9 m or 5.1 m from the patch, on a diagonal, which is further than 5 from every other patch of the grid
+  const aside = (d: number) => [p.x + d * Math.SQRT1_2, p.y + d * Math.SQRT1_2] as const;
+
+  it('starts with the helicopter 4.9 m over the patch and not 5.1 m: the water falls once, the tank at once empty', () => {
+    const near = ready(...aside(4.9), 20);
+    near.game.step(DT, NONE);
+    expect(near.game.tank.full).toBe(false);
+    expect(near.game.pour).toBeGreaterThan(0);
+    expect(near.told[0]).toBe(`dropped ${west.id}`);
+    const far = ready(...aside(5.1), 20);
+    far.game.step(DT, NONE);
+    expect([far.game.tank.full, far.game.pour, far.told]).toEqual([true, 0, []]);
+  });
+
+  it('starts with the skids 39.9 m over the ground and not 40.1 m', () => {
+    for (const [up, falls] of [
+      [39.9, true],
+      [40.1, false],
+    ] as const) {
+      const { game, told } = ready(p.x, p.y, up);
+      game.step(DT, NONE);
+      expect(told.length > 0, `${up} m`).toBe(falls);
+      expect(game.tank.full, `${up} m`).toBe(!falls);
+    }
+  });
+
+  it('starts only with the bucket out and the tank full', () => {
+    const noBucket = ready(p.x, p.y, 20);
+    noBucket.game.setBucket(false);
+    noBucket.game.step(DT, NONE);
+    expect([noBucket.game.tank.full, noBucket.told]).toEqual([true, []]);
+    const empty = ready(p.x, p.y, 20);
+    empty.game.tank.full = false;
+    empty.game.step(DT, NONE);
+    expect([empty.game.pour, empty.told]).toEqual([0, []]);
+  });
+
+  it('has the tank empty from its first step, and keeps it so: nothing fills it while it pours', () => {
+    const { game } = ready(p.x, p.y, 20);
+    game.step(DT, NONE);
+    expect(game.tank.full).toBe(false);
+    // the bucket in the water the whole time makes no difference to a pour that is going
+    const lake = waterSpots().lake;
+    game.helicopter.place(lake.x, lake.y, lake.level + HOVER_OVER_WATER, 0);
+    for (let f = 0; f < 10; f++) game.step(DT, NONE);
+    expect(game.pour).toBeGreaterThan(0);
+    expect([game.tank.full, game.tank.filling]).toEqual([false, 0]);
+  });
+
+  it('pours for 0.9 s: 54 steps from the first to the end, told doused once, at the last', () => {
+    const { game, told } = ready(p.x, p.y, 20);
+    expect(pourOut(game)).toBe(Math.round(DROP.pour / DT));
+    expect(game.pour).toBe(0);
+    expect(told.filter((t) => t.startsWith('doused'))).toHaveLength(1);
+    expect(told[0]).toBe(`dropped ${west.id}`);
+    // and a step before the end it was still going
+    const again = ready(p.x, p.y, 20);
+    for (let f = 0; f < Math.round(DROP.pour / DT) - 1; f++) again.game.step(DT, NONE);
+    expect(again.game.pour).toBeGreaterThan(0);
+    expect(again.told.some((t) => t.startsWith('doused'))).toBe(false);
+  });
+
+  it('puts out, each step, every burning patch within the splash of the helicopter, and tells how many in all at the end', () => {
+    const { game, told } = ready(p.x, p.y, 20);
+    // flown across the fire at 15 m/s by placing it each step, as the pass is measured
+    const heli = game.helicopter;
+    const passed: { x: number; y: number }[] = [];
+    for (let f = 0; f < Math.round(DROP.pour / DT) + 2; f++) {
+      if (f < Math.round(DROP.pour / DT) + 1)
+        heli.place(p.x - 8 + 15 * f * DT, p.y - 6, ground(game, p.x, p.y) + 20, 0);
+      game.step(DT, NONE);
+      if (game.pour > 0 || f === 0) passed.push({ x: heli.x, y: heli.y });
+    }
+    const reached = (q: { x: number; y: number }) =>
+      passed.some((h) => Math.hypot(h.x - q.x, h.y - q.y) <= DROP.splash);
+    let out = 0;
+    west.patches.forEach((q, k) => {
+      const lit = k < west.lit;
+      const want = lit && reached(q);
+      if (want) out++;
+      expect(game.fire(west.id).states[k], `patch ${k}`).toBe(want ? PATCH.out : lit ? PATCH.burning : PATCH.unburnt);
+    });
+    expect(out).toBeGreaterThan(0);
+    expect(told).toEqual([`dropped ${west.id}`, `doused ${west.id} ${out}`]);
+  });
+
+  it('pours on whatever the helicopter does: climbed out of the window, turned, the bucket taken in; not cut short', () => {
+    const { game, told } = ready(p.x, p.y, 20);
+    game.step(DT, NONE);
+    game.setBucket(false);
+    const fire = game.fire(west.id);
+    let steps = 1;
+    while (game.pour > 0 && steps < 200) {
+      game.step(DT, { forward: 0.2, turn: 1, lift: 1 });
+      steps++;
+      if (steps === 30) {
+        // well out of the window by now, and a patch it is still over alight again: the water still reaches it
+        expect(game.helicopter.z - ground(game, game.helicopter.x, game.helicopter.y)).toBeGreaterThan(20);
+        const k = west.patches.findIndex((q) => Math.hypot(q.x - game.helicopter.x, q.y - game.helicopter.y) < 10);
+        expect(k).toBeGreaterThanOrEqual(0);
+        fire.states[k] = PATCH.burning;
+        fire.burning++;
+        game.step(DT, { forward: 0.2, turn: 1, lift: 1 });
+        steps++;
+        expect(fire.states[k], 'put out by a pour that is climbing and turning').toBe(PATCH.out);
+      }
+    }
+    expect(steps).toBe(Math.round(DROP.pour / DT));
+    expect(told.filter((t) => t.startsWith('doused'))).toHaveLength(1);
+  });
+
+  it('cannot be started again while it pours, though the tank is filled: the second waits for the first to end', () => {
+    const { game, told } = ready(p.x, p.y, 20);
+    game.step(DT, NONE);
+    for (let f = 0; f < 10; f++) game.step(DT, NONE);
+    game.tank.full = true;
+    for (let f = 0; f < 10; f++) game.step(DT, NONE);
+    expect(told.filter((t) => t.startsWith('dropped'))).toHaveLength(1);
+    expect(game.tank.full).toBe(true);
+    // when the first ends, the second falls on what still burns, if anything does
+    pourOut(game);
+    game.step(DT, NONE);
+    if (game.fire(west.id).burning > 0) expect(told.filter((t) => t.startsWith('dropped'))).toHaveLength(2);
+  });
+
+  it('puts out the patches of every fire within the splash, and tells the fire the water began over, the count all told', () => {
+    // a neighbour 10 m east, patch for patch, which is within the splash of the same helicopter
+    const neighbour: FirePlace = {
+      ...west,
+      id: 'neighbour-fire',
+      patches: west.patches.map((q) => ({ ...q, x: q.x + 10 })),
+    };
+    const { game, told } = ready(p.x, p.y, 20, [west, neighbour]);
+    pourOut(game);
+    const a = game.fire(west.id).states.filter((s) => s === PATCH.out).length;
+    const b = game.fire('neighbour-fire').states.filter((s) => s === PATCH.out).length;
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(0);
+    expect(told).toEqual([`dropped ${west.id}`, `doused ${west.id} ${a + b}`]);
+  });
+
+  it('is held in the game as a number made once: 0 when none, short of the pour while it goes', () => {
+    const { game } = ready(p.x, p.y, 20);
+    expect(game.pour).toBe(0);
+    game.step(DT, NONE);
+    expect(game.pour).toBeCloseTo(DROP.pour - DT, 9);
   });
 });

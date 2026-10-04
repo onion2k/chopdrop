@@ -7,7 +7,9 @@
  * `stepDrawn`. The game must be paused.
  */
 import type { Page } from '@playwright/test';
-import { FIRES } from '../src/arena';
+import { FIRES, theIsland } from '../src/arena';
+import { PATCH, treesOnPatches } from '../src/fire';
+import { TREE_STRIDE } from '../src/island';
 import { HOVER_LIFT } from '../src/helicopter';
 import { DROP, SCOOP } from '../src/water';
 
@@ -17,13 +19,40 @@ export const SOUTH = FIRES[1];
 export const NORTH = FIRES[2];
 
 /**
- * A patch on the east edge of the west fire, which a drop from over it reaches only three of the ten lit patches of, so
- * seven burn on and three are burnt: the fire as a picture shows it part way through.
+ * A patch on the east edge of the west fire, which a drop from over it puts out seven of the ten lit patches by (the ones
+ * within the splash of it), so three burn on and seven are burnt: the fire as a picture shows it part way through.
  */
-export const EDGE = WEST.patches[12];
+export const EDGE = WEST.patches[4];
+
+/** A patch on the west edge of the west fire, which a drop from over it puts out five of the ten lit patches by, and leaves five burning. */
+export const HALF = WEST.patches[9];
+
+/** The frames a pour takes, and a few more: a drop held over its patch for this many has poured out. */
+export const POUR_FRAMES = Math.ceil(DROP.pour * 60) + 4;
 
 /** A height over the ground at which a drop reaches and the bucket's line clears the treetops. */
 export const DROP_HEIGHT = DROP.high - 3;
+
+/** The height over the ground the bucket is flown to a fire at: well inside the drop's window of 40 m, with the line clear of the treetops. */
+export const FLY_HEIGHT = 30;
+
+/** The trees on every fire's patches, found here as the game finds them, to hold what the page draws to. */
+const found = treesOnPatches(FIRES, { trees: theIsland().trees, stride: TREE_STRIDE, count: theIsland().treeCount });
+
+/**
+ * How many trees should be drawn burnt for the fires as they stand (each as the test API gives it: its patches as numbers),
+ * and the pool for them: every tree on a patch that burns or is out, against every tree on any patch.
+ */
+export function burntTrees(fires: readonly { patches: number[] }[]): { burnt: number; pool: number } {
+  let burnt = 0;
+  let p = 0;
+  for (const fire of fires)
+    for (const state of fire.patches) {
+      if (state !== PATCH.unburnt) burnt += found.first[p + 1] - found.first[p];
+      p++;
+    }
+  return { burnt, pool: found.tree.length };
+}
 
 /** The way the chase scene looks from: the helicopter hovers this far round from the fire, whichever way the wind is blowing. */
 const DRIFT = 0.9 + Math.PI / 2;
@@ -106,11 +135,11 @@ export async function sceneFar(page: Page) {
   await settle(page, 600);
 }
 
-/** Flames over glowing ground and burnt: a drop on the fire's edge, the helicopter gone, and the camera over the wood. */
+/** Flames over glowing ground and burnt: a drop over the fire's east edge poured out, the helicopter gone, and the camera over the wood. */
 export async function sceneNear(page: Page) {
   await settle(page, 600);
   await scoop(page);
-  await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, 0.9, 2);
+  await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, 0.9, POUR_FRAMES);
   await sendHome(page);
   await lookAt(page, WEST, 60, 0.95, -1.6);
   await settle(page, 240);
@@ -125,12 +154,47 @@ export async function sceneChase(page: Page) {
   await settle(page, 120);
 }
 
-/** A drop part way: the spray falling from the bucket on the fire's edge, the camera parked to the side. */
+/**
+ * The west fire half put out, as the picture of the burnt trees shows it: a drop over its west edge poured out, the
+ * helicopter gone, and the camera low and close among the trees, so the black poles stand against the flames behind them.
+ */
+export async function sceneBurnt(page: Page) {
+  await settle(page, 600);
+  await scoop(page);
+  await hoverOver(page, HALF.x, HALF.y, FLY_HEIGHT, 0.9, POUR_FRAMES);
+  await sendHome(page);
+  await lookAt(page, { x: WEST.x + 2, y: WEST.y }, 34, 1.3, -1.3);
+  await settle(page, 240);
+}
+
+/**
+ * The drop poured from 30 m as the bucket is flown over the flames: the helicopter 40 m off the fire's middle, flown through
+ * it at full speed, half a second into the pour, so the curtain of water falls from the bucket as it trails along; the
+ * camera parked to the side and low, to see it reach the ground.
+ */
+export async function scenePour(page: Page) {
+  await settle(page, 600);
+  await scoop(page);
+  await flyAt(page, WEST, 40, FLY_HEIGHT);
+  await page.evaluate(() => {
+    const g = window.game!;
+    for (let f = 0; f < 240 && g.state().pour <= 0; f++) g.stepDrawn(1);
+    g.stepDrawn(27);
+    const h = g.state().helicopter;
+    g.look(h.x, h.y, { azimuth: -2.2, polar: 1.05, radius: 90 });
+    g.stepDrawn(1);
+  });
+}
+
+/**
+ * A drop part way, the helicopter held over the fire's edge at the most a drop is let go from: the spray falling from the
+ * bucket and the mist where it lands, half a second into the pour, the camera parked close and to the side.
+ */
 export async function sceneDrop(page: Page) {
   await settle(page, 600);
   await scoop(page);
-  await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, 0.9, 14);
-  await lookAt(page, EDGE, 75, 1.2, -0.8);
+  await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, 0.9, 30);
+  await lookAt(page, EDGE, 70, 1.0, -2.2);
 }
 
 /** The helicopter hovering over the lake with the fire level begun and the bucket half filled: the bucket dipped in the water, the loader and the badge. */
@@ -216,5 +280,46 @@ export function smokePixels(
       return n;
     },
     [png.toString('base64'), area, grey] as const,
+  );
+}
+
+/**
+ * The helicopter put `off` metres from (x, y) on the way it faces, `height` over the ground, and flown at it at full speed
+ * with the height held: the controls stay as they are until released, and the test steps the frames.
+ */
+export async function flyAt(page: Page, at: { x: number; y: number }, off: number, height: number) {
+  await page.evaluate(
+    ([x, y, off, height, hover]) => {
+      const g = window.game!;
+      const yaw = 0.9;
+      g.chase();
+      g.teleport(x - Math.cos(yaw) * off, y - Math.sin(yaw) * off, height, yaw);
+      g.fly(0, 0, hover);
+      g.stepDrawn(2);
+      g.fly(1, 0, hover);
+    },
+    [at.x, at.y, off, height, HOVER_LIFT] as const,
+  );
+}
+
+/**
+ * The tank filled again with a level going, as a player does it between two drops: the helicopter put hovering over the
+ * lake's run, which holds it, with the bucket let down until the tank is full. Says how many frames it took, or −1.
+ */
+export function refill(page: Page): Promise<number> {
+  return page.evaluate(
+    ([x, y, yaw, hover]) => {
+      const g = window.game!;
+      g.teleport(x, y, 0, yaw);
+      g.fly(0, 0, hover);
+      let frames = 0;
+      while (!g.state().tank.full && frames < 600) {
+        g.stepDrawn(1);
+        frames++;
+      }
+      g.release();
+      return g.state().tank.full ? frames : -1;
+    },
+    [LAKE.x, LAKE.y, LAKE.yaw, HOVER_LIFT] as const,
   );
 }

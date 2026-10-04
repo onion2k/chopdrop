@@ -11,7 +11,8 @@
  * while it is. A best time is a time, and never slower than the level was
  * just done in. The helicopter is never inside anything solid, never landed over water, and never lower over it than the
  * hover. The tank fills only with the bucket out and its bottom in open water, and each fire's patches are in a state it knows, counted right, and a fire that is not going is not left off
- * its start for longer than it waits to be lit again.
+ * its start for longer than it waits to be lit again. A pour is a time from nothing to the length of one, and runs only
+ * with the tank empty; a fire level going is past its arrival.
  *
  * Checked by the fuzzer after everything it does, and by the unit tests.
  * Each broken rule is a line saying what and where.
@@ -27,7 +28,7 @@ import { TREE_STRIDE } from './island';
 import type { TreeSize } from './meshes';
 import { BOARD, fireOf, inWindow, loadFor, onBoard, onPad, type Step } from './mission';
 import { SWAY, type Sway } from './sway';
-import { NO_WATER, SCOOP } from './water';
+import { DROP, NO_WATER, SCOOP } from './water';
 
 /** How far past a limit a number may be before it is a broken rule: the sums are floating point. */
 const TOLERANCE = 1e-9;
@@ -102,6 +103,7 @@ export function checkInvariants(game: Game): string[] {
   out.push(...checkFinds(game));
   out.push(...checkTank(game));
   out.push(...checkFires(game));
+  out.push(...checkPour(game));
   return out;
 }
 
@@ -132,8 +134,10 @@ export function checkTank(game: Game): string[] {
 /**
  * What must hold of the fires: each patch is in a state the game knows; the burning count is the patches burning and
  * no more than the fire has; a fire that is not going is lit again at its start once it has waited long enough (so
- * until then it may be off it, and after that it is not); and a fire level going has its fire burning, since it ends
- * the step none does.
+ * until then it may be off it, and after that it is not); a fire level going has its fire burning, since it ends the
+ * step none does; and a fire level going is past its arrival, which is what begins it. That a fire level was begun with
+ * the bucket out cannot be read from the state, since the bucket may be taken in the next step: the fuzzer holds it, by
+ * the bucket as it is when the level is told begun.
  */
 export function checkFires(game: Game): string[] {
   const out: string[] = [];
@@ -158,12 +162,25 @@ export function checkFires(game: Game): string[] {
       out.push(`${id} burns ${fire.burning} of ${states.length} patches`);
     if (id === going) {
       if (burning === 0) out.push(`${id} is going, and none of it burns`);
+      if (game.mission.current?.kind === 'arrive') out.push(`${id} is going, and is at its arrival`);
     } else if (!fire.atStart && !(fire.quiet < FIRE.relight + TOLERANCE))
       out.push(
         `${id} is not going and has been off its start for ${fire.quiet.toFixed(2)} s, and it is lit again after ${FIRE.relight}`,
       );
   }
   return out;
+}
+
+/**
+ * What must hold of the pour: the seconds left of it are a number from nothing to the length of a pour, and it runs only
+ * with the tank empty, since it is the water of a drop that has just emptied it, and nothing fills it until it is over.
+ */
+export function checkPour(game: Game): string[] {
+  const { pour } = game;
+  if (!Number.isFinite(pour) || pour < 0 || pour > DROP.pour)
+    return [`the pour reads ${pour}, and runs from 0 to ${DROP.pour}`];
+  if (pour > 0 && game.tank.full) return [`the tank is full, and a pour is going: ${pour.toFixed(3)} s left`];
+  return [];
 }
 
 /** What must hold of the solids: the helicopter is never inside one, its reach never past touching a ring's tube or a block. */

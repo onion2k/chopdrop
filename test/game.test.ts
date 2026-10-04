@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, theIsland, type Collectible } from '../src/arena';
-import { FIRE, PATCH, SPREAD } from '../src/fire';
+import { FIRE, PATCH, SPREAD, treesOnPatches } from '../src/fire';
 import { Game } from '../src/game';
 import { BUCKET } from '../src/bucket';
 import { HELICOPTER, HOVER_LIFT, HOVER_OVER_WATER } from '../src/helicopter';
 import { checkInvariants } from '../src/invariants';
 import { BOARD, BOARD_BESIDE, DELIVERY, RING, RINGS, WINCH, type Gate, type Level, type Ring } from '../src/mission';
+import { TREE_STRIDE } from '../src/island';
 import { Progress, memoryStore } from '../src/progress';
 import { DROP, SCOOP } from '../src/water';
 import { seeded } from '../src/random';
@@ -938,6 +939,20 @@ describe('a rescue by landing, in the game', () => {
   });
 });
 
+describe('the trees on the fires’ patches, in the game', () => {
+  it('are found once, at boot, as the fires’ places and the island’s trees say, and are the same object for ever after', () => {
+    const { game } = newGame();
+    const island = theIsland();
+    const found = treesOnPatches(FIRES, { trees: island.trees, stride: TREE_STRIDE, count: island.treeCount });
+    expect(game.patchTrees.tree).toEqual(found.tree);
+    expect(game.patchTrees.first).toEqual(found.first);
+    expect(found.tree.length).toBeGreaterThan(60);
+    const kept = game.patchTrees;
+    for (let f = 0; f < 120; f++) game.step(DT);
+    expect(game.patchTrees).toBe(kept);
+  });
+});
+
 describe('water bombing, in the game', () => {
   const [west, south] = FIRES;
   /** A lit patch on the edge of the fire: a drop on it puts out some of the lit ones and leaves the rest burning. */
@@ -950,7 +965,8 @@ describe('water bombing, in the game', () => {
         started: (id) => told.push(`started ${id}`),
         abandoned: (id) => told.push(`abandoned ${id}`),
         scooped: () => told.push('scooped'),
-        dropped: (fire, out) => told.push(`dropped ${fire} ${out}`),
+        dropped: (fire) => told.push(`dropped ${fire}`),
+        doused: (fire, out) => told.push(`doused ${fire} ${out}`),
         fireOut: (id) => told.push(`fire out ${id}`),
         finished: (id, seconds, best) => told.push(`finished ${id} ${seconds.toFixed(2)}${best ? ' best' : ''}`),
       },
@@ -973,18 +989,25 @@ describe('water bombing, in the game', () => {
       game.step(DT, { forward: 0, turn: 0, lift: holding(game, z + height) });
   }
   /**
-   * Hovering `up` over the ground at patch `k` of `fire`, for `seconds`. The middle patch, 0, has every lit patch within
-   * the splash of it, so a drop on it puts the whole fire out; the corner, 5, leaves some burning.
+   * Hovering `up` over the ground at patch `k` of `fire`, for `seconds`, which is the length of a pour by default. The
+   * middle patch, 0, has every lit patch within the splash of it, so a drop on it puts the whole fire out; the edge leaves some burning.
    */
-  function over(game: Game, fire = west, k = EDGE, up = 15, seconds = 0.1): void {
+  function over(game: Game, fire = west, k = EDGE, up = 15, seconds = DROP.pour): void {
     const p = fire.patches[k];
     game.helicopter.placeAbove(p.x, p.y, up, 0);
     for (let f = 0, n = Math.max(1, Math.round(seconds / DT)); f < n; f++)
       game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
   }
-  /** `seconds` flown parked in the air at home, with nothing to do with any fire. */
+  /** `across` metres west of the westernmost lit patch of `fire`, high up, which no other lit patch is nearer than. */
+  function nearFire(game: Game, across: number, fire = west): void {
+    const edge = fire.patches.slice(0, fire.lit).reduce((a, b) => (b.x < a.x ? b : a));
+    game.helicopter.placeAbove(edge.x - across, edge.y, 30, 0);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+  }
+  /** `seconds` flown parked in the air over the home pad, which is 360 m from the nearest fire: nothing to do with any. */
   const wait = (game: Game, seconds: number) => {
-    game.helicopter.placeAbove(0, 0, 60, 0);
+    const home = game.island.pads[0];
+    game.helicopter.placeAbove(home.x, home.y, 60, 0);
     for (let f = 0, n = Math.round(seconds / DT); f < n; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
   };
 
@@ -1058,15 +1081,17 @@ describe('water bombing, in the game', () => {
       const reached = k < west.lit && Math.hypot(q.x - p.x, q.y - p.y) <= DROP.splash;
       expect(fire.states[k], `patch ${k}`).toBe(reached ? PATCH.out : k < west.lit ? PATCH.burning : PATCH.unburnt);
     });
-    expect(told).toEqual(['scooped', `dropped ${west.id} ${within}`, `started ${west.id}`]);
+    // the level begins as the water falls, since the bucket is out and the fire near; the end of the pour tells the count
+    expect(told).toEqual(['scooped', `dropped ${west.id}`, `started ${west.id}`, `doused ${west.id} ${within}`]);
   });
 
-  it('begins the fire level by the drop, with the clock at nothing and its first step done', () => {
-    const { game } = played();
-    scoop(game);
+  it('begins the fire level by arriving with the bucket out, its first step done and its clock from then', () => {
+    const { game, told } = played();
+    game.setBucket(true);
     expect(game.mission.level).toBeNull();
-    over(game, west, EDGE, 15, 1 / 60);
+    nearFire(game, 59.9);
     expect(game.mission.level?.id).toBe(west.id);
+    expect(told).toEqual([`started ${west.id}`]);
     expect(game.mission.next).toBe(1);
     expect(game.mission.time).toBe(0);
     game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
@@ -1074,22 +1099,135 @@ describe('water bombing, in the game', () => {
     expect(checkInvariants(game)).toEqual([]);
   });
 
+  it('begins nothing at 60.1 m, or with the bucket in at 59.9, or with the fire out', () => {
+    const far = played();
+    far.game.setBucket(true);
+    nearFire(far.game, 60.1);
+    expect(far.game.mission.level).toBeNull();
+    const bucketIn = played();
+    nearFire(bucketIn.game, 59.9);
+    expect(bucketIn.game.mission.level).toBeNull();
+    const out = played();
+    for (const p of west.patches) out.game.fire(west.id).douse(p.x, p.y);
+    out.game.setBucket(true);
+    nearFire(out.game, 10);
+    expect(out.game.mission.level).toBeNull();
+    expect(far.told.concat(bucketIn.told, out.told)).toEqual([]);
+  });
+
+  it('begins it by the bucket put out while already within 60 m, and not before', () => {
+    const { game, told } = played();
+    nearFire(game, 40);
+    for (let f = 0; f < 120; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level).toBeNull();
+    game.setBucket(true);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id).toBe(west.id);
+    expect(told).toEqual([`started ${west.id}`]);
+  });
+
+  it('does not begin a fire again that its level has just ended, if it stays there with the bucket out, however long, nor one given up', () => {
+    const { game } = played();
+    scoop(game);
+    nearFire(game, 59);
+    over(game, west, 0, 20);
+    expect(game.last?.id).toBe(west.id);
+    // the fire is lit again 3 s after it went out, with the helicopter over it and the bucket out: nothing begins
+    for (let f = 0; f < 60 * 8; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.fire(west.id).atStart).toBe(true);
+    expect(game.mission.level).toBeNull();
+    // gone away, and back
+    wait(game, 0.5);
+    nearFire(game, 59);
+    expect(game.mission.level?.id).toBe(west.id);
+    // given up there, with the bucket out, it stays given up
+    game.abandon();
+    for (let f = 0; f < 60 * 4; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level).toBeNull();
+    // and taking the bucket in and putting it out again begins it
+    game.setBucket(false);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    game.setBucket(true);
+    game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.mission.level?.id).toBe(west.id);
+  });
+
+  it('begins the level of the fire it came to, and not another', () => {
+    for (const place of FIRES) {
+      const { game } = played();
+      game.setBucket(true);
+      nearFire(game, 30, place);
+      expect(game.mission.level?.id, place.id).toBe(place.id);
+    }
+  });
+
+  it('begins nothing while another level is going, and a drop still douses', () => {
+    const { game, told } = played();
+    game.begin('first-delivery');
+    game.setBucket(true);
+    nearFire(game, 30);
+    expect(game.mission.level?.id).toBe('first-delivery');
+    game.tank.full = true;
+    over(game);
+    expect(game.fire(west.id).burning).toBeLessThan(west.lit);
+    expect(game.mission.level?.id).toBe('first-delivery');
+    expect(told.filter((t) => t.startsWith('started'))).toEqual(['started first-delivery']);
+  });
+
+  it('begins nothing by a drop with nothing going, when no level is made of the fire', () => {
+    const told: string[] = [];
+    const game = new Game({
+      random: seeded(1),
+      levels: LEVELS.filter((l) => l.kind !== 'fire'),
+      events: { started: (id) => told.push(`started ${id}`), dropped: (fire) => told.push(`dropped ${fire}`) },
+    });
+    scoop(game);
+    over(game);
+    expect(told).toEqual([`dropped ${west.id}`]);
+    expect(game.mission.level).toBeNull();
+  });
+
+  it('is put out by one bucket, if it is small: the level ends with a time above nothing', () => {
+    const { game, told } = played();
+    scoop(game);
+    nearFire(game, 59);
+    expect(game.mission.level?.id).toBe(west.id);
+    for (let f = 0; f < 60; f++) game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    // over the middle of it, which has every lit patch within the splash
+    over(game, west, 0, 20);
+    expect(game.fire(west.id).burning).toBe(0);
+    expect(game.mission.level).toBeNull();
+    expect(game.last?.id).toBe(west.id);
+    expect(game.last!.seconds).toBeGreaterThan(1);
+    expect(game.progress.best.get(west.id)).toBe(game.last!.seconds);
+    expect(told.slice(0, 5)).toEqual([
+      'scooped',
+      `started ${west.id}`,
+      `dropped ${west.id}`,
+      `fire out ${west.id}`,
+      expect.stringMatching(new RegExp(`^finished ${west.id} \\d`)),
+    ]);
+    expect(told.at(-1)).toBe(`doused ${west.id} ${west.lit}`);
+    expect(checkInvariants(game)).toEqual([]);
+  });
+
   it('keeps the water over ground with no fire, over a fire too high, with an empty tank, and over a patch that is out', () => {
     const { game, told } = played();
     scoop(game);
-    game.helicopter.placeAbove(0, 0, 10, 0);
+    const home = game.island.pads[0];
+    game.helicopter.placeAbove(home.x, home.y, 10, 0);
     game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
     expect(game.tank.full).toBe(true);
     const p = west.patches[0];
     game.helicopter.placeAbove(p.x, p.y, DROP.high + 1, 0);
     game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
     expect(game.tank.full).toBe(true);
-    // beside the fire, just out of the splash
+    // beside the fire, past where the water starts: the bucket being out, that is an arrival, and nothing more
     game.helicopter.placeAbove(p.x + 40, p.y, 15, 0);
     game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
     expect(game.tank.full).toBe(true);
-    expect(told).toEqual(['scooped']);
-    expect(game.mission.level).toBeNull();
+    expect(told).toEqual(['scooped', `started ${west.id}`]);
+    expect(game.mission.level?.id).toBe(west.id);
     // an empty tank over the fire does nothing
     const other = played();
     over(other.game);
@@ -1098,7 +1236,7 @@ describe('water bombing, in the game', () => {
     expect(other.game.mission.level).toBeNull();
   });
 
-  it('drops from near the top of its reach: 20 m up drops, 26 m does not', () => {
+  it('drops from within 40 m of the ground: 35 m up drops, 41 m does not', () => {
     const high = played();
     scoop(high.game);
     over(high.game, west, EDGE, DROP.high + 1);
@@ -1134,17 +1272,18 @@ describe('water bombing, in the game', () => {
     expect(game.mission.carrying).toBe(true);
   });
 
-  it('spreads while its level is going, one patch each 8 s, and not before it is begun', () => {
+  it('spreads while its level is going, one patch each 15 s, and not before it is begun', () => {
     const { game } = played();
     wait(game, 20);
     expect(game.fire(west.id).burning).toBe(west.lit);
     scoop(game);
     over(game);
     const before = game.fire(west.id).burning;
-    // put the helicopter somewhere that is no part of it, and let the level go on
-    wait(game, SPREAD.every - 0.2);
+    // put the helicopter somewhere that is no part of it, and let the level go on: the beat has run for the pour, which
+    // the level began at the start of
+    wait(game, SPREAD.every - DROP.pour - 0.5);
     expect(game.fire(west.id).burning).toBe(before);
-    wait(game, 0.5);
+    wait(game, 1);
     expect(game.fire(west.id).burning).toBe(before + 1);
     expect(game.mission.level?.id).toBe(west.id);
   });
@@ -1176,7 +1315,7 @@ describe('water bombing, in the game', () => {
     expect(told[out + 1]).toMatch(new RegExp(`^finished ${west.id} [\\d.]+ best$`));
     expect(told.filter((t) => t.startsWith('dropped'))).toHaveLength(drops);
     // and lit again once its toast has gone, ready to be flown again, not before
-    wait(game, FIRE.relight - 0.3);
+    wait(game, FIRE.relight - DROP.pour - 0.3);
     expect(game.fire(west.id).burning).toBe(0);
     wait(game, 0.6);
     expect(game.fire(west.id).burning).toBe(west.lit);
@@ -1184,7 +1323,7 @@ describe('water bombing, in the game', () => {
     expect(checkInvariants(game)).toEqual([]);
   });
 
-  it('ends a level as it begins if its fire is out already, with no time kept: a guard, since no drop can do it', () => {
+  it('ends a level as it begins if its fire is out already, with no time kept: a guard, since arriving needs a patch burning', () => {
     const { game, told } = played();
     const fire = game.fire(west.id);
     fire.douse(west.patches[0].x, west.patches[0].y);
@@ -1196,21 +1335,6 @@ describe('water bombing, in the game', () => {
     expect(told).toEqual([`started ${west.id}`, `fire out ${west.id}`, `finished ${west.id} 0.00`]);
     expect(game.progress.best.has(west.id)).toBe(false);
     expect(checkInvariants(game)).toEqual([]);
-  });
-
-  it('is not put out by any one drop: from the best place, over the middle, some are left burning', () => {
-    for (const place of FIRES) {
-      const { game } = played();
-      scoop(game, place);
-      const lit = place.patches.slice(0, place.lit);
-      const [mx, my] = [
-        (Math.min(...lit.map((p) => p.x)) + Math.max(...lit.map((p) => p.x))) / 2,
-        (Math.min(...lit.map((p) => p.y)) + Math.max(...lit.map((p) => p.y))) / 2,
-      ];
-      game.helicopter.placeAbove(mx, my, 15, 0);
-      game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
-      expect(game.fire(place.id).burning, place.id).toBeGreaterThan(0);
-    }
   });
 
   it("starts a fire's wait to be lit again when its level is given up, not from its last change: clean at once, lit 3 s on", () => {
@@ -1250,7 +1374,7 @@ describe('water bombing, in the game', () => {
     scoop(game);
     over(game);
     expect(game.fire(west.id).atStart).toBe(false);
-    wait(game, FIRE.relight - 0.3);
+    wait(game, FIRE.relight - DROP.pour - 0.3);
     expect(game.fire(west.id).atStart).toBe(false);
     wait(game, 0.6);
     expect(game.fire(west.id).atStart).toBe(true);

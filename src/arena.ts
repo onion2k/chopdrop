@@ -431,7 +431,8 @@ export interface FirePlace {
 
 /**
  * How many of a fire's patches burn at its start, the same for all three: the first ten of the twenty, nearest the middle.
- * Ten spread over more than a splash across, so no one drop can put a fire out as it begins, which a test holds.
+ * Ten spread over more than a splash across, so a pass puts out most of them and a fire takes a bucket or two, which a test
+ * holds by flying passes at it.
  */
 const FIRE_LIT = 10;
 
@@ -806,14 +807,14 @@ function rescue({ id, name, who, where, by, x, y, z, yaw }: RescueSpot): Level {
   };
 }
 
-/** A level that is a fire put out: begun by the first drop that hits it, and ended when none of its patches burns. Its id is the fire's. */
+/** A level that is a fire put out: begun by coming to it with the bucket out, and ended when none of its patches burns. Its id is the fire's. */
 function fireLevel({ id, name }: FirePlace): Level {
   return {
     id,
     name,
     kind: 'fire',
     steps: [
-      { kind: 'douse', fire: id },
+      { kind: 'arrive', fire: id },
       { kind: 'fire', fire: id },
     ],
   };

@@ -193,12 +193,9 @@ async function main() {
       through: (label) => tell(`through ${label}`),
       landed: (pad) => tell(`landed ${pad}`),
       scooped: () => tell('scooped'),
-      dropped: (fire, out) => {
-        tell(`dropped ${fire} ${out}`);
-        // the water falls from the bucket's bottom, over the ground there
-        const h = game.helicopter;
-        effects.drop(h.x, h.y, game.bucket.bottom, game.island.ground.heightAt(h.x, h.y));
-      },
+      // the spray is not told here: it follows the bucket while the game's pour goes, which `emitEffects` reads each frame
+      dropped: (fire) => tell(`dropped ${fire}`),
+      doused: (fire, out) => tell(`doused ${fire} ${out}`),
       fireOut: (id) => tell(`fire out ${id}`),
       collected: (id, n, of) => {
         tell(`collected ${id} ${n} ${of}`);
@@ -233,7 +230,7 @@ async function main() {
   await nextFrame();
   const scene = new Scene();
   renderer.setStatic(scene.static(game.island, game.solids.blocks));
-  renderer.setDynamic(scene.dynamic(game.island));
+  renderer.setDynamic(scene.dynamic(game.island, game.patchTrees));
   renderer.setSunShadow(scene.shadowBox);
   // there is no lamp on the island: the sun is all the light there is
   renderer.setLights(new LightPool(LIGHT_CAPACITY));
@@ -310,7 +307,7 @@ async function main() {
   const waiting = new Uint8Array(people.length);
   /** Where the helicopter is and the open water under it, for the rotor's spray, written each frame in place. */
   const air: Air = { x: 0, y: 0, z: 0, level: 0 };
-  /** The island's wind at the game's time in the renderer's own units, written each frame in place, and as the tuple its `setWind` takes. */
+  /** The island's wind at the game's time in metres a second, written each frame in place, and as the tuple its `setWind` takes. */
   const blow: Wind = { x: 0, y: 0 };
   const wind: [number, number, number] = [0, 0, 0];
   /** How many sprites the column of smoke drew at the last frame, for the test API. */
@@ -331,6 +328,8 @@ async function main() {
     air.level = game.water.levelAt(h.x, h.y);
     // the wind is the game's time's, so the same time gives the same smoke, and a game held behind the panel holds it
     particleWindAt(game.t, blow);
+    // the water falls from the bucket's bottom while the pour goes, over the ground there, from wherever the bucket is now
+    effects.pouring(game.pour > 0, h.x, h.y, game.bucket.bottom, game.island.ground.heightAt(h.x, h.y));
     wind[0] = blow.x;
     wind[1] = blow.y;
     renderer.setWind(wind);
@@ -460,6 +459,7 @@ async function main() {
     smoke: () => effects.flaring,
     particles: () => ({ live: renderer.particles.live, refused, sprites, ...effects.counts }),
     ground: () => scene.groundDrawn,
+    burnt: () => scene.burntDrawn,
     bucket: () => scene.bucketDrawn,
     badge: () => hud.badge,
     rope: () => scene.ropeDrawn,

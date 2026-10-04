@@ -7,6 +7,7 @@
 import type { Emit } from 'artshape-render/game/particles';
 import { washFollow } from 'artshape-render/game/wash';
 import { describe, expect, it } from 'vitest';
+import * as effectsModule from '../src/effects';
 import { FIRES, LEVELS, theIsland } from '../src/arena';
 import { DOWNWASH } from '../src/downwash';
 import {
@@ -20,7 +21,6 @@ import {
   SMOKE,
   SPRAY,
   WASH,
-  WIND_SCALE,
   longest,
   particleWindAt,
   rescuePeople,
@@ -28,7 +28,7 @@ import {
   type FireView,
 } from '../src/effects';
 import { PATCH } from '../src/fire';
-import { NO_WATER, openWaterOf } from '../src/water';
+import { DROP, NO_WATER, openWaterOf } from '../src/water';
 import { HELICOPTER } from '../src/helicopter';
 import { windAt } from '../src/wind';
 
@@ -104,7 +104,7 @@ describe('the rates', () => {
 
   it('emit nothing at a step of no time, as when the game is paused, and nothing moves for it', () => {
     const effects = new Effects(FIRES, PEOPLE);
-    effects.drop(WEST.x, WEST.y, 80, 50);
+    effects.pouring(true, WEST.x, WEST.y, 80, 50);
     const waiting = Uint8Array.of(1, 1, 1);
     const n = effects.step(0, [view(WEST, 10), view(FIRES[1], 10), view(FIRES[2], 10)], waiting, middle(WEST));
     expect(n).toBe(0);
@@ -116,7 +116,7 @@ describe('the rates', () => {
     expect(kept.flames + kept.smoke).toBeGreaterThan(0);
     expect(moved.step(0, [view(WEST, 10)], NOBODY, middle(WEST))).toBe(0);
     expect(moved.counts).toEqual(kept);
-    // the drop was not used up by it: it pours when time passes
+    // the pour was not used up by it: it pours when time passes
     const later = run(effects, 1, 1 / 60, [view(WEST, 10)], middle(WEST));
     expect(later.spray).toBeGreaterThan(0);
   });
@@ -180,6 +180,23 @@ describe('the flames', () => {
   });
 });
 
+describe('the flames', () => {
+  it('are short licks, a few metres up from the ground, whatever drag does to them in the renderer', () => {
+    for (const look of [FLAMES.core, FLAMES.licks]) {
+      const climb = (9.81 * Math.abs(look.gravity)) / 2.4;
+      let [z, v] = [0, look.rise];
+      const dt = 1 / 240;
+      for (let t = 0; t < look.life - 1e-9; t += dt) {
+        v = v * Math.exp(-2.4 * dt) - 9.81 * look.gravity * dt;
+        z += v * dt;
+      }
+      expect(climb).toBeLessThan(6);
+      expect(z).toBeGreaterThan(1.5);
+      expect(z).toBeLessThan(5);
+    }
+  });
+});
+
 describe('the smoke', () => {
   it('is emitted within its range, at the edge of it, and not past it', () => {
     const p = WEST.patches[0];
@@ -203,6 +220,33 @@ describe('the smoke', () => {
     // upward; with no wind it is born with nothing sideways, and the wind alone takes it off
     expect(record!.velocity[2]).toBeGreaterThan(0);
     expect(Math.hypot(record!.velocity[0], record!.velocity[1])).toBe(0);
+  });
+
+  it('rises at its steady climb, 9.81 × |gravity| / 2.4 metres a second, several of them, and no faster', () => {
+    const steady = (9.81 * Math.abs(SMOKE.gravity)) / 2.4;
+    expect(steady).toBeGreaterThanOrEqual(3);
+    expect(steady).toBeLessThanOrEqual(7);
+    // the renderer's update with no wind, the climb read between the third second and the fourth, when it has settled
+    const effects = new Effects(FIRES, PEOPLE);
+    let record: Emit | undefined;
+    run(effects, 1, 1 / 60, [view(WEST, 4)], middle(WEST), NOBODY, (_, n) => {
+      for (let k = 0; k < n; k++)
+        if (effects.records[k].lifeSpread === SMOKE.lifeSpread && !record)
+          record = JSON.parse(JSON.stringify(effects.records[k])) as Emit;
+    });
+    const rose = (seconds: number) => {
+      let [z, v] = [0, record!.velocity[2]];
+      const dt = 1 / 240;
+      for (let t = 0; t < seconds - 1e-9; t += dt) {
+        v = v * Math.exp(-2.4 * dt) - 9.81 * SMOKE.gravity * dt;
+        z += v * dt;
+      }
+      return z;
+    };
+    expect(rose(4) - rose(3)).toBeCloseTo(steady, 1);
+    // so at the end of its mean life it has climbed about as far as the column's own first stretch, and no wall of it hangs low
+    expect(rose(SMOKE.life)).toBeGreaterThan(12);
+    expect(rose(SMOKE.life)).toBeLessThan(30);
   });
 
   it('lives from 40% to 160% of five seconds, a wide spread, so that the top of the smoke is ragged', () => {
@@ -254,31 +298,44 @@ describe('the flare', () => {
 });
 
 describe('the spray', () => {
-  const drop = (effects: Effects) => effects.drop(WEST.x, WEST.y, 80, 60);
+  /** The pour as the page tells it each frame it draws: on from the first step of the game's pour to the last, from the bucket where it is then. */
+  const pourFor = (
+    effects: Effects,
+    seconds: number,
+    dt: number,
+    at: (t: number) => [number, number, number, number],
+  ) => {
+    const spray: Emit[] = [];
+    const total = run(effects, seconds, dt, [], middle(WEST), NOBODY, (f, n) => {
+      // each record of the frame, copied before the next frame overwrites them
+      for (let k = 0; k < n; k++) spray.push(JSON.parse(JSON.stringify(effects.records[k])) as Emit);
+      const t = (f + 1) * dt;
+      const [x, y, z, floor] = at(t);
+      effects.pouring(t < DROP.pour, x, y, z, floor);
+    });
+    return { total: total.spray, records: spray };
+  };
+  const still = () => [WEST.x, WEST.y, 80, 60] as [number, number, number, number];
 
-  it('comes only after a drop, for its pour, and for no longer', () => {
+  it('comes only while the pour is told, and for no longer', () => {
     const quiet = new Effects(FIRES, PEOPLE);
     expect(run(quiet, 2, 1 / 60, [view(WEST, 10)], middle(WEST)).spray).toBe(0);
     const effects = new Effects(FIRES, PEOPLE);
-    drop(effects);
-    const during = run(effects, SPRAY.pour, 1 / 60, [view(WEST, 10)], middle(WEST)).spray;
+    effects.pouring(true, ...still());
+    const { total } = pourFor(effects, 2, 1 / 60, still);
     // the pour's spray and its mist, a particle each at most of a frame's share
-    expect(during).toBeGreaterThan(0.95 * (SPRAY.rate + MIST.rate) * SPRAY.pour - 2);
-    expect(during).toBeLessThan(1.05 * (SPRAY.rate + MIST.rate) * SPRAY.pour + 2);
-    expect(run(effects, 2, 1 / 60, [view(WEST, 10)], middle(WEST)).spray).toBe(0);
+    expect(total).toBeGreaterThan(0.95 * (SPRAY.rate + MIST.rate) * DROP.pour - 2);
+    expect(total).toBeLessThan(1.05 * (SPRAY.rate + MIST.rate) * DROP.pour + 2);
   });
 
-  it('pours from the bucket and misting where it lands, over the ground there', () => {
+  it('pours from the bucket’s bottom, wherever it is, and mists where it lands, over the ground there', () => {
     const effects = new Effects(FIRES, PEOPLE);
-    drop(effects);
-    const wet: Emit[] = [];
-    run(effects, 0.2, 1 / 60, [], middle(WEST), NOBODY, (_, n) => {
-      for (let k = 0; k < n; k++)
-        if (effects.records[k].gravity! >= 0.5 || effects.records[k].gravity! < 0) wet.push({ ...effects.records[k] });
-    });
+    effects.pouring(true, ...still());
+    const wet = pourFor(effects, 0.2, 1 / 60, still).records;
     const spray = wet.filter((r) => r.gravity! > 0);
     expect(spray.length).toBeGreaterThan(0);
     for (const r of spray) {
+      // born at the bucket, not on the ground, and falling
       expect(r.position).toEqual([WEST.x, WEST.y, 80]);
       expect(r.velocity[2]).toBeLessThan(0);
       expect(r.floor).toBe(60);
@@ -288,21 +345,54 @@ describe('the spray', () => {
     for (const r of mist) expect(r.position[2]).toBeCloseTo(61, 6);
   });
 
-  it('pours the whole of a drop even when the frames are long, and once for each drop told', () => {
-    const effects = new Effects(FIRES, PEOPLE);
-    drop(effects);
-    effects.drop(WEST.x + 10, WEST.y, 80, 60);
-    const total = run(effects, SPRAY.pour * 3, 1 / 2, [], middle(WEST)).spray;
-    expect(total).toBeGreaterThan(1.9 * (SPRAY.rate + MIST.rate) * SPRAY.pour - 4);
-    expect(total).toBeLessThan(2.1 * (SPRAY.rate + MIST.rate) * SPRAY.pour + 4);
+  it('falls from as high as a drop is let go, 35 m over the ground, to the ground inside the shortest life', () => {
+    // the renderer's own update on a falling particle: a sixth of the drag of smoke, the air's own gravity, and a death at the floor
+    const DRAG = 2.4 * 0.15;
+    const g = 9810 / MM_PER_UNIT;
+    const dt = 1 / 240;
+    const reach = (height: number): number => {
+      let [z, v] = [height, -SPRAY.fall];
+      let t = 0;
+      while (z > 0 && t < 10) {
+        v = v * Math.exp(-DRAG * dt) - g * SPRAY.gravity * dt;
+        z += v * dt;
+        t += dt;
+      }
+      return t;
+    };
+    for (const height of [2, 10, 20, 35]) {
+      const effects = new Effects(FIRES, PEOPLE);
+      effects.pouring(true, WEST.x, WEST.y, 60 + height, 60);
+      const born = pourFor(effects, 0.1, 1 / 60, () => [WEST.x, WEST.y, 60 + height, 60]).records.find(
+        (r) => r.gravity === SPRAY.gravity,
+      )!;
+      expect(born.position[2] - born.floor!, `${height} m`).toBe(height);
+      expect(reach(height), `${height} m`).toBeLessThan(SPRAY.life * (1 - SPRAY.lifeSpread));
+    }
   });
 
-  it('keeps room for the drops told between two frames, and lets the oldest go past it', () => {
+  it('trails along the pour: each frame’s spray is born where the bucket is then, with the helicopter going on', () => {
     const effects = new Effects(FIRES, PEOPLE);
-    for (let k = 0; k < 50; k++) effects.drop(WEST.x, WEST.y, 80, 60);
-    const total = run(effects, SPRAY.pour * 2, 1 / 60, [], middle(WEST)).spray;
-    expect(total).toBeGreaterThan(0);
-    expect(total).toBeLessThan(10 * (SPRAY.rate + MIST.rate) * SPRAY.pour);
+    const along = (t: number): [number, number, number, number] => [WEST.x + 15 * t, WEST.y, 80, 60];
+    effects.pouring(true, ...along(0));
+    const spray = pourFor(effects, DROP.pour, 1 / 60, along).records.filter((r) => r.gravity === SPRAY.gravity);
+    const xs = spray.map((r) => r.position[0]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.8 * 15 * DROP.pour);
+    // and it is the one pour: a second told while it goes does not double it
+    const twice = new Effects(FIRES, PEOPLE);
+    twice.pouring(true, ...still());
+    twice.pouring(true, ...still());
+    const { total } = pourFor(twice, 2, 1 / 60, still);
+    expect(total).toBeLessThan(1.05 * (SPRAY.rate + MIST.rate) * DROP.pour + 2);
+  });
+
+  it('pours the whole of a drop even when the frames are long', () => {
+    const effects = new Effects(FIRES, PEOPLE);
+    effects.pouring(true, ...still());
+    const { total } = pourFor(effects, DROP.pour * 3, 1 / 2, still);
+    // a frame of a half second is told in or out as a whole, so the pour is the frames it was told on
+    expect(total).toBeGreaterThan(0.95 * (SPRAY.rate + MIST.rate) * 1 - 4);
+    expect(total).toBeLessThan(1.05 * (SPRAY.rate + MIST.rate) * 1 + 4);
   });
 });
 
@@ -445,7 +535,7 @@ describe('the budget', () => {
   const smokeOf = (burning: number) => SMOKE.perPatch * Math.min(burning, SMOKE.cap);
   const smoke = smokeOf(patches) + 2 * smokeOf(lit);
   const flares = 3 * FLARE.rate;
-  const pour = (SPRAY.rate + MIST.rate) * SPRAY.pour;
+  const pour = (SPRAY.rate + MIST.rate) * DROP.pour;
   const sprayRate = ROTOR_SPRAY.ring.n * ROTOR_SPRAY.ring.rate + ROTOR_SPRAY.mist.n * ROTOR_SPRAY.mist.rate;
   /** What the fires, the flares and the one thing that is not the other, over the longest life. */
   const windowOf = (extra: 'a drop' | 'the spray') =>
@@ -463,7 +553,7 @@ describe('the budget', () => {
         expect(Math.hypot(FIRES[a].x - FIRES[b].x, FIRES[a].y - FIRES[b].y)).toBeGreaterThan(2 * FLAMES.range);
     expect(window).toBeLessThanOrEqual(0.9 * PARTICLES.capacity);
     // a pour is within a life of each stream, so what it adds is all of it
-    expect(SPRAY.pour).toBeLessThanOrEqual(Math.min(longest(SPRAY), longest(MIST)));
+    expect(DROP.pour).toBeLessThanOrEqual(Math.min(longest(SPRAY), longest(MIST)));
     // the spray is the larger of the two, so what the pool is held to is the spray's
     expect(window).toBe(windowOf('the spray'));
   });
@@ -494,7 +584,14 @@ describe('the budget', () => {
         let emitters = 0;
         const frames = Math.round(40 / dt);
         for (let f = 0; f < frames; f++) {
-          if (extra === 'a drop' && f === Math.round(15 / dt)) effects.drop(FIRES[0].x, FIRES[0].y, 80, 60);
+          if (extra === 'a drop')
+            effects.pouring(
+              f >= Math.round(15 / dt) && f < Math.round((15 + DROP.pour) / dt),
+              FIRES[0].x,
+              FIRES[0].y,
+              80,
+              60,
+            );
           const n = effects.step(dt, fires, Uint8Array.of(1, 1, 1), camera, extra === 'the spray' ? air : undefined);
           emitters = Math.max(emitters, n);
           for (let k = 0; k < n; k++) {
@@ -528,7 +625,7 @@ describe('making nothing', () => {
     const first = [...effects.records];
     const positions = first.map((r) => r.position);
     const colours = first.map((r) => r.colour);
-    effects.drop(WEST.x, WEST.y, 80, 60);
+    effects.pouring(true, WEST.x, WEST.y, 80, 60);
     run(effects, 3, 1 / 60, fires, middle(WEST), Uint8Array.of(1, 1, 1));
     expect(effects.records).toBe(list);
     expect(effects.records).toHaveLength(first.length);
@@ -550,7 +647,7 @@ describe('making nothing', () => {
       const effects = new Effects(FIRES, PEOPLE);
       const fires = [view(FIRES[0], 12), view(FIRES[1], 10), view(FIRES[2], 10)];
       const out: string[] = [];
-      effects.drop(WEST.x, WEST.y, 80, 60);
+      effects.pouring(true, WEST.x, WEST.y, 80, 60);
       run(effects, 2, 1 / 60, fires, middle(WEST), Uint8Array.of(1, 1, 1), (_, n) => {
         for (let k = 0; k < n; k++) out.push(JSON.stringify(effects.records[k]));
       });
@@ -644,14 +741,16 @@ describe('the wind on the smoke', () => {
     return { along: (d.x * wind.x + d.y * wind.y) / speed, wind: speed * seconds, rise: d.z };
   }
 
-  it('hands the renderer the island’s wind in its own units: a metre a second is ten of them at 100 mm to the unit', () => {
-    expect(WIND_SCALE).toBe(1000 / MM_PER_UNIT);
-    expect(WIND_SCALE).toBe(10);
+  it('hands the renderer the island’s wind as it is, in metres a second, at a unit that is a metre', () => {
+    // a unit is 1,000 mm, so the renderer's gravity is the earth's 9.81 and its speeds are metres a second
+    expect(MM_PER_UNIT).toBe(1000);
     const metres = windAt(T, { x: 0, y: 0 });
-    expect(wind.x).toBeCloseTo(metres.x * WIND_SCALE, 9);
-    expect(wind.y).toBeCloseTo(metres.y * WIND_SCALE, 9);
+    expect(wind.x).toBe(metres.x);
+    expect(wind.y).toBe(metres.y);
     const out = { x: 0, y: 0 };
     expect(particleWindAt(T, out)).toBe(out);
+    // and nothing scales it: the factor that once did, for a unit of 100 mm, is gone
+    expect('WIND_SCALE' in effectsModule).toBe(false);
   });
 
   it('is born with the wind: the smoke and the flare move at the speed the renderer’s drag will settle them to', () => {
@@ -679,11 +778,12 @@ describe('the wind on the smoke', () => {
     expect(c.along).toBeGreaterThan(0.5 * c.wind);
   });
 
-  it('leans the flare’s smoke as far as the column leans: at five seconds old it has gone at least half as far along as up', () => {
-    // the column's top is carried by `COLUMN.wind.top` over 40 s of a 6 m/s wind to well over its own height; a flare that
-    // climbed ten times as fast as the wind could carry it would stand straight, as it did before it was tuned
+  it('makes the flare a short plume leaning over in the wind: at five seconds old it has gone further along than up, and not climbed far', () => {
+    // a metre a second of wind carries it a metre a second, since the unit is a metre; the plume climbs a few, so it lies over
     const c = carried(FLARE, 'flare', 5);
-    expect(c.along / c.rise).toBeGreaterThan(0.5);
+    expect(c.along / c.rise).toBeGreaterThan(1);
+    expect(c.rise).toBeLessThan(15);
+    expect(c.rise).toBeGreaterThan(5);
   });
 
   it('leans the same whichever way the wind turns, and not at all in none', () => {

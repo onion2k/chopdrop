@@ -16,8 +16,8 @@ deliveries, two ring trials, a course, three rescues and three fires. The
 game opens flying free from home, nothing locked: a level begins where its
 first step is done, on a pad with a crate waiting, through a start ring or
 the towers, by landing beside a person waiting or holding a hover over one
-who waits where nothing can land, to be winched up, or by the first drop of
-water that hits a fire, one at a time, and the best
+who waits where nothing can land, to be winched up, or by arriving within
+60 m of a fire with the bucket out, one at a time, and the best
 time on each is kept in a save, with the structures collected and the ten
 hidden packages found, a radar in the corner pinging faster as one is
 neared. Nothing lands on water: over a lake, the sea or a river the
@@ -123,19 +123,26 @@ says why. Look at every picture.
   told through the `GameEvents` handed in. With nothing going,
   `src/starts.ts` says when the helicopter has done a level's first step:
   a full load on a crate's pad, a start ring or opening flown through, a
-  landing held beside a person or a hover held over one, or a drop that
-  puts out some of a fire; a pad a
+  landing held beside a person or a hover held over one, or a fire arrived
+  at with the bucket out (`FIRE.near`), which a fire put out or given up
+  does not begin again until the bucket goes in or the helicopter leaves
+  (`Starts.spent`); a pad a
   level ended on starts nothing until the helicopter lifts off.
   `src/water.ts` is the water: `watersOf` says where any water is, a lake,
   the sea or a river, which the helicopter hangs `HOVER_OVER_WATER` over
   and never lands on; `openWaterOf` the lakes and the sea alone, which a
   bucket fills in. The tank is the helicopter's and no level's: with the
   bucket out (`game.setBucket`), its bottom under open water for
-  `SCOOP.time` fills it, and a drop on a fire (`DROP`) empties it. `src/fire.ts` is a fire's patches, unburnt, burning or out:
-  spread on a fixed beat while its level is going (`SPREAD`), put out by a
-  drop's splash, and lit again at its start `FIRE.relight` after its level
-  stops or its last change; the places are `FIRES` in `arena.ts`, each lit
-  with `FIRE_LIT` patches, which no single drop can reach all of.
+  `SCOOP.time` fills it. Full, over the flames (`DROP.over` of a burning
+  patch) and within `DROP.high` of the ground, it pours for `DROP.pour`,
+  putting out every burning patch within `DROP.splash` of the helicopter as
+  it flies on; `game.pour` is what is left of it. `src/fire.ts` is a fire's
+  patches, unburnt, burning or out: spread on a fixed beat while its level
+  is going (`SPREAD`), put out by a pour, and lit again at its start
+  `FIRE.relight` after its level stops or its last change; the trees
+  standing on each patch (`treesOnPatches`, by `PATCH.half`), drawn burnt
+  while it burns or is out; the places are `FIRES` in `arena.ts`, each lit
+  with `FIRE_LIT` patches, a pass through which puts out most of them.
   `src/mission.ts` is the level going, or none: `begin` starts it with its
   first step done, and its steps are done in order (a parcel picked up, a
   parcel dropped, a ring or an opening flown through, a landing), the
@@ -342,13 +349,14 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   `rescue-boarding.png`, `rescue-winch.png`, `boat-far.png`,
   `rescue-going.png`, `rescue-toast.png`).
 - **The fire**, for a level begun by what it is done with, and for
-  anything drawn in particles: `douse` and `fire` steps in `mission.ts`,
+  anything drawn in particles: `arrive` and `fire` steps in `mission.ts`,
   the patches in `fire.ts` and the tank in `water.ts`, stepped by
   `game.ts` and begun by `starts.ts`; the places in `FIRES` (`arena.ts`),
   found by script and pinned in `test/levels.test.ts` (dry, in a wood, a
-  run of open water by it, no drop reaching every lit patch); flown by the
-  autopilot, the bucket put out, dipped at the hover inside the fire's run
-  and dropped on the patch a drop puts out the most of; ruled by
+  run of open water by it, a pass through its middle putting out 6 or more
+  of the 10 lit); flown by the autopilot, the bucket put out near the water
+  and the fire and stowed between, dipped at the hover inside the fire's
+  run and poured through the middle of what burns at 30 m; ruled by
   `checkTank` and `checkFires`; dipped, let down and flown over by the
   fuzzer's "dip", "the bucket", "let down onto water" and "over a fire";
   the ground and the bucket drawn by `scene.ts`, the flames and smoke by
@@ -360,7 +368,8 @@ its `package.json` script, its place in `npm run check` and its unit tests:
   `smoke/fire.spec.ts` and put out by the play-through, its column held to
   be seen from 450 m; its frame told by the perf gate over the west fire;
   pictured with `stepDrawn` (`fire-from-afar.png`, `fire-far.png`,
-  `fire-near.png`, `fire-chase.png`, `fire-drop.png`, `bucket-dipped.png`,
+  `fire-near.png`, `fire-chase.png`, `fire-drop.png`, `fire-burnt.png`,
+  `fire-pour.png`, `bucket-dipped.png`,
   `fire-going.png`, `fire-phone.png`, the badge in `bucket-in.png`,
   `bucket-out.png` and `bucket-full.png`, and the wind in `wind-fire.png`
   and `wind-flare.png`).

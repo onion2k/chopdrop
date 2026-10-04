@@ -32,25 +32,18 @@ export const PARTICLES = { capacity: 32768, emitters: 128 };
 
 /**
  * How many millimetres a world unit is, as the renderer is built by it: it fixes its own real sizes by it, gravity
- * among them. The page builds the renderer with this, and the wind is handed to its particles by it.
+ * among them, as 9.81 m/s² in millimetres over this. A unit is a metre on this island, so it is 1,000: at 100 it was ten
+ * times too strong, and the wind had to be scaled ten times up to lean smoke as far as the column of sprites, which is placed
+ * in metres, leans. Every speed handed to the particles is now metres a second as it is, and so are their gravities.
  */
-export const MM_PER_UNIT = 100;
+export const MM_PER_UNIT = 1000;
 
 /**
- * How many of the renderer's units a metre a second of the island's wind is, for the particles it blows. The renderer's
- * gravity is 9.81 m/s² in its own millimetres, so with a unit of `MM_PER_UNIT` of them a floating particle climbs at
- * about ten times what a metre a second would suggest, and a wind of 6 of them would lean the smoke by a tenth of what
- * the column of sprites, which is placed in metres, leans. The wind is handed to the particles in the renderer's own
- * units, so that smoke and the column lean together.
+ * The island's wind at game time `t` as the renderer's particles are handed it, written into `out`: metres a second, as
+ * `windAt` has it and unscaled. The one place the page asks for it, so that the particles and the column lean together.
  */
-export const WIND_SCALE = 1000 / MM_PER_UNIT;
-
-/** The island's wind at game time `t` as the renderer's particles are handed it, in their own units, written into `out`. */
 export function particleWindAt(t: number, out: Wind): Wind {
-  windAt(t, out);
-  out.x *= WIND_SCALE;
-  out.y *= WIND_SCALE;
-  return out;
+  return windAt(t, out);
 }
 
 type Rgb = [number, number, number];
@@ -113,27 +106,33 @@ export const FLAMES = {
 /**
  * The smoke over a burning fire, dark and dense at the flames and pale as it towers. A fire sends up `perPatch` a second
  * for each patch burning up to `cap` of them, shared among its burning patches, so a fire dying down thins and a very
- * large one is no thicker than a large one. Floating things feel a strong drag in the renderer, so it rises by a
- * negative gravity, some 6 m/s at its steady speed. It is seen from afar, so its `range` is wide.
+ * large one is no thicker than a large one. Floating things feel a strong drag in the renderer (2.4 a second), so one
+ * climbs at a steady 9.81 × |gravity| / 2.4 metres a second: about 4.5 at a gravity of −1.1, which is the column of sprites'
+ * own climb, so the particles' base rises into the column and does not hang under it. It is born at `rise` metres a second
+ * and `over` metres over the ground, and leans in the wind as it goes. It is seen from afar, so its `range` is wide.
  */
 export const SMOKE = {
   range: 500,
-  perPatch: 25,
+  perPatch: 14,
   cap: 8,
   spread: 1.4,
   life: 5,
   lifeSpread: 0.6,
-  size: 3,
-  growth: 5,
+  size: 2.2,
+  growth: 1.6,
   colour: [0.16, 0.15, 0.14] as Rgb,
   fade: [0.66, 0.67, 0.7] as Rgb,
-  alpha: 0.8,
-  gravity: -2,
-  rise: 4,
-  over: 3,
+  alpha: 0.6,
+  gravity: -1.1,
+  rise: 3,
+  over: 2,
 };
 
-/** The rescue's flare: orange smoke at the person's feet that pales as it swells, as far seen as a fire's. */
+/**
+ * The rescue's flare: orange smoke at the person's feet that pales as it swells, as far seen as a fire's. A short plume: it
+ * climbs at a steady 9.81 × 0.6 / 2.4, some 2.5 metres a second, so that in the island's wind it lies over and drifts off
+ * downwind, as a flare does, and is not a pillar.
+ */
 export const FLARE = {
   range: 500,
   rate: 60,
@@ -145,31 +144,32 @@ export const FLARE = {
   colour: [0.85, 0.36, 0.1] as Rgb,
   fade: [0.98, 0.82, 0.68] as Rgb,
   alpha: 0.85,
-  gravity: -1.4,
+  gravity: -0.6,
   out: [1.2, 0.6, 0.3],
   velocity: [0.6, 0.3, 3],
 };
 
 /**
- * A drop's spray, a heavy fall from the bucket for a short `pour`, which stops at the ground there, and the mist it
- * kicks up where it lands, which rises and spreads.
+ * A drop's spray, a falling curtain from the bucket's bottom for as long as the game's pour (`DROP.pour`) goes, thrown down at
+ * `fall` metres a second and let fall on: a droplet's drag is a sixth of smoke's, so it speeds up toward 27 m/s, and from
+ * the 35 m a drop may be let go at it reaches the ground in about a second and a half, inside the shortest life, and dies
+ * there. And the mist it kicks up where it lands, which rises and spreads.
  */
 export const SPRAY = {
-  pour: 0.5,
   rate: 1800,
-  spread: 5,
-  life: 2,
+  spread: 3,
+  life: 2.2,
   lifeSpread: 0.25,
-  size: 0.6,
-  growth: 1.4,
+  size: 0.5,
+  growth: 1,
   colour: [0.48, 0.66, 0.9] as Rgb,
   alpha: 0.7,
   gravity: 1,
-  fall: 7,
+  fall: 24,
 };
 export const MIST = {
   rate: 480,
-  spread: 6,
+  spread: 4,
   life: 1.6,
   lifeSpread: 0.3,
   size: 2.5,
@@ -195,17 +195,17 @@ export const ROTOR_SPRAY = {
   ring: {
     n: 12,
     radius: 4.5,
-    out: 10,
-    up: 4,
+    out: 9,
+    up: 3.5,
     rate: 75,
     spread: 3,
     life: 0.9,
     lifeSpread: 0.3,
     size: 0.35,
-    growth: 1.5,
+    growth: 0.9,
     colour: [0.92, 0.96, 1] as Rgb,
     fade: [1, 1, 1] as Rgb,
-    alpha: 0.6,
+    alpha: 0.4,
     gravity: 1,
   },
   mist: {
@@ -221,7 +221,7 @@ export const ROTOR_SPRAY = {
     growth: 3.5,
     colour: [0.9, 0.94, 0.97] as Rgb,
     fade: [1, 1, 1] as Rgb,
-    alpha: 0.14,
+    alpha: 0.08,
     gravity: -0.05,
   },
 };
@@ -231,9 +231,6 @@ export const ROTOR_SPRAY = {
  * nearly all of. Its reach and width are the downwash's own, and its strength goes as the trees feel it.
  */
 export const WASH = { speed: 14 };
-
-/** How many pours there can be at once, since a drop needs a scoop before it and none overlaps; more told between two frames let the oldest go. */
-const POURS = 4;
 
 /** What the effects read of a fire: how each patch is, and how many burn. A `Fire` is one. */
 export interface FireView {
@@ -319,12 +316,11 @@ export class Effects {
   private readonly lit: Uint8Array;
   private readonly flare: Float64Array;
   private readonly flareLit: Uint8Array;
-  /** The pours: where the bucket was, the ground below it, the seconds still to pour, and the spray's and mist's accumulators. */
-  private readonly pour = new Float64Array(POURS * 4);
-  private readonly left = new Float64Array(POURS);
-  private readonly sprayAcc = new Float64Array(POURS);
-  private readonly mistAcc = new Float64Array(POURS);
-  private nextPour = 0;
+  /** The pour: whether the game's is going, where the bucket's bottom is and the ground below it, and the spray's and mist's accumulators. */
+  private pouring_ = false;
+  private readonly pour = { x: 0, y: 0, z: 0, floor: 0 };
+  private sprayAcc = 0;
+  private mistAcc = 0;
   /** The rotor's spray: each emitter's accumulator, the ring's then the mist's, and the turn of the circles, in frames drawn. */
   private readonly airAcc = new Float64Array(ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n);
   private turn = 0;
@@ -351,8 +347,8 @@ export class Effects {
     this.flareLit = new Uint8Array(people.length);
     this.washes = [this.wash_];
     // room for every source to burst in one frame: two flames and a smoke on each patch, a flare for each person, and the
-    // spray and mist of each pour and the rotor's ring and mist
-    const room = patches * 3 + people.length + POURS * 2 + ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n;
+    // spray and mist of the pour and the rotor's ring and mist
+    const room = patches * 3 + people.length + 2 + ROTOR_SPRAY.ring.n + ROTOR_SPRAY.mist.n;
     this.fades = Array.from({ length: room }, (): Rgb => [0, 0, 0]);
     this.records = Array.from({ length: room }, (): Emit => ({
       position: [0, 0, 0],
@@ -371,19 +367,22 @@ export class Effects {
   }
 
   /**
-   * A drop told: the water falls from (x, y, z), the bucket's bottom, to the ground at `floor` under it, for a short
-   * pour that the next steps carry out. More than `POURS` told before they are is a crowd: the oldest is let go.
+   * The game's pour as it stands at this frame: `on` while it goes, from the bucket's bottom at (x, y, z) over the ground at
+   * `floor` below it, which the page tells every frame it draws so that the spray trails along as the helicopter flies on.
+   * The pour's length is the game's (`DROP.pour`) and said nowhere else here; it is the one pour, as the tank holds one
+   * drop, so telling it again while it goes is the same pour and not another.
    */
-  drop(x: number, y: number, z: number, floor: number): void {
-    const k = this.nextPour;
-    this.nextPour = (this.nextPour + 1) % POURS;
-    this.pour[k * 4] = x;
-    this.pour[k * 4 + 1] = y;
-    this.pour[k * 4 + 2] = z;
-    this.pour[k * 4 + 3] = floor;
-    this.left[k] = SPRAY.pour;
-    this.sprayAcc[k] = phase(k);
-    this.mistAcc[k] = phase(k + 0.5);
+  pouring(on: boolean, x: number, y: number, z: number, floor: number): void {
+    if (on && !this.pouring_) {
+      this.sprayAcc = phase(1);
+      this.mistAcc = phase(1.5);
+    }
+    this.pouring_ = on;
+    const p = this.pour;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    p.floor = floor;
   }
 
   /**
@@ -405,7 +404,7 @@ export class Effects {
    * One frame of `dt` seconds drawn: the fires as `fires` say, in the order of the places, the people as `waiting` says
    * (one or nought each, in the order of the people), and the camera at `camera`. Writes this frame's bursts into
    * `records` and says how many. A step of no time emits nothing and keeps every accumulator, every pour and the last
-   * `counts` as they were. The smoke and the flare are born moving with `wind`, the renderer's wind in its own units,
+   * `counts` as they were. The smoke and the flare are born moving with `wind`, the wind in metres a second,
    * so that they begin at the speed its drag settles them to and do not have to be carried up to it; none is none.
    */
   step(
@@ -586,34 +585,30 @@ export class Effects {
           sin * look.out,
           look.up,
           n,
-          -1e9,
+          air.level,
         );
         this.counts.wash += n;
       }
     }
   }
 
-  /** The spray and mist of each pour still going, for as much of the frame as is left of it. */
+  /** The spray and mist of the pour, while it is told: the spray from the bucket's bottom, the mist on the ground below it. */
   private pours(dt: number): void {
-    for (let k = 0; k < POURS; k++) {
-      if (this.left[k] <= 0) continue;
-      const share = Math.min(dt, this.left[k]);
-      this.left[k] -= share;
-      const [x, y, z, floor] = [this.pour[k * 4], this.pour[k * 4 + 1], this.pour[k * 4 + 2], this.pour[k * 4 + 3]];
-      this.sprayAcc[k] += SPRAY.rate * share;
-      const spray = Math.floor(this.sprayAcc[k]);
-      this.sprayAcc[k] -= spray;
-      if (spray > 0) {
-        this.put(SPRAY, x, y, z, 0, 0, -SPRAY.fall, spray, floor);
-        this.counts.spray += spray;
-      }
-      this.mistAcc[k] += MIST.rate * share;
-      const mist = Math.floor(this.mistAcc[k]);
-      this.mistAcc[k] -= mist;
-      if (mist > 0) {
-        this.put(MIST, x, y, floor + MIST.over, 0, 0, MIST.rise, mist, -1e9);
-        this.counts.spray += mist;
-      }
+    if (!this.pouring_) return;
+    const { x, y, z, floor } = this.pour;
+    this.sprayAcc += SPRAY.rate * dt;
+    const spray = Math.floor(this.sprayAcc);
+    this.sprayAcc -= spray;
+    if (spray > 0) {
+      this.put(SPRAY, x, y, z, 0, 0, -SPRAY.fall, spray, floor);
+      this.counts.spray += spray;
+    }
+    this.mistAcc += MIST.rate * dt;
+    const mist = Math.floor(this.mistAcc);
+    this.mistAcc -= mist;
+    if (mist > 0) {
+      this.put(MIST, x, y, floor + MIST.over, 0, 0, MIST.rise, mist, -1e9);
+      this.counts.spray += mist;
     }
   }
 }

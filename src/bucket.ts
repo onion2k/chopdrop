@@ -10,16 +10,16 @@
  */
 /**
  * The bucket's measure, each said once: the line it hangs on at most, how wide and how tall the bucket is, how thick the
- * line is, how far under the surface its top goes as it dips (a hair, so that it is not level with the water, whose
- * plane it would fight), and the water's top in it when the tank is full (how wide across, how thick, and how much its
- * colour is lit).
+ * line is, how far under the surface its bottom goes as it dips (half its height, so that it is half in the water and
+ * its top is out, which a dip is seen by), and the water's top in it when the tank is full (how wide across, how thick,
+ * and how much its colour is lit).
  */
 export const BUCKET = {
   line: 5,
   width: 1.4,
   height: 1.3,
   rope: 0.06,
-  dip: 0.1,
+  dip: 0.65,
   water: { across: 1.2, thick: 0.06, glow: 1.2 },
 };
 
@@ -48,9 +48,9 @@ export function bucketInWater(bottom: number, surface: number): boolean {
 /**
  * The bucket for a helicopter with its skids at `h.z`, over `ground` (the height of what is under it: the land, or the
  * water's surface), written into `out`: its `hung`, `line` and `bottom`. It hangs on its whole line, or on as much as
- * leaves its bottom on the ground; over open water (`overWater`) it may sink until its top is `BUCKET.dip` under the
- * surface. Landed, or
- * with less room under the skids than the bucket is tall, it is stowed.
+ * leaves its bottom on the ground; over open water (`overWater`) its bottom may sink to `BUCKET.dip` under the surface and
+ * no deeper, so that it hangs half in the water and its line shortens to fit, said here once. Landed, or with less room
+ * under the skids than the bucket needs, it is stowed.
  */
 export function bucketAt(
   h: Readonly<{ z: number; landed: boolean }>,
@@ -58,7 +58,7 @@ export function bucketAt(
   overWater: boolean,
   out: Pick<BucketPose, 'hung' | 'line' | 'bottom'>,
 ): void {
-  const lowest = overWater ? ground - BUCKET.height - BUCKET.dip : ground;
+  const lowest = overWater ? ground - BUCKET.dip : ground;
   const room = h.z - lowest - BUCKET.height;
   if (h.landed || room < 0) {
     out.hung = false;

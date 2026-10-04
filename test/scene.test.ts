@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { COLLECTIBLES, FIRES, ISLAND, LEVELS, PACKAGES, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { BUCKET, type BucketPose } from '../src/bucket';
-import { PATCH } from '../src/fire';
+import { PATCH, treesOnPatches } from '../src/fire';
 import { Mission, RING, RINGS, type Level, type Ring } from '../src/mission';
 import { HELICOPTER } from '../src/helicopter';
 import { SEA, SURFACE, TREE_STRIDE } from '../src/island';
@@ -14,11 +14,13 @@ import {
   helicopterBody,
   helicopterDark,
   helicopterGlass,
+  charredPole,
   helicopterTrim,
   mainRotor,
   tailRotor,
   treeShape,
   treeSize,
+  trunkRadius,
 } from '../src/meshes';
 import { Scene, type HelicopterPose } from '../src/scene';
 import { openWaterOf } from '../src/water';
@@ -55,6 +57,7 @@ const TAIL = [
   'boat',
   'burning ground',
   'burnt ground',
+  'burnt trees',
   'bucket line',
   'bucket',
   'bucket water',
@@ -1907,5 +1910,233 @@ describe('the bucket', () => {
     show(hang({ hung: false, line: 0, bottom: heli.z }));
     expect(bucketScene.bucketDrawn).toEqual({ hung: false, full: false, line: 0 });
     expect(new Scene().bucketDrawn).toEqual({ hung: false, full: false, line: 0 });
+  });
+});
+
+describe('the burnt trees', () => {
+  const burntScene = new Scene();
+  const groups = burntScene.dynamic(island);
+  const found = treesOnPatches(FIRES, { trees: island.trees, stride: TREE_STRIDE, count: island.treeCount });
+  const patches = FIRES.flatMap((f) => f.patches);
+  const at = (name: string) => burntScene.movers.indexOf(name);
+  const poles = () => burntScene.pools[at('burnt trees')];
+  const hover = pose({ x: 0, y: 0, z: 40 });
+  /** The patch each tree on a patch stands on, and where its placement is among the kinds' pools. */
+  const treeOn = new Map<number, number>();
+  for (let p = 0; p < patches.length; p++)
+    for (let k = found.first[p]; k < found.first[p + 1]; k++) treeOn.set(found.tree[k], p);
+  /** A tree's placement in its kind's pool, and the same in a scene that has written no fire. */
+  const slotOf = new Map<number, { pool: number; slot: number }>();
+  TREE_KINDS.forEach((kind, index) => {
+    let slot = 0;
+    for (let t = 0; t < island.treeCount; t++)
+      if (island.trees[t * TREE_STRIDE] === index) slotOf.set(t, { pool: at(`${kind} crowns`), slot: slot++ });
+  });
+  const placement = (scene: Scene, t: number) => {
+    const { pool, slot } = slotOf.get(t)!;
+    return Array.from(scene.pools[pool].subarray(slot * 16, slot * 16 + 16));
+  };
+  const whole = new Scene();
+  whole.dynamic(island);
+  /** Each fire's patches as these say, written to the scene, with nothing going and, if told, the sway. */
+  const show = (states: (patch: number) => number, sway?: Parameters<Scene['write']>[1], scene = burntScene) =>
+    scene.write(hover, sway, nothing, [], [], undefined, {
+      fires: FIRES.map((f, i) => ({ states: Uint8Array.from(f.patches, (_, k) => states(i * 20 + k)) })),
+    });
+  const gone = (m: number[]) => [0, 1, 2, 4, 5, 6, 8, 9, 10].every((o) => m[o] === 0);
+  /** The poles drawn, by the tree they are of: a pole is at its tree's foot, so a pole is found by where it stands. */
+  const poleOf = (t: number) => {
+    const o = t * TREE_STRIDE;
+    for (let k = 0; k < found.tree.length; k++) {
+      const m = poles().subarray(k * 16, k * 16 + 16);
+      if (m[10] !== 0 && m[12] === island.trees[o + 1] && m[13] === island.trees[o + 2]) return Array.from(m);
+    }
+    return undefined;
+  };
+  const drawnPoles = () => {
+    let n = 0;
+    for (let k = 0; k < found.tree.length; k++) if (poles()[k * 16 + 10] !== 0) n++;
+    return n;
+  };
+
+  it('are one group of its own after the burnt ground, a pool sized once to every tree on any patch', () => {
+    expect(found.tree.length).toBeGreaterThan(60);
+    expect(groups[at('burnt trees')].count).toBe(found.tree.length);
+    expect(poles()).toHaveLength(found.tree.length * 16);
+    expect(burntScene.movers.filter((m) => m === 'burnt trees')).toHaveLength(1);
+    expect(at('burnt trees')).toBe(at('burnt ground') + 1);
+    // written to or not, it is the same pool, of the same size
+    const before = poles();
+    show(() => PATCH.burning);
+    show(() => PATCH.out);
+    show(() => PATCH.unburnt);
+    expect(poles()).toBe(before);
+    expect(poles()).toHaveLength(found.tree.length * 16);
+    const again = new Scene();
+    again.dynamic(island);
+    again.dynamic(island);
+    expect(again.movers.filter((m) => m === 'burnt trees')).toHaveLength(1);
+    expect(burntScene.burntDrawn).toEqual({ trees: 0, pool: found.tree.length });
+  });
+
+  it('is a black, charred pole: 0x1c1916 and matte, the same for every tree', () => {
+    const linear = (c: number) => (c / 255) ** 2.2;
+    expect(groups[at('burnt trees')].albedo!.map((v) => +v.toFixed(5))).toEqual(
+      [0x1c, 0x19, 0x16].map((c) => +linear(c).toFixed(5)),
+    );
+    expect(groups[at('burnt trees')].roughness).toBeGreaterThanOrEqual(0.9);
+    expect(groups[at('burnt trees')].materials).toBeUndefined();
+  });
+
+  it('is a pole of height one and radius one at its foot, narrowing, closed, for the placement to size', () => {
+    const { positions, indices } = charredPole();
+    const zs = Array.from(positions).filter((_, k) => k % 3 === 2);
+    expect(Math.min(...zs)).toBeCloseTo(0, 6);
+    expect(Math.max(...zs)).toBeCloseTo(1, 6);
+    const across = (z: number) =>
+      Math.max(
+        ...Array.from({ length: positions.length / 3 }, (_, k) =>
+          Math.abs(positions[k * 3 + 2] - z) < 1e-6 ? Math.hypot(positions[k * 3], positions[k * 3 + 1]) : 0,
+        ),
+      );
+    expect(across(0)).toBeCloseTo(1, 6);
+    expect(across(1)).toBeLessThan(across(0));
+    expect(across(1)).toBeGreaterThan(0.3);
+    expect(indices.length % 3).toBe(0);
+  });
+
+  it('stands every tree whole, and no pole, while no patch has caught', () => {
+    show(() => PATCH.unburnt);
+    expect(drawnPoles()).toBe(0);
+    for (const t of treeOn.keys()) expect(placement(burntScene, t)).toEqual(placement(whole, t));
+    expect(burntScene.burntDrawn.trees).toBe(0);
+  });
+
+  it('draws each tree on a burning patch as a pole its tree’s full height and a little wider than its trunk, and the tree itself at no size', () => {
+    show((p) => (p % 20 < 10 ? PATCH.burning : PATCH.unburnt));
+    let burnt = 0;
+    for (const [t, p] of treeOn) {
+      const o = t * TREE_STRIDE;
+      const kind = TREE_KINDS[island.trees[o]];
+      if (p % 20 >= 10) {
+        // a patch not caught: its trees stand as they were
+        expect(placement(burntScene, t), `unburnt ${t}`).toEqual(placement(whole, t));
+        continue;
+      }
+      burnt++;
+      // the tree itself, trunk and crown that share the placement, is at no size
+      expect(gone(placement(burntScene, t)), `tree ${t}`).toBe(true);
+      const pole = poleOf(t)!;
+      expect(pole, `pole of ${t}`).toBeDefined();
+      const scale = island.trees[o + 5];
+      expect(pole[10]).toBeCloseTo(treeSize(kind).top * scale, 4);
+      const wide = Math.hypot(pole[0], pole[1]);
+      expect(wide).toBeGreaterThan(trunkRadius(kind) * scale);
+      expect(wide).toBeLessThan(2 * trunkRadius(kind) * scale);
+      expect(pole[14]).toBeCloseTo(island.trees[o + 3], 5);
+    }
+    expect(burnt).toBeGreaterThan(30);
+    expect(drawnPoles()).toBe(burnt);
+    expect(burntScene.burntDrawn).toEqual({ trees: burnt, pool: found.tree.length });
+  });
+
+  it('draws them just the same while a patch is out, and whole again once a patch is lit again at its start', () => {
+    show(() => PATCH.out);
+    expect(drawnPoles()).toBe(found.tree.length);
+    for (const t of treeOn.keys()) expect(gone(placement(burntScene, t))).toBe(true);
+    // the fires relit at their start: the first patches burn, the rest are unburnt
+    show((p) => (p % 20 < 10 ? PATCH.burning : PATCH.unburnt));
+    for (const [t, p] of treeOn) {
+      if (p % 20 < 10) expect(gone(placement(burntScene, t))).toBe(true);
+      else expect(placement(burntScene, t), `tree ${t}`).toEqual(placement(whole, t));
+    }
+    show(() => PATCH.unburnt);
+    expect(drawnPoles()).toBe(0);
+    for (const t of treeOn.keys()) expect(placement(burntScene, t), `tree ${t}`).toEqual(placement(whole, t));
+  });
+
+  it('is written only when a patch changes state, and the trees’ pools of only the kinds that changed', () => {
+    const changed = () => burntScene.changed.slice();
+    show(() => PATCH.burning);
+    show(() => PATCH.burning);
+    expect(changed().every((c, k) => k < 6 || k >= at('crate') || c === 0)).toBe(true);
+    expect(burntScene.changed[at('burnt trees')]).toBe(0);
+    // one patch out: the poles and the pools of the kinds of its trees are written, and no other kind
+    const patch = 3;
+    const kinds = new Set<string>();
+    for (let k = found.first[patch]; k < found.first[patch + 1]; k++)
+      kinds.add(TREE_KINDS[island.trees[found.tree[k] * TREE_STRIDE]]);
+    expect(kinds.size).toBeGreaterThan(0);
+    show((p) => (p === patch ? PATCH.out : PATCH.burning));
+    // the tree is no different drawn out than burning, so what changed is only a patch that went from one state to the other
+    // that is drawn the same: the poles are not written for a change that draws nothing new
+    expect(burntScene.changed[at('burnt trees')]).toBe(0);
+    show((p) => (p === patch ? PATCH.unburnt : PATCH.burning));
+    expect(burntScene.changed[at('burnt trees')]).toBe(1);
+    for (const kind of TREE_KINDS)
+      expect(burntScene.changed[at(`${kind} crowns`) - 1], kind).toBe(kinds.has(kind) ? 1 : 0);
+    show((p) => (p === patch ? PATCH.unburnt : PATCH.burning));
+    expect(burntScene.changed[at('burnt trees')]).toBe(0);
+  });
+
+  it('is left at no size by the sway: a burnt tree the wash is moving is not given its height back', () => {
+    // the wash straight over a burning fire, in the wood that is round it: its trees are the ones the sway moves
+    show(() => PATCH.burning);
+    const fire = FIRES[0];
+    const source = {
+      x: fire.x,
+      y: fire.y,
+      z: island.ground.heightAt(fire.x, fire.y) + 4,
+      rotorSpeed: HELICOPTER.rotorFull,
+    };
+    const sway = islandSway();
+    let t = 0;
+    for (let f = 0; f < 120; f++) sway.step(DT, source, (t += DT));
+    const moving = new Set<number>();
+    for (let k = 0; k < sway.count; k++) moving.add(sway.tree[k]);
+    const burningMoving = [...moving].filter((tree) => treeOn.has(tree));
+    // the sway is moving trees that are burnt, which is what this is for
+    expect(burningMoving.length).toBeGreaterThan(5);
+    show(() => PATCH.burning, sway);
+    for (const tree of burningMoving) expect(gone(placement(burntScene, tree)), `tree ${tree}`).toBe(true);
+    // and the ones it lets go: flown away until it is still, the burnt stay as they were, and the poles are untouched
+    const poleBefore = Array.from(poles());
+    const away = { ...source, z: HELICOPTER.ceiling };
+    for (let f = 0; f < 600 && sway.count > 0; f++) sway.step(DT, away, (t += DT));
+    expect(sway.count).toBe(0);
+    show(() => PATCH.burning, sway);
+    for (const tree of treeOn.keys()) expect(gone(placement(burntScene, tree)), `tree ${tree}`).toBe(true);
+    expect(Array.from(poles())).toEqual(poleBefore);
+  });
+
+  it('stands a tree burnt while the sway had it leaning whole again, upright, when it is lit again at its start', () => {
+    const fire = FIRES[0];
+    const source = {
+      x: fire.x,
+      y: fire.y,
+      z: island.ground.heightAt(fire.x, fire.y) + 4,
+      rotorSpeed: HELICOPTER.rotorFull,
+    };
+    const scene = new Scene();
+    scene.dynamic(island);
+    const sway = islandSway();
+    for (let f = 1; f <= 120; f++) sway.step(DT, source, f * DT);
+    show(() => PATCH.burning, sway, scene);
+    show(() => PATCH.unburnt, undefined, scene);
+    for (const tree of treeOn.keys()) {
+      const was = placement(whole, tree);
+      const now = placement(scene, tree);
+      // the foot and the size across are as they were; whatever the sway had leaned is up again or leaning as it says
+      for (const o of [0, 1, 4, 5, 12, 13, 14]) expect(now[o], `tree ${tree}, ${o}`).toBe(was[o]);
+    }
+  });
+
+  it('draws none where there are no fires, and none where no tree stands on a patch', () => {
+    const bare = new Scene(LEVELS, COLLECTIBLES, PACKAGES, []);
+    bare.dynamic(island);
+    expect(bare.movers).not.toContain('burnt trees');
+    expect(bare.burntDrawn).toEqual({ trees: 0, pool: 0 });
+    bare.write(hover);
+    expect(new Scene().burntDrawn).toEqual({ trees: 0, pool: 0 });
   });
 });

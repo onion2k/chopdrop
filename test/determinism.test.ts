@@ -151,6 +151,17 @@ describe('the determinism check', () => {
     expect(hashGame(out), 'in again').toBe(was);
   });
 
+  it('sees the pour, how much of it is left', () => {
+    const game = () => new Game({ random: seeded(1) });
+    const was = hashGame(game());
+    const pouring = game();
+    pouring.pour = 0.4;
+    expect(hashGame(pouring), 'pouring').not.toBe(was);
+    const more = game();
+    more.pour = 0.4 + 1e-6;
+    expect(hashGame(more), 'how much').not.toBe(hashGame(pouring));
+  });
+
   it("sees the tank, full and how far it is filled, and the state of each fire's patches", () => {
     const game = () => new Game({ random: seeded(1) });
     const was = hashGame(game());

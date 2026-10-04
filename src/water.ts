@@ -27,11 +27,13 @@ import type { GroundAt, Lander, Point3 } from './mission';
 export const SCOOP = { time: 2 };
 
 /**
- * What empties it: with a full tank and the bucket out, the helicopter's middle within `splash` across of a burning
- * patch and its skids within `high` of the ground under it. Every burning patch within `splash` of the point under the
- * helicopter goes out. High enough that the bucket's line clears the treetops.
+ * What empties it, and how. A drop starts with the bucket out and a full tank, the helicopter's middle within `over` of
+ * a burning patch across and its skids within `high` of the ground under it (high enough that the bucket's line clears
+ * the treetops). Then it pours for `pour` seconds, the tank empty from the first step, and on every step of the pour each
+ * burning patch within `splash` of the helicopter's middle goes out, whatever the helicopter does meanwhile. It starts
+ * only over the flames, and not at the fire's edge, so that the pour is spent sweeping the fire and not the grass beside it.
  */
-export const DROP = { high: 25, splash: 12 };
+export const DROP = { high: 40, over: 5, splash: 16, pour: 0.9 };
 
 /** The level of the water where there is none: nothing is within reach of it, and a comparison with it is false. */
 export const NO_WATER = -Infinity;
@@ -52,15 +54,15 @@ function beach(heightAt: GroundAt, level: number, x: number, y: number): boolean
 }
 
 /**
- * Whether a drop from `h` reaches `patch`: its middle within the splash across of it, and its skids within `DROP.high`
- * of the ground under the helicopter (which the bucket hangs over), not the ground under the patch.
+ * Whether a drop from `h` starts over `patch`: its middle within `DROP.over` across of it, and its skids within
+ * `DROP.high` of the ground under the helicopter (which the bucket hangs over), not the ground under the patch.
  */
 export function inDrop(
   h: Readonly<Pick<Lander, 'x' | 'y' | 'z'>>,
   patch: Readonly<Point3>,
   groundAt: GroundAt,
 ): boolean {
-  if (Math.hypot(h.x - patch.x, h.y - patch.y) > DROP.splash) return false;
+  if (Math.hypot(h.x - patch.x, h.y - patch.y) > DROP.over) return false;
   return h.z - groundAt(h.x, h.y) <= DROP.high;
 }
 

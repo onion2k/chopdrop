@@ -855,6 +855,42 @@ export function treeShape(kind: TreeKind): TreeShape {
   }
 }
 
+const trunks = new Map<TreeKind, number>();
+
+/**
+ * How wide a kind of tree's trunk is at its foot, a radius at scale one, measured from its shape like `treeSize`, so a
+ * charred pole that stands where the tree stood is sized by the trunk it replaces and the number is said nowhere else.
+ * Measured once a kind: a map of five.
+ */
+export function trunkRadius(kind: TreeKind): number {
+  let radius = trunks.get(kind);
+  if (radius === undefined) {
+    const { positions } = treeShape(kind).trunk;
+    let foot = Infinity;
+    for (let i = 2; i < positions.length; i += 3) foot = Math.min(foot, positions[i]);
+    radius = 0;
+    // the lowest ring of the trunk, and the rings within a hand of it, since a tube's first ring is at the foot
+    for (let i = 0; i < positions.length; i += 3)
+      if (positions[i + 2] < foot + 0.3) radius = Math.max(radius, Math.hypot(positions[i], positions[i + 1]));
+    trunks.set(kind, radius);
+  }
+  return radius;
+}
+
+/**
+ * A charred pole of height one, radius one at its foot and `CHARRED.top` of that at its tip, closed at both ends: what
+ * a tree on a burnt patch is drawn as, sized per tree by its placement, so every tree is the one mesh instanced.
+ */
+export const CHARRED = { sides: 7, top: 0.55 };
+export function charredPole(): Mesh {
+  return sweep(upright(1), {
+    profile: circle(1, CHARRED.sides),
+    taper: (t) => 1 + (CHARRED.top - 1) * t,
+    caps: true,
+    up: [0, 1, 0],
+  });
+}
+
 /* ------------------------------------------------------------------ the parcel and the beacon */
 
 /** The parcel's size, said once: the crate the scene draws, and what it sits on and hangs under. */

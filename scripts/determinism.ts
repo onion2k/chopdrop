@@ -44,7 +44,7 @@ export interface TwiceResult {
  * how it is turned and tilted, its rotor; which level is going (−1 for none) and where it has got to; what the starts
  * are loading and which pad they have blocked; the level guided to (−1 for none); every tree moving and how it leans;
  * the best times kept; the structures collected, how many and which, in order; the packages found, the same, with
- * what the radar hears and its clock; the tank, full and how far it is filled, whether the bucket is out, and the state of each fire's patches in
+ * what the radar hears and its clock; the tank, full and how far it is filled, how much of a pour is left, whether the bucket is out, and the state of each fire's patches in
  * order; and the clock. Two games with the same hash are the same game, down to the last
  * bit of every float.
  */
@@ -89,6 +89,7 @@ export function hashGame(game: Game): string {
   eat(game.finds.until);
   eat(game.tank.full ? 1 : 0);
   eat(game.tank.filling);
+  eat(game.pour);
   eat(game.bucket.out ? 1 : 0);
   for (const fire of game.fires) for (let k = 0; k < fire.states.length; k++) eat(fire.states[k]);
   eat(game.t);

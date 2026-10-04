@@ -3,9 +3,17 @@ import { HELICOPTER, HOVER_LIFT, HOVER_OVER_WATER } from '../src/helicopter';
 import { CHASE, ChaseCamera } from '../src/chase';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS } from '../src/arena';
 import { FIRE, PATCH } from '../src/fire';
-import { SCOOP } from '../src/water';
+import { DROP, SCOOP } from '../src/water';
 import { BOARD, DELIVERY, RING, WINCH, type Level, type Ring } from '../src/mission';
-import { checkCamera, checkCollection, checkFinds, checkFires, checkInvariants, checkTank } from '../src/invariants';
+import {
+  checkCamera,
+  checkCollection,
+  checkFinds,
+  checkFires,
+  checkInvariants,
+  checkPour,
+  checkTank,
+} from '../src/invariants';
 import { RADAR } from '../src/finds';
 import { TREE_STRIDE } from '../src/island';
 import { Game } from '../src/game';
@@ -694,7 +702,7 @@ describe('what must hold of the fires', () => {
     expect(checkFires(game)).toEqual([]);
     game.begin(west.id);
     expect(checkFires(game)).toEqual([]);
-    for (let f = 0; f < 60 * 14; f++) {
+    for (let f = 0; f < 60 * 16; f++) {
       game.helicopter.placeAbove(0, 0, 60, 0);
       game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
       expect(checkFires(game), `frame ${f}`).toEqual([]);
@@ -749,10 +757,63 @@ describe('what must hold of the fires', () => {
     expect(checkInvariants(game).join('\n')).toMatch(new RegExp(`${west.id} is going, and none of it burns`));
   });
 
-  it('reports a fire level going, as the mission has it, before its douse step, which is no state a level is in', () => {
+  it('reports a fire level going, as the mission has it, before its first step, which is no state a level is in', () => {
     const { game } = newGame();
     game.begin(west.id);
     game.mission.next = 0;
     expect(checkInvariants(game).join('\n')).toMatch(/no such step/);
+  });
+
+  it('reports a fire level going at its arrival, which a level is begun past: the arrival is what begins it', () => {
+    const { game } = newGame();
+    expect(game.mission.level).toBeNull();
+    expect(checkFires(game)).toEqual([]);
+    game.begin(west.id);
+    expect(game.mission.current?.kind).toBe('fire');
+    expect(checkFires(game)).toEqual([]);
+    game.mission.next = 0;
+    expect(game.mission.current?.kind).toBe('arrive');
+    expect(checkFires(game).join('\n')).toMatch(new RegExp(`${west.id} is going, and is at its arrival`));
+  });
+});
+
+describe('what must hold of the pour', () => {
+  const [west] = FIRES;
+
+  it('holds of a new game, and of a pour from the first step to the last', () => {
+    const { game } = newGame();
+    expect(checkPour(game)).toEqual([]);
+    const [p] = west.patches;
+    game.setBucket(true);
+    game.tank.full = true;
+    game.helicopter.placeAbove(p.x, p.y, 20, 0);
+    for (let f = 0; f < 60 * 2; f++) {
+      game.step(DT, { forward: 0, turn: 0, lift: HOVER_LIFT });
+      expect(checkPour(game), `frame ${f}`).toEqual([]);
+      expect(checkInvariants(game), `frame ${f}`).toEqual([]);
+    }
+    expect(game.pour).toBe(0);
+  });
+
+  it('reports a pour that is not a number, is below nothing, or is longer than a pour', () => {
+    for (const bad of [NaN, -0.1, DROP.pour + 0.01, Infinity]) {
+      const { game } = newGame();
+      game.pour = bad;
+      expect(checkPour(game).join('\n'), `${bad}`).toMatch(
+        new RegExp(`the pour reads ${bad}, and runs from 0 to ${DROP.pour}`),
+      );
+    }
+  });
+
+  it('allows the whole of a pour and nothing, and reports a pour with the tank full', () => {
+    const { game } = newGame();
+    game.pour = DROP.pour;
+    expect(checkPour(game)).toEqual([]);
+    game.pour = 0;
+    game.tank.full = true;
+    expect(checkPour(game)).toEqual([]);
+    game.pour = 0.4;
+    expect(checkPour(game).join('\n')).toMatch(/the tank is full, and a pour is going: 0.400 s left/);
+    expect(checkInvariants(game).join('\n')).toMatch(/a pour is going/);
   });
 });

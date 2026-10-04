@@ -44,8 +44,11 @@ where nothing can land, are winched up by a low hover held over them for
 three seconds. Three are fires, two in woods by the lakes and one in the
 northern wood far from water, each under a column of dark smoke that leans
 in the wind: B, or the badge by the radar, puts the bucket out, letting it
-down into a lake or the sea fills it, and passing low over the flames lets
-it go, the first drop that hits beginning the level. A fire spreads while it
+down into a lake or the sea fills it, and flying over the flames, up to 40 m
+over the ground, pours it out along the way, one or two buckets putting out
+a fire that has not grown. Arriving at a fire with the bucket out begins the
+level and its clock, and the trees it burns stand black and bare, so the
+flames show through them. A fire spreads while it
 is fought, and is out when no patch burns. A level's end is told
 in a toast with its time, and flight carries on. Esc, or the corner button,
 brings up the panel: every level, its best time and where it starts, a way

@@ -10,7 +10,7 @@
  * writes to the page only when a word or a figure on it changes. Beside it is the bucket's button, always shown, which is
  * the tank's badge as well: grey with the key's tag while the bucket is in, an orange ring while it is out, and with water
  * drawn in it in blue when it is full. A click or a tap on it puts the bucket out or takes it in, as the key B does. The bucket's words
- * (press B for it, hover low over the water to fill it, fly low over the flames to drop) are the bar's for a fire, going or
+ * (press B for it, hover low over the water to fill it, fly over the flames to drop, or take it to the fire when shown the way) are the bar's for a fire, going or
  * guided to, and for the nearest fire flying free with the bucket out; the loader reads "Filling the bucket" and fills in blue as the
  * tank does, and "The walker climbs aboard" for a person boarding. Without it a player would not know where to go, nor
  * that they had got there.
@@ -56,7 +56,7 @@ function firstOf(level: { steps: readonly Step[] }): Step {
 
 /**
  * Where a level starts, as the panel and the HUD put it: a pickup, "Land on the meadow pad"; a ring, "Fly through the
- * first ring, by the lakeside pad", the pad being the one nearest the ring; an opening, "Fly between the towers"; a fire, "Drop water on the fire by the west lake". One
+ * first ring, by the lakeside pad", the pad being the one nearest the ring; an opening, "Fly between the towers"; a fire, "Take the bucket to the fire by the west lake". One
  * function, so what the panel says and what the bar says are the same words.
  */
 export function startWords(level: { steps: readonly Step[]; name?: string }, pads: readonly PadWords[]): string {
@@ -76,11 +76,11 @@ export function startWords(level: { steps: readonly Step[]; name?: string }, pad
     }
     return `Fly through the first ring, by the ${site} pad`;
   }
-  // a fire is begun by a drop on it, and has no pad: the words are from the fire's name, "Fire by the west lake"
-  if (first.kind === 'douse' || first.kind === 'fire')
+  // a fire is begun by coming to it with the bucket out, and has no pad: the words are from the fire's name, "Fire by the west lake"
+  if (first.kind === 'arrive' || first.kind === 'fire')
     return level.name
-      ? `Drop water on the ${level.name[0].toLowerCase()}${level.name.slice(1)}`
-      : 'Drop water on the fire';
+      ? `Take the bucket to the ${level.name[0].toLowerCase()}${level.name.slice(1)}`
+      : 'Take the bucket to the fire';
   return `Land on the ${pads[first.pad].site} pad`;
 }
 
@@ -106,14 +106,19 @@ export function wantsWater(step: Step | undefined, bucket: Readonly<{ out: boole
 /**
  * What the bar says of a fire by the bucket, for a fire going, one guided to, and the nearest flying free with the bucket
  * out: in, press B for it ("Tap the bucket" where a finger flies, which has no key); out and empty, hover low over the
- * water to fill it; and out and full, fly low over the flames to drop, and how many burn. One function, so every place the
- * bar says it says the same.
+ * water to fill it; and out and full, fly over the flames to drop, and how many burn, since the drop falls from as high as
+ * the window is and "low" is not asked of anyone. Shown the way to a fire (`guided`) the full bucket is only to be taken
+ * there, the drop being for when it has come. One function, so every place the bar says it says the same.
  */
-export function fireWords(bucket: Readonly<{ out: boolean; full: boolean }>, burning: number, touch: boolean): string {
+export function fireWords(
+  bucket: Readonly<{ out: boolean; full: boolean }>,
+  burning: number,
+  touch: boolean,
+  guided = false,
+): string {
   if (!bucket.out) return touch ? 'Tap the bucket' : 'Press B for the bucket';
-  return bucket.full
-    ? `Fly low over the flames to drop · ${burning} burning`
-    : 'Hover low over the water to fill the bucket';
+  if (!bucket.full) return 'Hover low over the water to fill the bucket';
+  return guided ? 'Take the bucket to the fire' : `Fly over the flames to drop · ${burning} burning`;
 }
 
 /**
@@ -134,7 +139,7 @@ export function stepWords(
   if (step.kind === 'gate') return `Fly ${step.label}`;
   if (step.kind === 'winch') return `Hover over ${step.who}`;
   if (step.kind === 'board') return `Land beside ${step.who}`;
-  if (step.kind === 'douse' || step.kind === 'fire') return fireWords(fire, fire.burning, fire.touch);
+  if (step.kind === 'arrive' || step.kind === 'fire') return fireWords(fire, fire.burning, fire.touch);
   const site = pads[step.pad].site;
   if (step.kind === 'land') {
     const person =
@@ -745,7 +750,7 @@ export class Hud {
         ? stepWords(d.level!, step, game.island.pads, { n: d.ringNumber, of: d.ringCount }, fire)
         : game.guided
           ? fireOf(game.guided.steps[0]) !== null
-            ? fireWords(fire, fire.burning, fire.touch)
+            ? fireWords(fire, fire.burning, fire.touch, true)
             : this.guideWords
           : fireWords(fire, fire.burning, fire.touch);
     }

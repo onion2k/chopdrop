@@ -27,6 +27,7 @@ function api(over: Partial<DebugHost> = {}) {
     radar: () => ({ badge: 'quiet', step: 0 }),
     particles: () => ({ live: 7, refused: 0, flames: 1, smoke: 2, flares: 3, spray: 4 }),
     ground: () => ({ burning: 10, burnt: 0 }),
+    burnt: () => ({ trees: 40, pool: 120 }),
     bucket: () => ({ hung: false, full: false, line: 0 }),
     badge: () => 'none',
     screen: () => 'flying',
@@ -188,6 +189,15 @@ describe('the test API and the water bombing', () => {
     expect(a.state().tank).toEqual({ full: true, filling: 0 });
   });
 
+  it('says how much of the pour is left, 0 when none, and as the game has it', () => {
+    const { game, api: a } = api();
+    expect(a.state().pour).toBe(0);
+    game.pour = 0.4;
+    expect(a.state().pour).toBe(0.4);
+    game.pour = 0;
+    expect(a.state().pour).toBe(0);
+  });
+
   it('says each fire, by its id, how many burn and what state each patch is in, as numbers and as a copy', () => {
     const { game, api: a } = api();
     const listed = a.state().fires;
@@ -221,7 +231,7 @@ describe('the test API and the water bombing', () => {
     const { api: a } = api();
     a.begin('south-lake-fire');
     expect(a.state().mission.level).toBe('south-lake-fire');
-    expect(a.state().mission.steps.map((s) => s.kind)).toEqual(['douse', 'fire']);
+    expect(a.state().mission.steps.map((s) => s.kind)).toEqual(['arrive', 'fire']);
     expect(a.state().mission.goal).not.toBeNull();
   });
 });
@@ -280,5 +290,7 @@ describe('the test API and the drawing of particles', () => {
     expect(a.state().badge).toBe('full');
     expect(a.state().smoke).toBe(2);
     expect(a.state().ground).toEqual({ burning: 10, burnt: 0 });
+    // and the trees the scene draws burnt, out of the pool it has for them
+    expect(a.state().burnt).toEqual({ trees: 40, pool: 120 });
   });
 });

@@ -4,11 +4,12 @@
  * the helicopter's middle flies through its first ring or opening the way it faces, by the same rule a mission passes
  * the rest of its rings by, and a rescue when it has hovered in the window over its person for as long as the winch
  * takes, by the same rule a mission winches by, or a rescue by landing when it has stayed landed within reach of its
- * person for as long as the boarding takes, by the same rule a mission boards by, and a fire when a drop has put a patch of it out (told by the game, which
- * knows where the water fell). A level that has just ended on a pad begins nothing from it until the helicopter has
+ * person for as long as the boarding takes, by the same rule a mission boards by, and a fire when the helicopter comes
+ * within `FIRE.near` of a patch of it that burns with the bucket out (which the game tells it, as it knows the bucket). A level that has just ended on a pad begins nothing from it until the helicopter has
  * lifted off, or one delivery would begin the next from the pad it ended on. Without it the game would have to be
  * told a level, and a player could not find one by flying.
  */
+import { FIRE } from './fire';
 import { HELICOPTER } from './helicopter';
 import type { Pad } from './island';
 import {
@@ -19,6 +20,7 @@ import {
   onPad,
   type Board,
   type GroundAt,
+  type FireWatch,
   type Gate,
   type Lander,
   type Level,
@@ -26,6 +28,9 @@ import {
   type Ring,
   type Winch,
 } from './mission';
+
+/** A watch that knows no fire, for starts handed none: nothing is ever near a patch that burns. */
+const NO_FIRES: FireWatch = { burning: () => 0, nearest: () => false };
 
 export class Starts {
   /** The seconds it has stood on a pickup pad not blocked, the parcel loading, hovered in a rescue's window, the winch running, or stayed landed beside a person, the boarding running; 0 otherwise. */
@@ -37,6 +42,13 @@ export class Starts {
   /** The pad a level ended on (by its place in the island's list), where nothing starts until it lifts off; −1 for none. */
   blocked = -1;
   /**
+   * The fire whose level has just ended or been given up, by its id, which begins nothing until the bucket is taken in or
+   * the helicopter has come past `FIRE.near` of a patch of it alight; '' for none. A fire is lit again a few seconds
+   * after it goes out, and a helicopter still over it with the bucket out would be thrown into it again, or could never
+   * give it up. The fire's own pad, so to speak.
+   */
+  spent = '';
+  /**
    * The level that begins from each pad, by the pad's place in the island's list: the first level, in order, whose
    * first step is a pickup there; null for a pad nothing begins from. Built once.
    */
@@ -47,8 +59,10 @@ export class Starts {
   private readonly winches: { level: Level; winch: Winch }[] = [];
   /** The levels that begin with a person boarding, each with the person: those whose first step is a board. Built once. */
   private readonly boards: { level: Level; person: Board }[] = [];
-  /** The level that begins with a drop on each fire, by the fire's id: the first level, in order, whose first step is a douse of it. Built once. */
-  private readonly douses = new Map<string, Level>();
+  /** The levels that begin with an arrival at a fire, each with the fire's id: those whose first step is an arrival. Built once. */
+  private readonly arrivals: { level: Level; fire: string }[] = [];
+  /** The nearest burning patch of a fire to the helicopter, written in place, so watching for an arrival makes nothing each step. */
+  private readonly patch: Point3 = { x: 0, y: 0, z: 0 };
   /** Where the helicopter's middle was at the last step, which an opening is passed by moving from; none until it has been seen. */
   private readonly was: Point3 = { x: 0, y: 0, z: 0 };
   /** Where the helicopter's middle is now, written in place, so watching an opening makes nothing each step. */
@@ -59,6 +73,7 @@ export class Starts {
     private readonly pads: readonly Pad[],
     levels: readonly Level[],
     private readonly groundAt: GroundAt = () => 0,
+    private readonly fires: FireWatch = NO_FIRES,
   ) {
     this.byPad = pads.map(() => null);
     for (const level of levels) {
@@ -66,15 +81,21 @@ export class Starts {
       if (first.kind === 'pickup') this.byPad[first.pad] ??= level;
       else if (first.kind === 'winch') this.winches.push({ level, winch: first });
       else if (first.kind === 'board') this.boards.push({ level, person: first });
-      else if (first.kind === 'douse' && !this.douses.has(first.fire)) this.douses.set(first.fire, level);
+      else if (first.kind === 'arrive') this.arrivals.push({ level, fire: first.fire });
       else if (first.kind === 'ring' || first.kind === 'gate') this.openings.push({ level, opening: first });
     }
   }
 
-  /** One step: the level whose first step it has just done, or null. Makes nothing. */
-  step(dt: number, h: Readonly<Lander>): Level | null {
+  /**
+   * One step: the level whose first step it has just done, or null. `bucketOut` is whether the player has the bucket out,
+   * which is what coming to a fire is done with: a bucket in begins nothing, however near. Makes nothing.
+   */
+  step(dt: number, h: Readonly<Lander>, bucketOut = false): Level | null {
     // lifting off clears the pad a level ended on
     if (!h.landed) this.blocked = -1;
+    // a fire rested from is let go once the bucket is in, or the helicopter is clear of it while it burns: with none
+    // alight there is no telling how far off it is, and it stays rested until it is lit again
+    if (this.spent && (!bucketOut || this.clearOf(this.spent, h))) this.spent = '';
     this.winching = null;
     this.boarding = null;
     const now = this.here;
@@ -93,6 +114,10 @@ export class Starts {
     this.was.z = now.z;
     this.seen = true;
     if (began) return began;
+    // a fire: come to with the bucket out, which is done at once and has nothing to load. The first of the levels, in order,
+    // whose fire has a patch burning within reach
+    if (bucketOut)
+      for (const { level, fire } of this.arrivals) if (fire !== this.spent && this.near(fire, h)) return level;
     // a person: hovered over in the window for a full hold, which a pad has no say in
     for (const { level, winch } of this.winches)
       if (inWindow(h, winch, this.groundAt)) {
@@ -132,12 +157,18 @@ export class Starts {
     return this.byPad[pad];
   }
 
-  /**
-   * A drop that fell on the fire named `fire` and put out `out` patches: the level that begins with it, or null if it put
-   * none out, fell on no fire, or no level begins with a drop on it. The game asks only with nothing going. Makes nothing.
-   */
-  dropped(fire: string, out: number): Level | null {
-    return out > 0 ? (this.douses.get(fire) ?? null) : null;
+  /** Whether a patch of the fire named `id` that burns is within `FIRE.near` of the helicopter's middle. Makes nothing. */
+  private near(id: string, h: Readonly<Lander>): boolean {
+    return (
+      this.fires.nearest(id, h.x, h.y, this.patch) && Math.hypot(this.patch.x - h.x, this.patch.y - h.y) <= FIRE.near
+    );
+  }
+
+  /** Whether the fire named `id` burns and the helicopter is further than `FIRE.near` from every patch of it that does. Makes nothing. */
+  private clearOf(id: string, h: Readonly<Lander>): boolean {
+    return (
+      this.fires.nearest(id, h.x, h.y, this.patch) && Math.hypot(this.patch.x - h.x, this.patch.y - h.y) > FIRE.near
+    );
   }
 
   /** Nothing loading, nothing blocked, and no last position, so the next move is never taken for a crossing. */
@@ -146,6 +177,7 @@ export class Starts {
     this.winching = null;
     this.boarding = null;
     this.blocked = -1;
+    this.spent = '';
     this.seen = false;
   }
 }

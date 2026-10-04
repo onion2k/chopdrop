@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
 import { LEVELS } from '../src/arena';
+import { SPREAD } from '../src/fire';
 import { HELICOPTER, HOVER_LIFT } from '../src/helicopter';
 import type { Ring } from '../src/mission';
 import { COLLECTIBLES, PACKAGES } from '../src/arena';
@@ -303,27 +304,37 @@ test('a view over the west fire, every patch burning and then a drop pouring on 
   await start(page, { seed: 11, paused: true });
   await settle(page, 60);
   // the tank filled and the level begun with it full, the helicopter held well off, so the fire spreads while it waits
-  // and the water is kept: ten patches lit at the start, one more every eight seconds, all twenty by a minute and a half
+  // and the water is kept: ten patches lit at the start, one more every `SPREAD.every` seconds, all twenty by two and a half
+  // minutes, and every tree on a patch drawn burnt, the most the fire's trees can be
   await scoop(page);
+  const spreadFrames = (WEST.patches.length - WEST.lit) * SPREAD.every * 60 + 120;
   const yaw = 0.9;
   await page.evaluate(
-    ([id, x, y, hover]) => {
+    ([id, x, y, hover, frames]) => {
       const g = window.game!;
       g.begin(id);
       g.chase();
       g.teleport(x, y, 26, 0.9);
       g.fly(0, 0, hover);
-      g.step(5700);
+      g.step(frames);
     },
-    [WEST.id, WEST.x - Math.cos(yaw) * 70, WEST.y - Math.sin(yaw) * 70, HOVER_LIFT] as const,
+    [WEST.id, WEST.x - Math.cos(yaw) * 70, WEST.y - Math.sin(yaw) * 70, HOVER_LIFT, spreadFrames] as const,
   );
   await settle(page, 400);
   const all = await page.evaluate(async () => {
     const g = window.game!;
     const s = g.state();
-    return { burning: s.fires[0].burning, full: s.tank.full, live: s.particles.live, ms: await g.measureFrame(50) };
+    return {
+      burning: s.fires[0].burning,
+      full: s.tank.full,
+      live: s.particles.live,
+      burnt: s.burnt,
+      ms: await g.measureFrame(50),
+    };
   });
   expect([all.burning, all.full], 'every patch burning, the water still in the tank').toEqual([20, true]);
+  // the fire's own trees all drawn burnt: the west fire's share of the pool, and the other two fires' lit patches' besides
+  expect(all.burnt.trees, 'trees drawn burnt').toBeGreaterThan(60);
   // the drop on the fire's edge, and the frame while it pours: the spray and the mist over what is left burning
   await hoverOver(page, EDGE.x, EDGE.y, DROP_HEIGHT, yaw, 3);
   const pouring = await page.evaluate(async (climb) => {
@@ -344,10 +355,10 @@ test('a view over the west fire, every patch burning and then a drop pouring on 
   const [allMs, pourMs] = [all.ms, pouring.ms].map((v) => Math.round(v * 1000) / 1000);
   info.annotations.push({
     type: 'perf-fire',
-    description: `${allMs} ms with 20 patches burning (${all.live} live), ${pourMs} ms pouring with ${pouring.burning} burning (${pouring.live} live); not held to the baseline or the budget`,
+    description: `${allMs} ms with 20 patches burning and ${all.burnt.trees} of ${all.burnt.pool} trees burnt (${all.live} live), ${pourMs} ms pouring with ${pouring.burning} burning (${pouring.live} live); not held to the baseline or the budget`,
   });
   console.log(
-    `perf: fire view frame ${allMs} ms with every patch burning (${all.live} live), ${pourMs} ms with a drop pouring (${pouring.burning} burning, ${pouring.live} live) (not held)`,
+    `perf: fire view frame ${allMs} ms with every patch burning and ${all.burnt.trees} of ${all.burnt.pool} trees burnt (${all.live} live), ${pourMs} ms with a drop pouring (${pouring.burning} burning, ${pouring.live} live) (not held)`,
   );
   expect(problems).toEqual([]);
 });

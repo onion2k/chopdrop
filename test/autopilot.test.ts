@@ -8,6 +8,7 @@ import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES } from 
 import { Autopilot, FIGHT, PILOT } from '../src/autopilot';
 import { BUCKET } from '../src/bucket';
 import { FIND } from '../src/finds';
+import { FIRE, PATCH } from '../src/fire';
 import { Game } from '../src/game';
 import { HELICOPTER, HOVER_OVER_WATER } from '../src/helicopter';
 import { BOARD, WINCH } from '../src/mission';
@@ -688,33 +689,120 @@ describe('the autopilot and the fires', () => {
       expect(counts.out).toBe(1);
       expect(counts.scoops).toBeGreaterThanOrEqual(1);
       expect(counts.drops).toBeGreaterThanOrEqual(1);
-      // the water it carried was dropped every time at a height inside the window and clear of the trees
+      // the water it carried was dropped every time at a height inside the window and clear of the trees: about
+      // FIGHT.drop up, with the 5 m line under the 17 m crowns
       for (const h of heights) {
         expect(h).toBeLessThanOrEqual(DROP.high);
-        expect(h).toBeGreaterThan(17);
+        expect(h).toBeGreaterThan(FIGHT.drop - 6);
       }
       expect(game.t).toBeLessThan(LIMIT);
     },
   );
 
-  it('is begun by its first drop, as a player would, with nothing going until the water falls', () => {
+  it('is begun by arriving with the bucket out, as a player would: nothing going until it is within 60 m of a burning patch', () => {
     const { game, pilot } = bombing('west-lake-fire');
-    let before = -1;
-    for (let f = 0; f < 200 * 60 && game.last === null; f++) {
+    const at = { x: 0, y: 0, z: 0 };
+    let drops = 0;
+    for (let f = 0; f < 200 * 60; f++) {
       pilot.step(DT);
-      if (before < 0 && game.mission.level) before = game.t;
+      if (game.pour > 0) drops++;
+      if (game.mission.level) break;
     }
-    expect(before).toBeGreaterThan(SCOOP.time);
-    expect(game.mission.level).toBeNull();
+    // as it was told begun: the bucket out, and the nearest patch that burns as near as it takes to begin it
+    const wasOut = game.bucket.out;
+    game.fire('west-lake-fire').nearestBurning(game.helicopter.x, game.helicopter.y, at);
+    const near = Math.hypot(at.x - game.helicopter.x, at.y - game.helicopter.y);
+    expect(game.mission.level?.id).toBe('west-lake-fire');
+    expect(wasOut).toBe(true);
+    expect(near).toBeLessThanOrEqual(FIRE.near);
+    expect(near).toBeGreaterThan(FIRE.near - 5);
+    expect(drops, 'begun before any water fell').toBe(0);
   });
 
-  it('puts the bucket out for a fire, and leaves it out', () => {
+  it.each(ids)('puts %s out in one or two drops from home, touching nothing, and scooping as often', (id) => {
+    const { game, pilot, counts } = bombing(id);
+    const knocks = { count: 0 };
+    expect(flown(game, LIMIT, knocks, pilot), `${id} done`).not.toBeNull();
+    expect(knocks.count).toBe(0);
+    expect(counts.drops, `${id}: drops`).toBeGreaterThanOrEqual(1);
+    expect(counts.drops, `${id}: drops`).toBeLessThanOrEqual(2);
+    expect(counts.scoops).toBe(counts.drops);
+    expect(game.last?.id).toBe(id);
+  });
+
+  it('has the bucket out for the water and for the fire, and stowed between, where it would begin a fire it flew by', () => {
     const { game, pilot } = bombing('west-lake-fire');
+    const place = FIRES[0];
     expect(game.bucket.out).toBe(false);
     for (let f = 0; f < 5; f++) pilot.step(DT);
-    expect(game.bucket.out).toBe(true);
+    expect(game.bucket.out, 'in, far from the water').toBe(false);
+    let dipped = false;
+    let carried = false;
+    let dropped = false;
+    let wasFull = false;
+    for (let f = 0; f < 200 * 60 && !dropped; f++) {
+      pilot.step(DT);
+      const h = game.helicopter;
+      if (game.tank.filling > 0) {
+        dipped = true;
+        expect(game.bucket.out, 'out to dip').toBe(true);
+      }
+      // a step after it was full, since the pilot chooses before the step that fills the tank
+      if (wasFull && game.tank.full && Math.hypot(h.x - place.x, h.y - place.y) > FIGHT.far) {
+        carried = true;
+        expect(game.bucket.out, 'stowed with the water, far from the fire').toBe(false);
+      }
+      wasFull = game.tank.full;
+      if (game.pour > 0) dropped = true;
+    }
+    expect([dipped, carried, dropped]).toEqual([true, true, true]);
+    expect(game.bucket.out, 'out for the drop').toBe(true);
+  });
+
+  it('goes for the nearest patch that burns when the middle of what burns has none within the reach of the water: a fire in pieces', () => {
+    const place = FIRES[2];
+    const far = place.patches.reduce((a, b) =>
+      Math.hypot(b.x - place.x, b.y - place.y) > Math.hypot(a.x - place.x, a.y - place.y) ? b : a,
+    );
+    const { game, pilot } = bombing(place.id);
+    const fire = game.fire(place.id);
+    // two patches on opposite sides of the middle, the middle itself between them with nothing burning near it
+    const other = place.patches.reduce((a, b) =>
+      Math.hypot(b.x - far.x, b.y - far.y) > Math.hypot(a.x - far.x, a.y - far.y) ? b : a,
+    );
+    fire.states.fill(PATCH.out);
+    fire.states[place.patches.indexOf(far)] = PATCH.burning;
+    fire.states[place.patches.indexOf(other)] = PATCH.burning;
+    fire.burning = 2;
+    const mid = { x: (far.x + other.x) / 2, y: (far.y + other.y) / 2 };
+    expect(Math.hypot(far.x - mid.x, far.y - mid.y)).toBeGreaterThan(DROP.over + FIGHT.close);
+    game.begin(place.id);
+    game.tank.full = true;
+    game.helicopter.placeAbove(place.x + 120, place.y, 60, Math.PI);
+    let poured = false;
+    for (let f = 0; f < 60 * 90 && !poured; f++) {
+      pilot.step(DT);
+      poured = game.pour > 0;
+    }
+    expect(poured, 'a drop fell on one of the two').toBe(true);
+    expect(fire.burning).toBeLessThan(2);
+  });
+
+  it('stows the bucket for any other level, which a fire left it out for', () => {
+    const { game, pilot } = bombing('west-lake-fire');
     expect(flown(game, LIMIT, undefined, pilot)).not.toBeNull();
-    expect(game.bucket.out).toBe(true);
+    pilot.wanted = 'first-delivery';
+    pilot.step(DT);
+    expect(game.bucket.out).toBe(false);
+  });
+
+  it('is not led into another fire on the way: from home to the far fire it passes over the middle one, and begins only its own', () => {
+    const started: string[] = [];
+    const game = new Game({ random: seeded(1), events: { started: (id) => started.push(id) } });
+    const pilot = new Autopilot(game);
+    pilot.wanted = 'north-wood-fire';
+    for (let f = 0; f < 60 * 120; f++) pilot.step(DT);
+    expect(started).toEqual(['north-wood-fire']);
   });
 
   it.each(ids)(
@@ -755,7 +843,7 @@ describe('the autopilot and the fires', () => {
     },
   );
 
-  it('comes round again for more water until the fire is out: some fire takes more than one scoop', () => {
+  it('comes round again for more water if a pass leaves some burning, and drops once for each scoop', () => {
     let most = 0;
     for (const id of ids) {
       const { game, pilot, counts } = bombing(id);
@@ -763,7 +851,22 @@ describe('the autopilot and the fires', () => {
       expect(counts.drops, id).toBe(counts.scoops);
       most = Math.max(most, counts.scoops);
     }
-    expect(most).toBeGreaterThan(1);
+    expect(most).toBeGreaterThanOrEqual(1);
+  });
+
+  it('flies on through the pour, not turning for more water until the water has stopped falling', () => {
+    const { game, pilot } = bombing('south-lake-fire');
+    let poured = 0;
+    const headings: number[] = [];
+    for (let f = 0; f < 300 * 60 && poured < 1; f++) {
+      pilot.step(DT);
+      if (game.pour > 0) headings.push(game.helicopter.yaw);
+      if (headings.length && game.pour === 0) poured++;
+    }
+    expect(headings.length).toBeGreaterThan(Math.round(DROP.pour / DT) - 3);
+    // the heading is the one it dropped on: it turned by hardly anything while the water fell
+    const spread = Math.max(...headings) - Math.min(...headings);
+    expect(spread).toBeLessThan(0.1);
   });
 
   it('goes to the nearer end of the run: from beyond either end it dips at that end', () => {

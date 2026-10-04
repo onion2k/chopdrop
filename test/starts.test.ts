@@ -7,8 +7,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { FIRES, LEVELS, RESCUE_SPOTS, theIsland } from '../src/arena';
+import { FIRE, Fire } from '../src/fire';
 import { HELICOPTER } from '../src/helicopter';
-import { BOARD, DELIVERY, WINCH, type Gate, type Lander, type Level, type Ring } from '../src/mission';
+import { BOARD, DELIVERY, WINCH, type FireWatch, type Gate, type Lander, type Level, type Ring } from '../src/mission';
 import { Starts } from '../src/starts';
 import { DT } from './helpers';
 
@@ -361,32 +362,127 @@ describe('starting a rescue by landing', () => {
 
 describe('starting a fire', () => {
   const west = level('west-lake-fire');
+  const here = FIRES[0];
 
-  it('begins the level of the fire a drop put out a patch of', () => {
-    expect(starts().s.dropped('west-lake-fire', 1)).toBe(west);
-    expect(starts().s.dropped('south-lake-fire', 4)).toBe(level('south-lake-fire'));
-    expect(starts().s.dropped('north-wood-fire', 6)).toBe(level('north-wood-fire'));
+  /** Starts watching real fires, with the helicopter flown `across` from the westernmost patch of the one named `id`. */
+  function fires(levels: readonly Level[] = LEVELS) {
+    const burning = new Map(FIRES.map((place) => [place.id, new Fire(place)]));
+    const watch: FireWatch = {
+      burning: (id) => burning.get(id)?.burning ?? 0,
+      nearest: (id, x, y, out) => burning.get(id)?.nearestBurning(x, y, out) ?? false,
+    };
+    const s = new Starts(pads, levels, () => 0, watch);
+    return { s, burning };
+  }
+  /** A place `across` metres west of the westernmost lit patch of a fire, which no other lit patch is nearer than. */
+  function west_of(place: (typeof FIRES)[number], across: number): Lander {
+    const lit = place.patches.slice(0, place.lit);
+    const edge = lit.reduce((a, b) => (b.x < a.x ? b : a));
+    return { x: edge.x - across, y: edge.y, z: edge.z + 20, landed: false };
+  }
+
+  it('says its number once: a bucket out within 60 m of a burning patch begins the level of its fire', () => {
+    expect(FIRE.near).toBe(60);
   });
 
-  it('is not begun by a drop that put nothing out, which is a drop that missed', () => {
-    expect(starts().s.dropped('west-lake-fire', 0)).toBeNull();
+  it('begins the level of a fire arrived at with the bucket out: at 59.9 m, and not at 60.1', () => {
+    for (const place of FIRES) {
+      expect(fires().s.step(DT, west_of(place, 59.9), true), place.id).toBe(level(place.id));
+      expect(fires().s.step(DT, west_of(place, 60.1), true), `${place.id} 60.1 m`).toBeNull();
+    }
   });
 
-  it('is not begun by a drop on no fire, or on a fire no level is made of', () => {
-    expect(starts().s.dropped('', 3)).toBeNull();
-    expect(starts().s.dropped('no-such-fire', 3)).toBeNull();
-    expect(starts([]).s.dropped('west-lake-fire', 3)).toBeNull();
+  it('is begun by the bucket put out where the helicopter already is: the step it goes out on', () => {
+    const { s } = fires();
+    const h = west_of(here, 40);
+    for (let f = 0; f < 120; f++) expect(s.step(DT, h, false)).toBeNull();
+    expect(s.step(DT, h, true)).toBe(west);
   });
 
-  it('is begun by the first level in the list whose first step is a douse of that fire', () => {
-    const second: Level = { ...west, id: 'west-lake-fire-again' };
-    expect(starts([west, second]).s.dropped('west-lake-fire', 2)).toBe(west);
-  });
-
-  it('is begun by nothing the helicopter does on its own: not hovering over the fire, nor landing in it', () => {
-    const { s } = starts();
-    const [p] = FIRES[0].patches;
-    for (let f = 0; f < 600; f++) expect(s.step(DT, { x: p.x, y: p.y, z: p.z + 10, landed: false })).toBeNull();
+  it('is not begun with the bucket in, however near, or over the fire, or landed in it', () => {
+    const { s } = fires();
+    const [p] = here.patches;
+    for (let f = 0; f < 600; f++) expect(s.step(DT, { x: p.x, y: p.y, z: p.z + 10, landed: false }, false)).toBeNull();
+    expect(s.step(DT, { x: p.x, y: p.y, z: p.z, landed: true })).toBeNull();
     expect(s.loading).toBe(0);
+  });
+
+  it("is begun by no drop: a drop is the game's to tell, and the starts are told of none", () => {
+    expect((fires().s as unknown as Record<string, unknown>).dropped).toBeUndefined();
+  });
+
+  it('is begun by a patch that burns, and not by one that is out or has not caught: a fire with none burning begins nothing', () => {
+    const { s, burning } = fires();
+    const fire = burning.get(here.id)!;
+    for (const p of here.patches) fire.douse(p.x, p.y);
+    expect(fire.burning).toBe(0);
+    expect(s.step(DT, west_of(here, 10), true)).toBeNull();
+  });
+
+  it('is begun with a fire that no level is made of by nothing, and by the first level whose first step is an arrival at it', () => {
+    expect(fires([]).s.step(DT, west_of(here, 10), true)).toBeNull();
+    const second: Level = { ...west, id: 'west-lake-fire-again' };
+    expect(fires([west, second]).s.step(DT, west_of(here, 10), true)).toBe(west);
+  });
+
+  it('does not begin again a fire whose level has just ended or been given up, while the helicopter stays by it with the bucket out', () => {
+    const { s } = fires();
+    s.spent = here.id;
+    const h = west_of(here, 30);
+    for (let f = 0; f < 600; f++) expect(s.step(DT, h, true)).toBeNull();
+    // another fire is another matter
+    expect(fires().s.step(DT, west_of(FIRES[1], 30), true)).toBe(level(FIRES[1].id));
+    const other = fires();
+    other.s.spent = here.id;
+    expect(other.s.step(DT, west_of(FIRES[1], 30), true)).toBe(level(FIRES[1].id));
+  });
+
+  it('lets it begin again once the bucket has been taken in, or the helicopter has come past 60 m of the fire alight', () => {
+    const inAgain = fires();
+    inAgain.s.spent = here.id;
+    expect(inAgain.s.step(DT, west_of(here, 30), true)).toBeNull();
+    expect(inAgain.s.step(DT, west_of(here, 30), false)).toBeNull();
+    expect(inAgain.s.spent).toBe('');
+    expect(inAgain.s.step(DT, west_of(here, 30), true)).toBe(west);
+    const away = fires();
+    away.s.spent = here.id;
+    expect(away.s.step(DT, west_of(here, 61), true)).toBeNull();
+    expect(away.s.spent).toBe('');
+    expect(away.s.step(DT, west_of(here, 59), true)).toBe(west);
+  });
+
+  it('keeps a fire that is out to be rested until it is alight again: nothing is learned of where the helicopter is from a fire with no patch burning', () => {
+    const { s, burning } = fires();
+    s.spent = here.id;
+    const fire = burning.get(here.id)!;
+    for (const p of here.patches) fire.douse(p.x, p.y);
+    s.step(DT, west_of(here, 200), true);
+    expect(s.spent).toBe(here.id);
+    fire.relight();
+    s.step(DT, west_of(here, 200), true);
+    expect(s.spent).toBe('');
+  });
+
+  it('is reset with the rest: the fire it was kept off is forgotten', () => {
+    const { s } = fires();
+    s.spent = here.id;
+    s.reset();
+    expect(s.spent).toBe('');
+  });
+
+  it('is not begun by a fire step that is not the first of a level', () => {
+    const later: Level = { ...west, steps: [west.steps[1], west.steps[1]] };
+    expect(fires([later]).s.step(DT, west_of(here, 10), true)).toBeNull();
+  });
+
+  it('is not kept loading by being near: a fire is begun at once, and the loader is for pads and people', () => {
+    const { s } = fires();
+    s.step(DT, west_of(here, 10), true);
+    expect(s.loading).toBe(0);
+  });
+
+  it('asks nothing of the bucket when it is not told of one: the step is as it was for a helicopter with the bucket in', () => {
+    const { s } = fires();
+    expect(s.step(DT, west_of(here, 10))).toBeNull();
   });
 });

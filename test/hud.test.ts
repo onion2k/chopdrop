@@ -499,28 +499,39 @@ describe('the words of a fire', () => {
   });
 
   it('says what the bucket is to do, by the bucket: press B in, hover over water out and empty, fly over the flames full', () => {
+    // going, or flying free with the bucket out: the drop's window is 40 m, so "low" is gone
     expect(fireWords({ out: false, full: false }, 5, false)).toBe('Press B for the bucket');
     expect(fireWords({ out: true, full: false }, 5, false)).toBe('Hover low over the water to fill the bucket');
-    expect(fireWords({ out: true, full: true }, 5, false)).toBe('Fly low over the flames to drop · 5 burning');
-    expect(fireWords({ out: true, full: true }, 1, false)).toBe('Fly low over the flames to drop · 1 burning');
+    expect(fireWords({ out: true, full: true }, 5, false)).toBe('Fly over the flames to drop · 5 burning');
+    expect(fireWords({ out: true, full: true }, 1, false)).toBe('Fly over the flames to drop · 1 burning');
     // on touch there is no key: tap the badge
     expect(fireWords({ out: false, full: false }, 5, true)).toBe('Tap the bucket');
     expect(fireWords({ out: true, full: false }, 5, true)).toBe('Hover low over the water to fill the bucket');
-    expect(fireWords({ out: true, full: true }, 3, true)).toBe('Fly low over the flames to drop · 3 burning');
+    expect(fireWords({ out: true, full: true }, 3, true)).toBe('Fly over the flames to drop · 3 burning');
     // a full bucket taken in keeps its water, and still has to be put out before it drops
     expect(fireWords({ out: false, full: true }, 5, false)).toBe('Press B for the bucket');
+  });
+
+  it('says, shown the way to a fire, take the bucket there once it is full, and the rest as it does going', () => {
+    expect(fireWords({ out: false, full: false }, 5, false, true)).toBe('Press B for the bucket');
+    expect(fireWords({ out: false, full: false }, 5, true, true)).toBe('Tap the bucket');
+    expect(fireWords({ out: true, full: false }, 5, false, true)).toBe('Hover low over the water to fill the bucket');
+    expect(fireWords({ out: true, full: true }, 5, false, true)).toBe('Take the bucket to the fire');
+    expect(fireWords({ out: true, full: true }, 5, true, true)).toBe('Take the bucket to the fire');
+    // a full bucket in is the bucket in
+    expect(fireWords({ out: false, full: true }, 5, false, true)).toBe('Press B for the bucket');
   });
 
   it('says it for a level going by the bucket, whichever step of the fire it is on, and the other kinds as before', () => {
     const ring = { n: 0, of: 0 };
     const now = (out: boolean, full: boolean, burning = 5, touch = false) => ({ burning, out, full, touch });
-    expect(stepWords(west, going, pads, ring, now(true, true))).toBe('Fly low over the flames to drop · 5 burning');
+    expect(stepWords(west, going, pads, ring, now(true, true))).toBe('Fly over the flames to drop · 5 burning');
     expect(stepWords(west, going, pads, ring, now(true, false))).toBe('Hover low over the water to fill the bucket');
     expect(stepWords(west, going, pads, ring, now(false, false))).toBe('Press B for the bucket');
     expect(stepWords(west, going, pads, ring, now(false, false, 5, true))).toBe('Tap the bucket');
     // the douse that begins it says the same, and the fire alone is not words for the other kinds
     expect(stepWords(west, west.steps[0], pads, ring, now(true, true, 12))).toBe(
-      'Fly low over the flames to drop · 12 burning',
+      'Fly over the flames to drop · 12 burning',
     );
     expect(stepWords(fire('first-delivery'), fire('first-delivery').steps[0], pads, ring, now(true, true))).toBe(
       'Pick up the parcel at the meadow pad',
@@ -572,8 +583,8 @@ describe('the words of a fire', () => {
   });
 
   it('says the panel its rows from the fire’s name, in the mock’s words', () => {
-    expect(startWords(west, pads)).toBe('Drop water on the fire by the west lake');
-    expect(startWords(fire('south-lake-fire'), pads)).toBe('Drop water on the fire by the south lake');
-    expect(startWords(fire('north-wood-fire'), pads)).toBe('Drop water on the fire in the northern wood');
+    expect(startWords(west, pads)).toBe('Take the bucket to the fire by the west lake');
+    expect(startWords(fire('south-lake-fire'), pads)).toBe('Take the bucket to the fire by the south lake');
+    expect(startWords(fire('north-wood-fire'), pads)).toBe('Take the bucket to the fire in the northern wood');
   });
 });

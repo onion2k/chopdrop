@@ -1,30 +1,79 @@
 /**
  * A fire's patches: each is unburnt, burning or out, held in a typed array made once. A fire starts with its first
  * `lit` patches burning. While its level is going it spreads, a patch at a time on a fixed beat and a fixed order, so
- * the same flight gives the same fire; a drop puts out what it reaches; and a fire that is not going and has been
+ * the same flight gives the same fire; a pour puts out what it reaches; and a fire that is not going and has been
  * changed is lit again at its start a few seconds after its last change, so a fire put out, left, or put out while
  * another level was going is ready to be flown again. Without it there is no fire to fight, and one that is never lit
  * again can be fought once.
  *
  * It knows nothing of the helicopter or the mission: it is told how long has gone, whether its level is going, and
- * where a drop fell. Nothing is made as it runs.
+ * where the water fell. Nothing is made as it runs.
  */
 import type { FirePlace } from './arena';
 import type { GroundAt, Lander, Point3 } from './mission';
 import { DROP, inDrop } from './water';
 
-/** What a patch can be, as the number kept for it. */
-export const PATCH = { unburnt: 0, burning: 1, out: 2 } as const;
+/**
+ * What a patch can be, as the number kept for it, and how far its square reaches from its middle each way, in metres: half
+ * the eight the patches are laid apart, so the squares tile the fire's ground. The trees standing in it burn with it.
+ */
+export const PATCH = { unburnt: 0, burning: 1, out: 2, half: 4 } as const;
 
 /**
  * How a fire spreads while its level is going: every `every` seconds the first unburnt patch, in the list's order, that
  * is within `reach` of a burning one catches. A patch that is out never catches again, and nothing catches that is not
  * one of the fire's own.
  */
-export const SPREAD = { every: 8, reach: 9 };
+export const SPREAD = { every: 15, reach: 9 };
 
-/** How long a fire that is not going waits, after its last change, before it is lit again at its start. The page's toast lasts as long. */
-export const FIRE = { relight: 3 };
+/**
+ * How long a fire that is not going waits, after its last change, before it is lit again at its start (the page's toast
+ * lasts as long), and how near a burning patch the helicopter's middle comes, with the bucket out and nothing going, to
+ * begin the fire's level: the clock runs from the arrival, so a fire put out by one bucket has a time.
+ */
+export const FIRE = { relight: 3, near: 60 };
+
+/**
+ * The trees standing on every patch of every fire, as numbers made once: patch `p` (the fires' patches in order, a fire's
+ * after the one before) has the trees `tree[first[p]]` up to `tree[first[p + 1]]`, as indices into the island's trees.
+ */
+export interface PatchTrees {
+  tree: Uint32Array;
+  first: Uint32Array;
+}
+
+/**
+ * The trees whose foot is within `PATCH.half` of a patch's middle across and down, found once, from the fires' places and the
+ * island's trees (their place across and down at 1 and 2 of `stride` floats each). A tree on the line between two squares
+ * is on the first of them only, so no tree burns for two and the pool the page draws them in is sized to the count. The page
+ * draws the trees of a patch burnt while it burns or is out; this says only which they are.
+ */
+export function treesOnPatches(
+  fires: readonly Pick<FirePlace, 'patches'>[],
+  from: { trees: Float32Array; stride: number; count: number },
+): PatchTrees {
+  const patches = fires.flatMap((f) => f.patches);
+  const { trees, stride, count } = from;
+  const patchOf = new Int32Array(count).fill(-1);
+  const first = new Uint32Array(patches.length + 1);
+  let found = 0;
+  for (let t = 0; t < count; t++) {
+    const x = trees[t * stride + 1];
+    const y = trees[t * stride + 2];
+    for (let p = 0; p < patches.length; p++) {
+      if (Math.abs(x - patches[p].x) > PATCH.half || Math.abs(y - patches[p].y) > PATCH.half) continue;
+      patchOf[t] = p;
+      first[p + 1]++;
+      found++;
+      break;
+    }
+  }
+  for (let p = 0; p < patches.length; p++) first[p + 1] += first[p];
+  const tree = new Uint32Array(found);
+  const next = first.slice(0, patches.length);
+  for (let t = 0; t < count; t++) if (patchOf[t] >= 0) tree[next[patchOf[t]]++] = t;
+  return { tree, first };
+}
 
 export class Fire {
   /** Each patch's state, one of `PATCH`, in the order of the place's list. Sized once. */
@@ -75,7 +124,7 @@ export class Fire {
     if (this.changed && this.quiet >= FIRE.relight) this.relight();
   }
 
-  /** Whether a drop from `h` reaches any patch of this fire that is burning. Makes nothing. */
+  /** Whether a drop from `h` would start over any patch of this fire that is burning: see `inDrop`. Makes nothing. */
   dropReaches(h: Readonly<Pick<Lander, 'x' | 'y' | 'z'>>, groundAt: GroundAt): boolean {
     const { patches } = this.place;
     for (let k = 0; k < patches.length; k++)
@@ -83,7 +132,7 @@ export class Fire {
     return false;
   }
 
-  /** Every burning patch within the splash of (x, y) put out; how many that was. Makes nothing. */
+  /** Every burning patch within the splash of (x, y) put out; how many that was. A pour does it a step at a time. Makes nothing. */
   douse(x: number, y: number): number {
     const { patches } = this.place;
     let out = 0;
@@ -126,29 +175,26 @@ export class Fire {
   }
 
   /**
-   * The burning patch a drop on would put out the most, written into `out`, true; false with none burning. Of two that
-   * would put out as many, the first in the list, so the pilot's aim does not change as it comes in. Makes nothing.
+   * The middle of the patches that burn written into `out`, their mean, true; false with none burning and `out` untouched.
+   * What the pilot flies through, so that a pour that sweeps along its way puts out the most of them. Makes nothing.
    */
-  bestDrop(out: Point3): boolean {
+  burningMiddle(out: Point3): boolean {
     const { patches } = this.place;
-    let most = 0;
-    let at = -1;
+    let x = 0,
+      y = 0,
+      z = 0,
+      n = 0;
     for (let k = 0; k < patches.length; k++) {
       if (this.states[k] !== PATCH.burning) continue;
-      let n = 0;
-      for (let j = 0; j < patches.length; j++) {
-        if (this.states[j] !== PATCH.burning) continue;
-        if (Math.hypot(patches[j].x - patches[k].x, patches[j].y - patches[k].y) <= DROP.splash) n++;
-      }
-      if (n > most) {
-        most = n;
-        at = k;
-      }
+      x += patches[k].x;
+      y += patches[k].y;
+      z += patches[k].z;
+      n++;
     }
-    if (at < 0) return false;
-    out.x = patches[at].x;
-    out.y = patches[at].y;
-    out.z = patches[at].z;
+    if (n === 0) return false;
+    out.x = x / n;
+    out.y = y / n;
+    out.z = z / n;
     return true;
   }
 

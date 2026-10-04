@@ -49,9 +49,9 @@ const WHERE = [
   'Land beside the walker in the western wood',
   'Winch up the sailor off the east beach',
   'Winch up the climber on the southern ledge',
-  'Drop water on the fire by the west lake',
-  'Drop water on the fire by the south lake',
-  'Drop water on the fire in the northern wood',
+  'Take the bucket to the fire by the west lake',
+  'Take the bucket to the fire by the south lake',
+  'Take the bucket to the fire in the northern wood',
 ];
 
 test('opens flying free, with no panel up, and Esc brings it over the island and holds the game behind it', async ({

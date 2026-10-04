@@ -1,7 +1,7 @@
 /**
  * The bucket's button in the page: always shown beside the radar, grey while the bucket is in, an orange ring while it is
  * out and with water in it when it is full; put out and taken in by the key B, a click and a tap, and not by the key while the panel
- * is up; the bar's words for it, press B for it, hover low over the water to fill it and fly low over the flames to drop,
+ * is up; the bar's words for it, press B for it, hover low over the water to fill it, fly over the flames to drop and take it to the fire,
  * for a fire shown the way to and for the nearest fire flying free with the bucket out; let down onto the west lake, filled,
  * flown to the fire and dropped. The button is a real button with a name for a screen reader. The game is paused and
  * stepped, and the helicopter flown through the test API where the test is not about the control.
@@ -124,19 +124,20 @@ test('let down onto the west lake with the bucket out it hovers, fills in blue, 
   await expect(page.getByRole('button', { name: 'Bucket, out, full' })).toHaveAttribute('data-state', 'full');
   await expect(page.locator('#hud .loader')).toBeHidden();
   // full and flying free: the way to the nearest fire, and how to drop
-  await expect(goal(page)).toHaveText('Fly low over the flames to drop · 10 burning');
+  await expect(goal(page)).toHaveText('Fly over the flames to drop · 10 burning');
   await expect(page.locator('#hud .bar')).toHaveAttribute('data-mode', 'guided');
   await expect(page.locator('#hud .arrow')).toBeVisible();
   await expect(page.locator('#hud .far')).toHaveText(/^\d+ m$/);
   await events(page);
 
   // flown to the fire and dropped
-  await hoverOver(page, WEST.x, WEST.y, DROP_HEIGHT, 0.9, 40);
+  await hoverOver(page, WEST.x, WEST.y, DROP_HEIGHT, 0.9, 80);
   const told = await events(page);
-  expect(told[0]).toMatch(/^dropped west-lake-fire \d+$/);
-  expect(told[1]).toBe('started west-lake-fire');
+  // the water falls at the start of the pour, which goes on past the helicopter's stopping over the flames, and ends it
+  expect(told[0]).toBe('dropped west-lake-fire');
+  expect(told.at(-1)).toMatch(/^doused west-lake-fire \d+$/);
   now = await state(page);
-  expect([now.tank.full, now.badge, now.mission.level]).toEqual([false, 'out', WEST.id]);
+  expect([now.tank.full, now.badge]).toEqual([false, 'out']);
   await expect(goal(page)).toHaveText('Hover low over the water to fill the bucket');
   expect(now.particles.refused).toBe(0);
   expect(problems).toEqual([]);

@@ -24,12 +24,14 @@ import type { Gate, Ring } from '../src/mission';
 import { DELIVERIES, SLOW_CLIMB, WOOD, fingers, leverTravel, standardView, start, watch } from './game';
 import {
   sceneAfar,
+  sceneBurnt,
   sceneChase,
   sceneDrop,
   sceneFar,
   sceneGoing,
   sceneNear,
   sceneFilling,
+  scenePour,
   sceneSpray,
   scoop,
   settle,
@@ -729,6 +731,9 @@ test.describe('what it looks like', () => {
     await start(page, { seed: 11, paused: true, save: { ...SOME, best: TWO_DONE.best } });
     await page.keyboard.press('Escape');
     await expect(page.locator('#panel .structures h3')).toHaveText('Structures3 of 7');
+    // the list of levels outgrew the sheet, so it is scrolled to where the section it is named for is in view
+    await page.locator('#panel .sheet').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await expect(page.locator('#panel .structures h3')).toBeInViewport();
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('panel-structures.png', TOLERANCE);
     expect(problems).toEqual([]);
@@ -792,6 +797,7 @@ test.describe('what it looks like', () => {
     await expect(page.locator('#panel .packs h3')).toHaveText('Packages3 of 10');
     await expect(page.locator('#panel .packs .d.got')).toHaveCount(3);
     await page.locator('#panel .sheet').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    await expect(page.locator('#panel .packs h3')).toBeInViewport();
     await hideStats(page);
     await expect(page.locator('#view')).toHaveScreenshot('panel-packages.png', TOLERANCE);
     expect(problems).toEqual([]);
@@ -986,12 +992,46 @@ test.describe('what it looks like', () => {
     await sceneNear(page);
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
-    expect(now.ground, 'seven burn and three are burnt in the west fire, twenty burn in the others').toEqual({
-      burning: 27,
-      burnt: 3,
+    expect(now.ground, 'three burn and seven are burnt in the west fire, twenty burn in the others').toEqual({
+      burning: 23,
+      burnt: 7,
     });
     expect(now.particles.refused).toBe(0);
     await expect(page.locator('#view')).toHaveScreenshot('fire-near.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the west fire half put out: the burnt trees black and bare, the flames seen through them', async ({ page }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await sceneBurnt(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.ground, 'five burn and five are burnt in the west fire, twenty burn in the others').toEqual({
+      burning: 25,
+      burnt: 5,
+    });
+    // every tree on a patch that burns or is out is a pole, and the pool is every tree on any patch
+    expect(now.burnt.trees).toBeGreaterThan(30);
+    expect(now.burnt.pool).toBeGreaterThanOrEqual(now.burnt.trees);
+    expect(now.particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('fire-burnt.png', TOLERANCE);
+    expect(problems).toEqual([]);
+  });
+
+  test('the drop poured from 30 m: the curtain of water falling from the bucket to the ground as it is flown on', async ({
+    page,
+  }) => {
+    const problems = watch(page);
+    await start(page, { seed: 11, paused: true, save: { best: {} } });
+    await scenePour(page);
+    await hideStats(page);
+    const now = await page.evaluate(() => window.game!.state());
+    expect(now.pour, 'part way through the pour').toBeGreaterThan(0);
+    expect(now.pour).toBeLessThan(0.9);
+    expect(now.particles.spray, 'the spray falling').toBeGreaterThan(0);
+    expect(now.particles.refused).toBe(0);
+    await expect(page.locator('#view')).toHaveScreenshot('fire-pour.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
 
@@ -1048,7 +1088,7 @@ test.describe('what it looks like', () => {
     await hideStats(page);
     const now = await page.evaluate(() => window.game!.state());
     expect([now.badge, now.bucket.full, now.mission.level]).toEqual(['full', true, 'west-lake-fire']);
-    await expect(page.locator('#hud .goal')).toHaveText('Fly low over the flames to drop · 10 burning');
+    await expect(page.locator('#hud .goal')).toHaveText('Fly over the flames to drop · 10 burning');
     await expect(page.locator('#view')).toHaveScreenshot('fire-going.png', TOLERANCE);
     expect(problems).toEqual([]);
   });
@@ -1307,7 +1347,7 @@ test.describe('a fire on a phone, upright', () => {
     await start(page, { seed: 11, paused: true, save: { best: {} } });
     await sceneGoing(page);
     await hideStats(page);
-    await expect(page.locator('#hud .goal')).toHaveText('Fly low over the flames to drop · 10 burning');
+    await expect(page.locator('#hud .goal')).toHaveText('Fly over the flames to drop · 10 burning');
     await expect(page.locator('#hud .bucket')).toHaveAttribute('data-state', 'full');
     await expect(page).toHaveScreenshot('fire-phone.png', TOLERANCE);
     expect(problems).toEqual([]);

@@ -47,22 +47,38 @@ describe('where the bucket hangs', () => {
     expect(at(80, 20, false, true).hung).toBe(false);
   });
 
-  it('dips into open water, down to its top a hair under the surface, as the skids skim it', () => {
-    // the skids 1.5 over the water, as the hover over it has them: the bucket's top is under the surface, which its line goes into
+  it('says how deep it dips once: half its height, 0.65 m', () => {
+    expect(BUCKET.dip).toBe(0.65);
+    expect(BUCKET.dip).toBeCloseTo(BUCKET.height / 2, 9);
+  });
+
+  it('dips into open water half way, its bottom a half a bucket under the surface and its top out, as the skids skim it', () => {
+    // the skids 1.5 over the water, as the hover over it has them: the line shortens to leave the bucket half in
     const skim = at(30 + HOVER_OVER_WATER, 30, true);
     expect(skim.hung).toBe(true);
-    expect(skim.bottom).toBeCloseTo(30 - BUCKET.height - BUCKET.dip, 9);
-    expect(skim.line).toBeCloseTo(1.5 + BUCKET.dip, 9);
-    expect(skim.bottom + BUCKET.height).toBeLessThan(30);
+    expect(skim.bottom).toBeCloseTo(30 - BUCKET.dip, 9);
+    expect(skim.line).toBeCloseTo(HOVER_OVER_WATER + BUCKET.dip - BUCKET.height, 9);
+    expect(skim.bottom).toBeLessThan(30);
+    expect(skim.bottom + BUCKET.height).toBeGreaterThan(30);
     // higher it hangs its whole line, over the water as anywhere
     expect(at(50, 30, true).line).toBe(BUCKET.line);
     // the same height over ground has it stowed or short, where water lets it sink
     expect(at(31.5, 30, false).line).toBeCloseTo(0.2, 9);
   });
 
-  it('is stowed on the water at the surface only if landed, and hangs with a hair of line at the surface itself', () => {
-    expect(at(30, 30, true).hung).toBe(true);
-    expect(at(30, 30, true).line).toBeCloseTo(BUCKET.dip, 9);
+  it('is never deeper than that, however low the skids: the line is as short as it must be, and stowed where it cannot be', () => {
+    for (const up of [0.7, 0.8, 1.2, 1.5, 3, 6, 7.5]) {
+      const b = at(30 + up, 30, true);
+      expect(b.bottom, `${up} up`).toBeGreaterThanOrEqual(30 - BUCKET.dip - 1e-9);
+    }
+    // a bucket's height less its dip over the water is as low as there is room to hang it, with next to no line
+    expect(at(30.66, 30, true).hung).toBe(true);
+    expect(at(30.66, 30, true).line).toBeCloseTo(0.01, 6);
+    expect(at(30.64, 30, true).hung).toBe(false);
+  });
+
+  it('is stowed on the water at the surface, and always if landed', () => {
+    expect(at(30, 30, true).hung).toBe(false);
     expect(at(30, 30, true, true).hung).toBe(false);
   });
 
@@ -87,7 +103,7 @@ describe('when it is in the water', () => {
     expect(bucketInWater(-1e9, NO_WATER)).toBe(false);
   });
 
-  it('is so at the hover over water, whose floor puts the 5 m line, shortened, into it', () => {
+  it('is so at the hover over water, whose floor puts the line, shortened, half into it', () => {
     const b = at(30 + HOVER_OVER_WATER, 30, true);
     expect(bucketInWater(b.bottom, 30)).toBe(true);
     // and a hair over the line's own length it is out, where the bucket's bottom is at the surface
@@ -140,6 +156,21 @@ describe("the game's read of it", () => {
     game.tank.full = true;
     game.step(1 / 60);
     expect([game.bucket.out, game.bucket.full, game.bucket.hung]).toEqual([false, true, false]);
+  });
+
+  it('has its top above the water and its bottom under it at the hover over a lake, and fills there', () => {
+    const { game } = newGame();
+    const { run } = FIRES[0];
+    game.setBucket(true);
+    game.moveToStart(FIRES[0].id);
+    const surface = game.water.surfaceAt(game.helicopter.x, game.helicopter.y);
+    expect(surface).toBeCloseTo(run.z, 3);
+    game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.bucket.hung).toBe(true);
+    expect(game.bucket.bottom).toBeCloseTo(surface - BUCKET.dip, 6);
+    expect(game.bucket.bottom + BUCKET.height).toBeGreaterThan(surface);
+    for (let f = 0; f < 150 && !game.tank.full; f++) game.step(1 / 60, { forward: 0, turn: 0, lift: HOVER_LIFT });
+    expect(game.tank.full).toBe(true);
   });
 
   it('hangs while the tank fills, dips in the lake, and holds the water when full', () => {

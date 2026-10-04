@@ -117,11 +117,12 @@ export interface Board {
 }
 
 /**
- * What a fire level begins with and ends on, each by the fire's id: `douse` is the first drop that puts out a patch of
- * the fire, which begins the level as a winch or a crate does, and `fire` is done when none of its patches burns.
+ * What a fire level begins with and ends on, each by the fire's id: `arrive` is the helicopter coming to the fire with
+ * the bucket out, which begins the level as a winch or a crate does (see `starts.ts`), and `fire` is done when none of its
+ * patches burns.
  */
-export interface DouseStep {
-  kind: 'douse';
+export interface ArriveStep {
+  kind: 'arrive';
   fire: string;
 }
 export interface FireStep {
@@ -132,7 +133,7 @@ export interface FireStep {
 /**
  * What a level asks for, a step at a time: a parcel picked up from a pad, or set down on one, by its place in the
  * island's list; a ring or an opening flown through; a person winched up, or boarded; a pad landed on, which is done the moment
- * the skids touch it; a fire dropped on; or a fire put out.
+ * the skids touch it; a fire come to with the bucket out; or a fire put out.
  */
 export type Step =
   | { kind: 'pickup'; pad: number }
@@ -142,12 +143,12 @@ export type Step =
   | Gate
   | Winch
   | Board
-  | DouseStep
+  | ArriveStep
   | FireStep;
 
 /** The id of the fire a step is about, or null for a step that is not about one. */
 export function fireOf(step: Step | undefined): string | null {
-  return step && (step.kind === 'douse' || step.kind === 'fire') ? step.fire : null;
+  return step && (step.kind === 'arrive' || step.kind === 'fire') ? step.fire : null;
 }
 
 /**
@@ -184,8 +185,8 @@ export interface Point3 {
  * What a mission tells as it happens: a level begun or abandoned, by its name; a parcel loaded on a pad, one
  * delivered to a pad, a person winched up or boarded (by the level's name), a ring passed (which of how many, counting from one), an opening flown through (by where it is),
  * a pad landed on, a fire put out (by the fire's name), and the level done, with its time. The water's own events, which
- * the game tells and a mission does not, are here too: a tank scooped full, and a drop with the fire it fell on and how
- * many patches it put out.
+ * the game tells and a mission does not, are here too: a tank scooped full, a drop begun over a fire (by the fire's name,
+ * as the water starts to fall), and the end of its pour, with the fire and how many patches it put out in all.
  */
 export interface MissionEvents {
   started?(id: string): void;
@@ -198,7 +199,8 @@ export interface MissionEvents {
   through?(label: string): void;
   landed?(pad: number): void;
   scooped?(): void;
-  dropped?(fire: string, out: number): void;
+  dropped?(fire: string): void;
+  doused?(fire: string, out: number): void;
   fireOut?(id: string): void;
   finished?(seconds: number): void;
 }
@@ -328,7 +330,7 @@ export class Mission {
    */
   get goal(): Readonly<Point3> | null {
     const s = this.current;
-    if (!s || s.kind === 'douse') return null;
+    if (!s || s.kind === 'arrive') return null;
     if (s.kind === 'fire') return this.fires.nearest(s.fire, this.was.x, this.was.y, this.wanted) ? this.wanted : null;
     const at = 'pad' in s ? this.pads[s.pad] : s;
     this.wanted.x = at.x;
@@ -392,15 +394,6 @@ export class Mission {
     else this.settle();
   }
 
-  /**
-   * A drop told, with the fire it fell on and how many patches it put out: the step being done, if it is the douse of that
-   * fire and the drop put a patch out, is done. Nothing to do with nothing going or another step.
-   */
-  dropped(fire: string, out: number): void {
-    const s = this.current;
-    if (s?.kind === 'douse' && s.fire === fire && out > 0) this.stepDone(s);
-  }
-
   /** Nothing going: told, if a level was. The parcel aboard is put back by there being no level for it to be aboard in. */
   abandon(): void {
     const level = this.flying;
@@ -419,8 +412,9 @@ export class Mission {
       return;
     }
     this.remember(h);
-    // a fire is out when none of its patches burns; the douse that begins it is the game's to say, through `dropped`
-    if (s.kind === 'douse') return;
+    // a fire is out when none of its patches burns; the arrival that begins it is the starts' to see, and is never a step
+    // that is being done
+    if (s.kind === 'arrive') return;
     if (s.kind === 'fire') {
       this.settle();
       return;
@@ -456,8 +450,8 @@ export class Mission {
 
   /**
    * A fire step whose fire has no patch burning is done at once: a level whose fire is out as it begins has nothing to
-   * do. Play never comes here, since no single drop reaches every patch a fire is lit with, which the fires' content test
-   * holds; it is a guard for a level begun by hand on a fire already out.
+   * do. Play never comes here, since a fire level is begun by arriving at a patch that burns; it is a guard for a level
+   * begun by hand (the test API's `begin`) on a fire already out, and keeps one from going on with nothing to do.
    */
   private settle(): void {
     const s = this.current;
@@ -472,7 +466,7 @@ export class Mission {
     else if (s.kind === 'winch') this.events.winched?.(this.flying!.id);
     else if (s.kind === 'board') this.events.boarded?.(this.flying!.id);
     else if (s.kind === 'fire') this.events.fireOut?.(s.fire);
-    else if (s.kind === 'douse') return;
+    else if (s.kind === 'arrive') return;
     else if (s.kind === 'gate') this.events.through?.(s.label);
     else this.events.passed?.(this.ringsTo(this.next - 1), this.ringCount);
   }

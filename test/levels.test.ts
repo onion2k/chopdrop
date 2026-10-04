@@ -7,11 +7,12 @@ import { describe, expect, it } from 'vitest';
 import { COLLECTIBLES, FIRES, LEVELS, PACKAGES, RESCUE_SPOTS, STRUCTURES, TREE_KINDS, theIsland } from '../src/arena';
 import { PILOT } from '../src/autopilot';
 import { HELICOPTER } from '../src/helicopter';
-import { DROP } from '../src/water';
+import { DROP, inDrop } from '../src/water';
 import { SEA, TREE_STRIDE } from '../src/island';
 import { treeSize } from '../src/meshes';
 import { RING, RINGS, crossed, type Gate, type Level, type Ring } from '../src/mission';
 import { Solids, type Block } from '../src/solids';
+import { DT } from './helpers';
 
 const { pads, ground, lakes, trees, treeCount, bounds } = theIsland();
 const apart = (a: number, b: number) => Math.hypot(pads[a].x - pads[b].x, pads[a].y - pads[b].y);
@@ -71,7 +72,7 @@ describe('the levels', () => {
         expect(level.steps.map((step) => step.kind)[1]).toBe('land');
         expect(level.steps).toHaveLength(2);
       } else if (level.kind === 'fire') {
-        expect(level.steps.map((step) => step.kind)).toEqual(['douse', 'fire']);
+        expect(level.steps.map((step) => step.kind)).toEqual(['arrive', 'fire']);
       } else {
         expect(level.kind).toBe('course');
         expect(level.steps.at(-1)?.kind).toBe('land');
@@ -856,7 +857,7 @@ describe('where a level begins', () => {
                 ? 'board'
                 : 'winch'
               : level.kind === 'fire'
-                ? 'douse'
+                ? 'arrive'
                 : 'gate',
       );
   });
@@ -1197,6 +1198,51 @@ describe('the rescue levels', () => {
   });
 });
 
+/**
+ * How a start fire is flown over to put it out, each said once: at this speed across, through the middle from any of
+ * this many ways (and from the sides of it by these offsets), starting this far back; the fewest of the lit ones that one
+ * pass puts out, through the middle (at the lake fires, and at the far fire, whose patches lie along a slope) and from any
+ * way. Measured by flying `outOnPass` at the rule of 5 m over, a splash of 16 and a pour of 0.9 s: through the middle 8,
+ * 8 and 6 at the least, and from every way 6, 6 and 5.
+ */
+const PASS = {
+  speed: 15,
+  ways: 32,
+  offsets: [-8, 0, 8],
+  back: 80,
+  throughMiddle: { lake: 8, far: 6 },
+  anyWay: 5,
+};
+
+/** The yaws of `n` ways round the compass, evenly. */
+const ways = (n: number): number[] => Array.from({ length: n }, (_, k) => (k / n) * 2 * Math.PI);
+
+/**
+ * How many of a fire's lit patches one pass puts out, flown at `PASS.speed` along `yaw` through the point `offset` to the
+ * side of its middle, stepped as the game steps: the water falls from the step the helicopter is over a burning patch by
+ * the drop's rule, and pours for as many steps as its length, putting out every burning patch within the splash of
+ * where the helicopter is each step. A pure sum of the drop rule, which knows nothing of the game; the height is held
+ * inside the window.
+ */
+function outOnPass(f: (typeof FIRES)[number], yaw: number, offset: number): number {
+  const [dx, dy] = [Math.cos(yaw), Math.sin(yaw)];
+  const burning = f.patches.map((_, k) => k < f.lit);
+  const cx = f.x - dy * offset,
+    cy = f.y + dx * offset;
+  const step = PASS.speed * DT;
+  const flat = () => 0;
+  let poured = 0;
+  for (let n = 0, x = cx - dx * PASS.back, y = cy - dy * PASS.back; n < 60 * 12; n++, x += dx * step, y += dy * step) {
+    const h = { x, y, z: DROP.high / 2 };
+    if (poured === 0 && !f.patches.some((p, k) => burning[k] && inDrop(h, p, flat))) continue;
+    f.patches.forEach((p, k) => {
+      if (Math.hypot(p.x - x, p.y - y) <= DROP.splash) burning[k] = false;
+    });
+    if (++poured >= Math.round(DROP.pour / DT)) break;
+  }
+  return f.lit - burning.slice(0, f.lit).filter(Boolean).length;
+}
+
 /** The rules a fire keeps, each said once. */
 const FIRE = {
   count: 3,
@@ -1217,8 +1263,6 @@ const FIRE = {
   patchesMin: 12,
   patchesMax: 24,
   lit: 10,
-  /** The grid a drop's place is tried on, to see that none reaches every lit patch. */
-  dropGrid: 0.5,
   spacing: 8,
   spacingSlack: 0.5,
   patchReach: 40,
@@ -1346,17 +1390,22 @@ describe('the fires', () => {
     }
   });
 
-  it(`cannot be put out by one drop: no point, on a grid of ${FIRE.dropGrid}, has every lit patch within the splash`, () => {
+  it(`are put out by a pass through the middle at ${PASS.speed} m/s, from any of ${PASS.ways} ways, to at least ${PASS.throughMiddle.lake} of the ${FIRE.lit} lit (${PASS.throughMiddle.far} at the far fire)`, () => {
     for (const f of FIRES) {
-      const lit = f.patches.slice(0, f.lit);
-      const xs = f.patches.map((p) => p.x),
-        ys = f.patches.map((p) => p.y);
-      let best = Infinity;
-      for (let x = Math.min(...xs) - DROP.splash; x <= Math.max(...xs) + DROP.splash; x += FIRE.dropGrid)
-        for (let y = Math.min(...ys) - DROP.splash; y <= Math.max(...ys) + DROP.splash; y += FIRE.dropGrid)
-          best = Math.min(best, Math.max(...lit.map((p) => Math.hypot(p.x - x, p.y - y))));
-      // the smallest circle that holds every lit patch is wider than the splash, whatever the drop is aimed at
-      expect(best, `${f.id}: the nearest a drop comes to reaching them all`).toBeGreaterThan(DROP.splash);
+      const least = Math.min(...ways(PASS.ways).map((yaw) => outOnPass(f, yaw, 0)));
+      expect(least, `${f.id}: the fewest a pass through the middle puts out`).toBeGreaterThanOrEqual(
+        f.id.endsWith('lake-fire') ? PASS.throughMiddle.lake : PASS.throughMiddle.far,
+      );
+    }
+  });
+
+  it(`are put out by a pass from any of ${PASS.ways * PASS.offsets.length} ways (${PASS.ways} ways at offsets of ${PASS.offsets.join(', ')} m) to at least ${PASS.anyWay} of the ${FIRE.lit} lit`, () => {
+    for (const f of FIRES) {
+      const outs = ways(PASS.ways).flatMap((yaw) => PASS.offsets.map((offset) => outOnPass(f, yaw, offset)));
+      expect(outs).toHaveLength(PASS.ways * PASS.offsets.length);
+      expect(Math.min(...outs), `${f.id}: the fewest any pass puts out`).toBeGreaterThanOrEqual(PASS.anyWay);
+      // and a pass is not nothing and not always everything: a fire is a thing to do, not to fly over
+      expect(Math.max(...outs), f.id).toBeGreaterThan(Math.min(...outs));
     }
   });
 
@@ -1469,12 +1518,12 @@ describe('the fire levels', () => {
     expect(LEVELS).toHaveLength(13);
   });
 
-  it('are named for their fire, and each a douse of it and then the fire out', () => {
+  it('are named for their fire, and each an arrival at it and then the fire out', () => {
     fires.forEach((level, k) => {
       const f = FIRES[k];
       expect(level.name).toBe(f.name);
       expect(level.steps).toEqual([
-        { kind: 'douse', fire: f.id },
+        { kind: 'arrive', fire: f.id },
         { kind: 'fire', fire: f.id },
       ]);
     });

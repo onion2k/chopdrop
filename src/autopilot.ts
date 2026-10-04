@@ -25,9 +25,10 @@
  *
  * A fire level is flown by the tank, with the bucket put out for it. With the tank empty, it flies to the nearer end of
  * the fire's run, comes down to the hover over the water there and holds still until the bucket has filled, and climbs
- * away along the run's line; with it full, it flies to the nearest burning patch at the drop's height and passes over
- * it, and then round again until the fire is out. It chooses which end to dip at once and keeps to it until the tank
- * is full, so the nearer end changing as it passes the middle does not turn it round.
+ * away along the run's line; with it full, it flies through the middle of the patches that burn at the drop's height, so
+ * that the water, which starts over the first patch it reaches, sweeps the most of them, and flies on straight until the
+ * pour is over; then round again, if it must, until the fire is out. It chooses which end to dip at once and keeps to it
+ * until the tank is full, so the nearer end changing as it passes the middle does not turn it round.
  *
  * The gates play the game through it: the pace of a level, the same game
  * twice, nothing kept for ever over a long play, and the play-through in the
@@ -78,21 +79,26 @@ export const PILOT = {
 };
 
 /**
- * How it fights a fire. To dip: it comes on to the place `in` metres inside the run's near end, at the hover over the
+ * How it fights a fire. The bucket is out within `wet` of the run's nearer end with the tank empty, and within `far` of the
+ * fire with it full, and in between it is stowed, so that it does not begin another fire's level as it passes. To dip: it comes on to the place `in` metres inside the run's near end, at the hover over the
  * water, gliding down a slope of `slope`, so that it is stopped over water and not over the shore, which the very end of
  * a run may be; it leaves along the run at `speed` across the water, climbing, `lead` ahead of where it is on the line, and
- * has done with the run once it is `out` over the ground. To drop: the skids `drop` over the ground, the middle of the drop's window and clear of the crowns by
- * `crown`, within `far` of the patch, at `through` across the ground as it comes in, and down a slope of `slope` from `dive`
- * short of it, so the window is entered as it reaches it; the way there is made `above` the crowns, and a look ahead
- * of `ahead` is taken in `samples` steps with `gate` to spare. `grip` and `settle` are how hard it holds a height.
+ * has done with the run once it is `out` over the ground. To drop: the skids `drop` over the ground, inside the drop's window
+ * and, with the bucket's line under them, clear of the crowns by `crown`, within `far` of the middle of the fire, at `through` across the
+ * ground as it comes in, and down a slope of `slope` from `dive` short of it, so that the height is reached before the
+ * first patch, which is up to a fire's radius short of the middle; the way there is made `above` the crowns, and a look ahead
+ * of `ahead` is taken in `samples` steps with `gate` to spare; at the middle of a fire in pieces, with no water fallen, it is
+ * within `close` of it and goes for the nearest patch that burns instead. `grip` and `settle` are how hard it holds a height.
  */
 export const FIGHT = {
   in: 10,
+  wet: 100,
+  close: 8,
   speed: 10,
   lead: 20,
   out: 22,
   ahead: 8,
-  drop: 21,
+  drop: 30,
   far: 80,
   through: 16,
   dive: 3,
@@ -135,6 +141,8 @@ export class Autopilot {
   /** The patch it is flying to drop on, written in place when it is chosen, and whether one is chosen. */
   private readonly patch: Point3 = { x: 0, y: 0, z: 0 };
   private aimed = false;
+  /** Whether it has flown through the middle with no water fallen, and is going for the nearest patch that burns instead. */
+  private homing = false;
   /** The run it dips at, from its near end along its line, and the place it flies to: written in place each step. */
   private readonly line: RunLine = { sx: 0, sy: 0, ux: 0, uy: 0, length: 0 };
   private readonly approach: Point3 = { x: 0, y: 0, z: 0 };
@@ -198,6 +206,7 @@ export class Autopilot {
     this.told = level;
     this.skimming = 0;
     this.aimed = false;
+    this.homing = false;
   }
 
   /** One step of the game, flown by it. */
@@ -218,13 +227,22 @@ export class Autopilot {
     const step = mission.current ?? this.told?.steps[0];
     if (!step) {
       // a structure first, which is quick, and then a package; each only while it is not yet done
-      if (this.collecting && !this.game.collection.has(this.collecting.id)) return this.collectStructure();
-      if (this.seeking && !this.game.finds.has(this.seeking.id)) return this.flyTo(this.seeking, true);
+      if (this.collecting && !this.game.collection.has(this.collecting.id)) {
+        this.game.setBucket(false);
+        return this.collectStructure();
+      }
+      if (this.seeking && !this.game.finds.has(this.seeking.id)) {
+        this.game.setBucket(false);
+        return this.flyTo(this.seeking, true);
+      }
       return c;
     }
-    if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
     // a fire: the tank filled and emptied on it, round and round until it is out
-    if (step.kind === 'douse' || step.kind === 'fire') return this.fightFire(this.game.fire(step.fire));
+    if (step.kind === 'arrive' || step.kind === 'fire') return this.fightFire(this.game.fire(step.fire));
+    // anything else is flown with the bucket stowed, which a fire left behind may have left out: out, it would begin the
+    // level of any fire it flew by
+    this.game.setBucket(false);
+    if (step.kind === 'ring' || step.kind === 'gate') return this.through(step);
     // a person: flown to over the treetops, and held in the middle of the window over them while the winch runs; never
     // landed, which is too low for it
     if (step.kind === 'winch') return this.flyTo(step, true, WINCH_MIDDLE);
@@ -301,30 +319,65 @@ export class Autopilot {
   }
 
   /**
-   * A fire: with the tank full, to the nearest burning patch and over it at the drop's height; with it empty, to dip the
-   * bucket at the fire's run until it is full. Nothing with none burning, which is a fire out that has not yet been lit again.
+   * A fire: with the tank full, through the middle of the patches that burn at the drop's height; flown on straight while
+   * the water pours; with the tank empty, to dip the bucket at the fire's run until it is full. Nothing with none burning,
+   * which is a fire out that has not yet been lit again.
    */
   private fightFire(fire: Fire): Controls {
     const c = this.controls;
     const { tank, helicopter: h } = this.game;
     if (fire.burning === 0) return c;
-    // the bucket out, which is what fills it and what a drop falls from
-    this.game.setBucket(true);
+    // the water falling: on, along the way it came and at the height it dropped from, since turning for the lake now
+    // would sweep the pour back over what it has put out, and a drop is a sweep
+    if (this.game.pour > 0) return this.pourOn();
+    // the bucket out where it is wanted, which is what fills it and what a drop falls from, and in on the way between: a
+    // bucket out within a minute's flight of any fire begins that fire's level, and the way from home to the far fire is
+    // over the middle one
+    this.game.setBucket(this.bucketWanted(fire));
     if (tank.full) {
       // off the water first, along the line of the run, until it is up and well clear of the run's end
       if (this.skimming !== 0 && this.climbOut(fire)) return c;
       this.skimming = 0;
-      // the patch it is to drop on, kept once chosen: chosen afresh each step it would run on ahead of itself, from patch
-      // to patch, and never come down. The first drop is the nearest patch, as a pilot who has come to a fire drops on
-      // the first of it; once the level is going it is the place a drop puts out the most, since a fire that spreads a
-      // patch in a beat is not got the better of by its edge
+      // where it is to fly through, kept once chosen: chosen afresh each step it would run on ahead of itself, as the
+      // middle moves. The middle of the patches that burn, flown at in a line from where it is, so the pour, which
+      // starts over the first patch it reaches, sweeps the most of the fire
       if (!this.aimed)
-        this.aimed = this.game.mission.level ? fire.bestDrop(this.patch) : fire.nearestBurning(h.x, h.y, this.patch);
+        this.aimed = this.homing ? fire.nearestBurning(h.x, h.y, this.patch) : fire.burningMiddle(this.patch);
+      // at the middle with the water not fallen, which is the middle of a fire in pieces, with no patch within the drop's
+      // reach of it: on to the nearest patch that burns, as a pilot who has missed comes round for the flames
+      else if (!this.homing && Math.hypot(this.patch.x - h.x, this.patch.y - h.y) < FIGHT.close) {
+        this.homing = true;
+        this.aimed = false;
+      }
       if (this.aimed) this.dropOn(this.patch);
       return c;
     }
     this.aimed = false;
+    this.homing = false;
     return this.dip(fire);
+  }
+
+  /**
+   * Whether the bucket is wanted out: with the tank empty, within `FIGHT.wet` of the near end of the fire's run, to dip;
+   * with it full, within `FIGHT.far` of the fire, to drop. Makes nothing.
+   */
+  private bucketWanted(fire: Fire): boolean {
+    const h = this.game.helicopter;
+    const { x, y, run } = fire.place;
+    if (this.game.tank.full) return Math.hypot(h.x - x, h.y - y) <= FIGHT.far;
+    return (
+      Math.min(Math.hypot(h.x - run.from.x, h.y - run.from.y), Math.hypot(h.x - run.to.x, h.y - run.to.y)) <= FIGHT.wet
+    );
+  }
+
+  /** Flown straight on at the speed it came in, holding the height it is at, while the water pours. */
+  private pourOn(): Controls {
+    const c = this.controls;
+    const h = this.game.helicopter;
+    const along = h.vx * Math.cos(h.yaw) + h.vy * Math.sin(h.yaw);
+    c.forward = clamp((FIGHT.through - along) / 4, -1, 1);
+    c.lift = this.hold(h.z);
+    return c;
   }
 
   /** The run's near end and its direction, from where it is, chosen once. The run's end it starts from, and its unit vector. */
@@ -383,11 +436,10 @@ export class Autopilot {
   }
 
   /**
-   * To the nearest burning patch, and over it at the drop's height, and on: it does not stop, since the
-   * water falls as it passes. Far off, high over the crowns and the ground on the way and turned toward it; within
-   * `far`, coming down a slope that has it at the skids `drop` over the ground under it as it reaches the place, and
-   * above the drop's reach until then, so the water falls on the patch it is aimed at, with the patches round it in the splash, and not on the edge of the
-   * fire the moment it comes within the splash of it, which puts out one patch where a patch is spread a beat.
+   * To the middle of the fire, and through it at the drop's height, and on: it does not stop, since the water falls as
+   * it passes. Far off, high over the crowns and the ground on the way and turned toward it; within `far`, coming down a
+   * slope that has it at the skids `drop` over the ground under it by `dive` short of the middle, which is before the
+   * first patch, so that the water starts over the fire's edge nearest it and pours as it crosses.
    */
   private dropOn(patch: Readonly<Point3>): Controls {
     const c = this.controls;

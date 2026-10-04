@@ -133,6 +133,8 @@ export interface GameState {
   rope: boolean;
   /** The water in the helicopter's tank: whether it is full, and the seconds of the scoop so far (0 to short of 2). */
   tank: { full: boolean; filling: number };
+  /** How much of the pour a drop began is left, in seconds, from 0.9 down to 0 when none is going. */
+  pour: number;
   /**
    * Each fire, by its id: how many of its patches burn, and each patch's state in the order of the fire's list as a
    * number (0 unburnt, 1 burning, 2 out), copied.
@@ -156,6 +158,8 @@ export interface GameState {
   };
   /** How many patches of every fire the scene draws glowing, and how many burnt: what the pictures show of the fires' ground. */
   ground: { burning: number; burnt: number };
+  /** How many trees the scene draws burnt, black and with no crown, and how many the pool for them holds: every tree on a fire's patches. */
+  burnt: { trees: number; pool: number };
   /** The bucket: whether the player has it out, and as the scene draws it, whether it hangs, whether it holds water, and how long its line is. */
   bucket: { out: boolean; hung: boolean; full: boolean; line: number };
   /** The bucket's button as the HUD last drew it: grey in, an orange ring out, and with water in it blue when it is full. */
@@ -281,7 +285,7 @@ export interface GameApi {
    * What the game has told since this was last asked, oldest first, as lines: `started first-delivery`, `loaded 4`,
    * `delivered 1`, `winched ledge-rescue`, `boarded wood-rescue`, `passed 2 6`, `through under the bridge`, `landed 6`, `finished first-delivery 47.25 best`,
    * `abandoned first-delivery`, `collected gorge-bridge 1 7`, `found east-wood 1 10`, `scooped`,
-   * `dropped west-lake-fire 4` and `fire out west-lake-fire`.
+   * `dropped west-lake-fire`, `doused west-lake-fire 4` and `fire out west-lake-fire`.
    */
   events(): string[];
   /** Flying free from home again: landed on the home pad, anything going abandoned (told), nothing guided. */
@@ -307,7 +311,7 @@ export interface GameApi {
   /**
    * The autopilot flying in place of the player, or not: what the play-through flies the level by. Given a level `id`,
    * it goes to that level's start from wherever the helicopter is and does it, whenever nothing is going (a fire level's
-   * start is the water it must scoop and drop to begin it); given a
+   * start is the fire, which it comes to with the bucket out after the water it must scoop); given a
    * structure's `id`, it flies through that structure's opening, and given a package's `id`, it flies to it and lands by
    * it, while nothing else is asked of it. Level, structure and package ids never clash; one that is none throws.
    */
@@ -372,6 +376,7 @@ export interface DebugHost {
   particles(): GameState['particles'];
   /** The fires' ground as the scene last drew it. */
   ground(): GameState['ground'];
+  burnt(): GameState['burnt'];
   /** The bucket as the scene last drew it. */
   bucket(): Omit<GameState['bucket'], 'out'>;
   /** The bucket's button as the HUD last drew it. */
@@ -470,9 +475,11 @@ export function createApi(host: DebugHost): GameApi {
         smoke: host.smoke(),
         rope: host.rope(),
         tank: { full: game.tank.full, filling: game.tank.filling },
+        pour: game.pour,
         fires: game.fires.map((f) => ({ id: f.id, burning: f.burning, patches: [...f.states] })),
         particles: host.particles(),
         ground: host.ground(),
+        burnt: host.burnt(),
         bucket: { out: game.bucket.out, ...host.bucket() },
         badge: host.badge(),
       };

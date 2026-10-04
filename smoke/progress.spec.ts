@@ -117,7 +117,7 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
             };
           }
           return now.mission.level === level.id;
-          // a fire is begun by a drop on it, after the tank is scooped from the nearest water
+          // a fire is begun by coming to it with the bucket out, after the tank is scooped from the nearest water
         },
         level.kind === 'fire' ? 18_000 : 7200,
       ),
@@ -125,10 +125,14 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
     ).toBe(true);
     await hear();
     if (level.kind === 'fire') {
-      // begun by its first drop, which is told first: the tank scooped, the water dropped, then the level started
-      const dropped = told.findIndex((line) => line.startsWith(`dropped ${level.id} `));
-      expect(dropped, `${level.id}: told dropped`).toBeGreaterThanOrEqual(0);
-      expect(told[dropped + 1], `${level.id}: begun by the drop`).toBe(`started ${level.id}`);
+      // begun on arrival with the bucket out, before any drop: the tank scooped if it was not full already, then the level started
+      const started = told.indexOf(`started ${level.id}`);
+      expect(started, `${level.id}: told started`).toBeGreaterThanOrEqual(0);
+      expect(
+        told.slice(0, started).every((line) => line === 'scooped'),
+        `${level.id}: only a scoop before it`,
+      ).toBe(true);
+      expect(told, `${level.id}: begun with nothing dropped`).not.toContain(`dropped ${level.id}`);
     } else expect(told[0], `${level.id}: told begun first`).toBe(`started ${level.id}`);
     expect((await state()).guided, 'the guide is gone once it has begun').toBeNull();
     await expect(page.locator('#hud .clock')).toBeVisible();
@@ -158,30 +162,44 @@ test('every level, shown the way from the panel and flown to the end in turn, wi
       expect(told[3]).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
       expect(told).toHaveLength(4);
     } else if (level.kind === 'fire') {
-      // the drop emptied the tank, so the bar says to fill the bucket, which is out and hangs, and the badge is a ring
+      // it came with the tank full and may have dropped it by now: the bar says to fly over the flames, or to fill the bucket,
+      // which is out and hangs, and the badge is full or a ring
       const begun = await state();
-      expect(begun.tank.full, `${level.id}: the drop emptied the tank`).toBe(false);
-      await expect(page.locator('#hud .goal')).toHaveText('Hover low over the water to fill the bucket');
-      expect([begun.badge, begun.bucket.out, begun.bucket.hung]).toEqual(['out', true, true]);
+      await expect(page.locator('#hud .goal')).toHaveText(
+        begun.tank.full ? /^Fly over the flames to drop · \d+ burning$/ : 'Hover low over the water to fill the bucket',
+      );
+      expect([begun.badge, begun.bucket.out, begun.bucket.hung]).toEqual([
+        begun.tank.full ? 'full' : 'out',
+        true,
+        true,
+      ]);
       expect(begun.fires.find((f) => f.id === level.id)!.burning).toBeGreaterThan(0);
-      // put out by the water scooped and dropped, round and round: at least one more drop, and the bar says how many burn
-      let sawBurning = false;
+      // put out by the water dropped, once or twice: every drop told at its start and at its end, and the bar says how many burn
+      let sawEmpty = false;
       expect(
         await until(async () => {
           const now = await state();
-          if (now.tank.full && !sawBurning) {
-            await expect(page.locator('#hud .goal')).toHaveText(/^Fly low over the flames to drop · \d+ burning$/);
-            sawBurning = true;
+          if (!now.tank.full && now.pour === 0 && !sawEmpty && now.mission.level && now.bucket.out) {
+            await expect(page.locator('#hud .goal')).toHaveText('Hover low over the water to fill the bucket');
+            sawEmpty = true;
           }
           return now.mission.level === null;
         }, 36_000),
         `${level.id}: put out`,
       ).toBe(true);
+      // the last drop's pour goes on a moment past the fire being out, and is told at its end
+      expect(await until(async () => (await state()).pour === 0, 600), `${level.id}: poured out`).toBe(true);
       await hear();
-      expect(sawBurning, `${level.id}: seen with the tank full`).toBe(true);
-      expect(told.filter((line) => line.startsWith(`dropped ${level.id} `)).length).toBeGreaterThanOrEqual(2);
+      const drops = told.filter((line) => line.startsWith(`dropped ${level.id}`)).length;
+      expect(drops, `${level.id}: one drop at least`).toBeGreaterThanOrEqual(1);
+      expect(
+        told.filter((line) => line.startsWith(`doused ${level.id} `)).length,
+        `${level.id}: each told to its end`,
+      ).toBe(drops);
       expect(told).toContain(`fire out ${level.id}`);
-      expect(told.at(-1)).toMatch(new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`));
+      expect(told.find((line) => line.startsWith('finished'))).toMatch(
+        new RegExp(`^finished ${level.id} \\d+\\.\\d\\d best$`),
+      );
     } else if (level.kind === 'rings') {
       // each ring in turn, the words following it, and the last ends it
       const of = (await state()).mission.steps.length;

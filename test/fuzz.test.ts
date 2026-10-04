@@ -1,7 +1,7 @@
 /** The monkey itself: it gets about, and a clean seed is clean. `npm run fuzz` is the long form. */
 import { describe, expect, it } from 'vitest';
 import { beginAtStart, fuzz } from '../scripts/fuzzer';
-import { LEVELS, RESCUE_SPOTS } from '../src/arena';
+import { FIRES, LEVELS, RESCUE_SPOTS } from '../src/arena';
 import { Game } from '../src/game';
 import { HOVER_LIFT } from '../src/helicopter';
 import { seeded } from '../src/random';
@@ -39,6 +39,7 @@ describe('the fuzzer', () => {
       'to a rescue',
       'skim',
       'over a fire',
+      'past a fire',
       'let down onto water',
       'the bucket',
       'dip',
@@ -69,6 +70,7 @@ describe('the fuzzer', () => {
       'boarded',
       'scooped',
       'dropped',
+      'doused',
     ])
       expect(seen, happening).toContain(happening);
   });
@@ -126,6 +128,8 @@ describe('the fuzzer', () => {
     expect([...started].sort()).toEqual(LEVELS.map((level) => `started ${level.id}`).sort());
     expect(LEVELS).toHaveLength(13);
     for (const { id } of RESCUE_SPOTS) expect(started, id).toContain(`started ${id}`);
+    // a fire is begun by flying to it with the bucket out, which the monkey does by itself
+    for (const { id } of FIRES) expect(started, id).toContain(`started ${id}`);
   });
 
   it('starts flying free at home, with nothing going, unless a level is asked for', () => {

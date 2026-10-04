@@ -9,8 +9,8 @@
  * through it, being shown the way to one, giving up the level going, flying
  * at a ring from any side and through one in its turn, hovering over a person waiting to be winched up, in the
  * window and high, low or aside of it, landing beside the walker within and just past the reach of the boarding, being let down onto a
- * lake, the sea or a river, putting the bucket out and taking it in, dipping it into open water, skimming low over water
- * and flying over a fire at the edges of the drop — with the
+ * lake, the sea or a river, putting the bucket out and taking it in, dipping it into open water, skimming low over water,
+ * flying over a fire at heights about the drop's window, and flying by one at the edge of where it begins a level — with the
  * chase camera following it as the page has it, and checked after every few frames for anything that must always
  * hold and does not (`invariants.ts`), and for anything thrown.
  *
@@ -85,6 +85,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
   const done: Record<string, number> = {};
   const count = (into: Record<string, number>, key: string) => (into[key] = (into[key] ?? 0) + 1);
   const log: string[] = [];
+  // whether a level is being begun by hand, and what the rules about a level begun found wrong, held for the next check
+  let beginning = false;
+  const startProblems: string[] = [];
   let frame = 0;
   const fail = (problems: string[]): FuzzResult => ({
     seed,
@@ -114,7 +117,14 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
       random: seeded(seed),
       progress: new Progress(memoryStore(JSON.stringify(save))),
       events: {
-        started: (id) => count(happened, `started ${id}`),
+        started: (id) => {
+          count(happened, `started ${id}`);
+          // a fire's level is begun by coming to it with the bucket out, which is the state of the bucket as it is told: it
+          // cannot be read of the game afterwards, since the bucket may be in the next step. Only a level begun by hand
+          // (the test API's `begin`, which the run asked for) is let off it
+          if (!beginning && LEVELS.find((l) => l.id === id)?.kind === 'fire' && !game.bucket.out)
+            startProblems.push(`the fire level ${id} was begun with the bucket in`);
+        },
         abandoned: () => count(happened, 'abandoned'),
         loaded: () => count(happened, 'loaded'),
         delivered: () => count(happened, 'delivered'),
@@ -122,6 +132,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         boarded: () => count(happened, 'boarded'),
         scooped: () => count(happened, 'scooped'),
         dropped: () => count(happened, 'dropped'),
+        doused: () => count(happened, 'doused'),
         fireOut: () => count(happened, 'fire out'),
         passed: () => count(happened, 'passed a ring'),
         through: () => count(happened, 'through a gate'),
@@ -133,7 +144,11 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
     });
     const heli = game.helicopter;
     // the game opens flying free, so a level is begun only where one is asked for
-    if (level !== undefined) beginAtStart(game, level);
+    if (level !== undefined) {
+      beginning = true;
+      beginAtStart(game, level);
+      beginning = false;
+    }
     // the camera as the page has it, over the ground and the treetops, put behind the helicopter wherever it is put
     const rig = new ChaseCamera(game.island.ground, game.crown, game.solids);
     rig.snap(heli);
@@ -678,9 +693,9 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
             // well inside the window, and held for longer than the hold
             const spot = RESCUE_SPOTS.find((r) => r.x === start.x && r.y === start.y)!;
             overRescue(spot, between(WINCH.low + 1, WINCH.high - 1), between(0, WINCH.reach - 2));
-          } else if (start.kind === 'douse') {
-            // the bucket out, the water first, hovered over at the end of the fire's run long enough to fill, and then a
-            // drop from the middle of the window on the first of its patches, which is what begins it
+          } else if (start.kind === 'arrive') {
+            // the bucket out, the water first, hovered over at the end of the fire's run long enough to fill, and then
+            // over the fire, which is what begins it, and where the water falls
             const fire = FIRES.find((f) => f.id === start.fire)!;
             game.setBucket(true);
             if (!game.tank.full) {
@@ -688,7 +703,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
               heli.place(from.x, from.y, z + HOVER_OVER_WATER, Math.atan2(to.y - from.y, to.x - from.x));
               controls = { forward: 0, turn: 0, lift: HOVER_LIFT };
               hold.busy = Math.round((SCOOP.time + 1.5) * 60);
-            } else overFire(fire, 0, between(12, 22));
+            } else overFire(fire, 0, between(20, 40));
           } else if (start.kind === 'board') {
             // landed beside the person, well inside the reach, and held for longer than the hold
             beside(between(4, BOARD.reach - 3), false);
@@ -773,8 +788,8 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         places: true,
         weight: 3,
         go() {
-          // over a patch of a fire, 12 to 35 m up, drifting: with a full tank and the bucket out some drop, and some are too
-          // high, or have the bucket in, which a player who has come to a fire has mostly put out
+          // over a patch of a fire, 20 to 50 m up, drifting: with a full tank and the bucket out some drop, and some are too
+          // high, the window being 40, or have the bucket in, which a player who has come to a fire has mostly put out
           game.setBucket(random() < 0.85);
           const fire = aFire();
           const states = game.fire(fire.id).states;
@@ -782,8 +797,33 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
           let k = Math.floor(random() * fire.patches.length);
           for (let tries = 0; tries < 6 && states[k] !== PATCH.burning; tries++)
             k = Math.floor(random() * fire.patches.length);
-          overFire(fire, k, between(12, 35));
+          overFire(fire, k, between(20, 50));
           if (game.mission.level?.kind === 'fire') hold.follow = 'dip';
+        },
+      },
+      {
+        name: 'past a fire',
+        places: true,
+        weight: 3,
+        go() {
+          // flown by a fire with the bucket out, its closest to a patch that burns 50 to 70 m, which is either side of where
+          // it begins the fire's level, a hundred metres on to the nearer side and out the other, 20 to 40 m up, at any speed
+          game.setBucket(true);
+          const fire = aFire();
+          const states = game.fire(fire.id).states;
+          let k = Math.floor(random() * fire.patches.length);
+          for (let tries = 0; tries < 6 && states[k] !== PATCH.burning; tries++)
+            k = Math.floor(random() * fire.patches.length);
+          const p = fire.patches[k];
+          const yaw = between(-Math.PI, Math.PI);
+          const side = between(50, 70);
+          const speed = between(8, 16);
+          const [dx, dy] = [Math.cos(yaw), Math.sin(yaw)];
+          heli.placeAbove(p.x - dy * side - dx * 100, p.y + dx * side - dy * 100, between(20, 40), yaw);
+          heli.vx = dx * speed;
+          heli.vy = dy * speed;
+          controls = { forward: speed / HELICOPTER.maxSpeed, turn: 0, lift: HOVER_LIFT };
+          hold.busy = Math.round((200 / speed) * 60);
         },
       },
       {
@@ -937,7 +977,7 @@ export function fuzz(seed: number, frames: number, level?: string): FuzzResult {
         }
       }
       if (frame % CHECK_EVERY === 0) {
-        const problems = [...checkInvariants(game), ...checkCamera(rig, game, sizes)];
+        const problems = [...checkInvariants(game), ...checkCamera(rig, game, sizes), ...startProblems];
         // what is collected only grows within a game, which needs the count from the last check
         if (game.collection.count < collectedAt)
           problems.push(

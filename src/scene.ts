@@ -28,7 +28,7 @@ import {
   type PackagePlace,
 } from './arena';
 import { BUCKET, type BucketPose } from './bucket';
-import { PATCH } from './fire';
+import { PATCH, treesOnPatches, type PatchTrees } from './fire';
 import { HELICOPTER } from './helicopter';
 import { SEA, SURFACE, TREE_STRIDE, type Island, type Pad, type River } from './island';
 import type { Sway } from './sway';
@@ -38,6 +38,7 @@ import type { Block } from './solids';
 import {
   beacon,
   box,
+  charredPole,
   crate,
   ring,
   helicopterBody,
@@ -49,6 +50,8 @@ import {
   padSlab,
   tailRotor,
   treeShape,
+  treeSize,
+  trunkRadius,
 } from './meshes';
 
 /** Where the helicopter is and how it is tilted and spinning: what the scene draws it from. */
@@ -328,6 +331,12 @@ const FIRE_GROUND = {
   turn: 0.9,
 };
 const FIRE_ROUGHNESS = 0.9;
+
+/**
+ * What a tree on a burning or burnt patch is drawn as: a black, matte, charred pole of the tree's own full height, `wider` times
+ * as wide as its trunk, in place of the tree, whose own placement is left at no size.
+ */
+const CHARRED = { paint: { albedo: seen(0x1c1916), roughness: 0.95 }, wider: 1.25 };
 
 /** The bucket's paint: the dark line, the orange bucket and the blue water at its rim, which glows. */
 const BUCKET_PAINT = {
@@ -703,6 +712,17 @@ export class Scene {
   private readonly fireSpots: { x: number; y: number; z: number }[] = [];
   private fireAt = -1;
   private readonly firesFor: Uint8Array;
+  private readonly firePlaces: readonly FirePlace[];
+  /**
+   * The trees on the patches and the pole group they are drawn as (−1 for none), the island's trees' places (to put a tree back
+   * whole), which trees are burnt now, and which patches were last written burnt or whole (the pools are written only when
+   * a patch changes between the two, and a patch that burns and then goes out is drawn the same). Sized once.
+   */
+  private patchTrees: PatchTrees = { tree: new Uint32Array(0), first: new Uint32Array(1) };
+  private burntAt = -1;
+  private islandTrees: ArrayLike<number> = [];
+  private treeBurnt = new Uint8Array(0);
+  private burntFor: Uint8Array;
   /** Where the bucket's groups are among the pools, and whether it was drawn at the last write, so stowing it is written once. */
   private bucketAtPool = -1;
   private bucketOut = false;
@@ -735,6 +755,8 @@ export class Scene {
     this.places = packages;
     for (const fire of fires) for (const p of fire.patches) this.fireSpots.push(p);
     this.firesFor = new Uint8Array(this.fireSpots.length).fill(255);
+    this.burntFor = new Uint8Array(this.fireSpots.length);
+    this.firePlaces = fires;
     this.foundFor = new Uint8Array(packages.length);
     for (const { id, blocks } of collectibles) {
       this.collectable.push({ id, blocks, first: this.goldSlots });
@@ -870,9 +892,11 @@ export class Scene {
   /**
    * What moves: the helicopter's groups, then, given the island, its trees and the parcel and its beacon, each pool
    * sized once. The trees move
-   * only a little and only now and then, but a group that is set as still cannot be written again but whole.
+   * only a little and only now and then, but a group that is set as still cannot be written again but whole. The trees on the
+   * fires' patches are given, as the game has found them, or found here from the island's; a pole is drawn for each of them
+   * when its patch burns.
    */
-  dynamic(island?: Island): GameGroup[] {
+  dynamic(island?: Island, patchTrees?: PatchTrees): GameGroup[] {
     this.pools.length = 0;
     this.movers.length = 0;
     const groups: GameGroup[] = [];
@@ -888,6 +912,8 @@ export class Scene {
     add('main rotor', mainRotor(), DARK_PAINT);
     add('tail rotor', tailRotor(), DARK_PAINT);
     this.islandPads = [];
+    this.burntAt = -1;
+    this.burntFor.fill(0);
     if (island) {
       this.trees(island, add);
       // the crates, last but for the rings and the flags: a placement for the parcel of the level going, and one for each
@@ -927,6 +953,9 @@ export class Scene {
       add('packages', wood, PACKAGE_PAINT, new Float32Array(n * 16), n);
       add('package straps', straps, PACKAGE_STRAP_PAINT, new Float32Array(n * 16), n);
       this.rescueGroups(add, unit);
+      this.patchTrees =
+        patchTrees ??
+        treesOnPatches(this.firePlaces, { trees: island.trees, stride: TREE_STRIDE, count: island.treeCount });
       this.fireGroups(add, unit);
       this.bucketGroups(add, unit);
     }
@@ -1019,6 +1048,13 @@ export class Scene {
     });
     add('burning ground', unit, { albedo: glow, roughness: FIRE_ROUGHNESS }, glowing, n);
     add('burnt ground', unit, { albedo: seen(burnt.paint), roughness: FIRE_ROUGHNESS }, charred, n);
+    // the poles of the trees on the patches: a placement for each, at no size until its patch burns
+    const poles = this.patchTrees.tree.length;
+    if (poles === 0) return;
+    this.burntAt = this.pools.length;
+    const standing = new Float32Array(poles * 16);
+    for (let k = 0; k < poles; k++) place(standing, k, 0, 0, 0, 0, 0);
+    add('burnt trees', charredPole(), CHARRED.paint, standing, poles);
   }
 
   /** The bucket's three groups, one placement each, at no size until it hangs. */
@@ -1037,6 +1073,8 @@ export class Scene {
     this.treeSlot = new Uint32Array(treeCount);
     this.treeScale = new Float32Array(treeCount);
     this.leaning = new Int32Array(treeCount);
+    this.islandTrees = trees;
+    this.treeBurnt = new Uint8Array(treeCount);
     this.leaned = 0;
     this.moving = new Uint8Array(treeCount);
     const perKind = new Uint32Array(TREE_KINDS.length);
@@ -1386,6 +1424,44 @@ export class Scene {
       else place(burnt, k, x, y, z, 0, 0);
     }
     this.changed[this.fireAt] = this.changed[this.fireAt + 1] = 1;
+    this.paintBurnt(was);
+  }
+
+  /**
+   * The trees on the patches: each tree of a patch that burns or is out is drawn at no size in its kind's pool, which its trunk
+   * and crown share, and as a charred pole in the burnt group; a patch not caught has its trees whole, put back as the island
+   * placed them. Written only for a patch that has changed between burnt and whole, so one that burns and goes out writes
+   * nothing, and the pools of the kinds that changed are marked, not the rest. Makes nothing.
+   */
+  private paintBurnt(was: Uint8Array): void {
+    if (this.burntAt < 0) return;
+    const { patchTrees, burntFor, treePool, treeSlot, pools, changed, treeBurnt, islandTrees } = this;
+    const poles = pools[this.burntAt];
+    let wrote = false;
+    for (let p = 0; p < burntFor.length; p++) {
+      const burnt = was[p] === PATCH.burning || was[p] === PATCH.out ? 1 : 0;
+      if (burnt === burntFor[p]) continue;
+      burntFor[p] = burnt;
+      for (let k = patchTrees.first[p]; k < patchTrees.first[p + 1]; k++) {
+        const t = patchTrees.tree[k];
+        const o = t * TREE_STRIDE;
+        const [x, y, z, yaw, scale] = [1, 2, 3, 4, 5].map((i) => islandTrees[o + i]);
+        const pool = pools[treePool[t]];
+        treeBurnt[t] = burnt;
+        if (burnt) {
+          const kind = TREE_KINDS[islandTrees[o]];
+          const wide = trunkRadius(kind) * CHARRED.wider * scale;
+          place(pool, treeSlot[t], x, y, z, yaw, 0);
+          place(poles, k, x, y, z, yaw, wide, wide, treeSize(kind).top * scale);
+        } else {
+          place(pool, treeSlot[t], x, y, z, yaw, scale);
+          place(poles, k, x, y, z, 0, 0);
+        }
+        changed[treePool[t]] = changed[treePool[t] + 1] = 1;
+        wrote = true;
+      }
+    }
+    if (wrote) changed[this.burntAt] = 1;
   }
 
   /**
@@ -1422,6 +1498,16 @@ export class Scene {
       if (burnt[k * 16 + 10] !== 0) drawn.burnt++;
     }
     return drawn;
+  }
+
+  /** How many trees are drawn burnt now, as a charred pole, and how many the pool has room for: what the test API says, and nothing the frame uses. */
+  get burntDrawn(): { trees: number; pool: number } {
+    if (this.burntAt < 0) return { trees: 0, pool: 0 };
+    const poles = this.pools[this.burntAt];
+    const pool = poles.length / 16;
+    let trees = 0;
+    for (let k = 0; k < pool; k++) if (poles[k * 16 + 10] !== 0) trees++;
+    return { trees, pool };
   }
 
   /** What is drawn of the bucket now: what the test API says, and nothing the frame uses. */
@@ -1480,11 +1566,12 @@ export class Scene {
 
   /** Each tree the sway is moving leaned as it says, and each it has let go since the last write stood up again. */
   private bow(sway: Sway): void {
-    const { treePool, treeSlot, treeScale, leaning, moving, pools, changed } = this;
+    const { treePool, treeSlot, treeScale, leaning, moving, pools, changed, treeBurnt } = this;
     for (let k = 0; k < sway.count; k++) moving[sway.tree[k]] = 1;
     for (let n = 0; n < this.leaned; n++) {
       const t = leaning[n];
-      if (moving[t]) continue;
+      // a burnt tree is at no size and stays there: leaning it would give it its height back
+      if (moving[t] || treeBurnt[t]) continue;
       lean(pools[treePool[t]], treeSlot[t], 0, 0, 0, treeScale[t]);
       changed[treePool[t]] = changed[treePool[t] + 1] = 1;
     }
@@ -1492,6 +1579,7 @@ export class Scene {
     for (let k = 0; k < sway.count; k++) {
       const t = sway.tree[k];
       moving[t] = 0;
+      if (treeBurnt[t]) continue;
       lean(pools[treePool[t]], treeSlot[t], sway.leanX[k], sway.leanY[k], sway.squash[k], treeScale[t]);
       changed[treePool[t]] = changed[treePool[t] + 1] = 1;
       leaning[this.leaned++] = t;
